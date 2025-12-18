@@ -1,0 +1,15 @@
+[Unit]
+Description=NVIDIA's dcgm-exporter service for DCGM GPU metrics
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+TimeoutStartSec=0
+Restart=always
+WorkingDirectory=/etc/crusoe/crusoe_watch
+ExecStart=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch/docker-compose-dcgm-exporter.yaml up
+ExecStop=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch/docker-compose-dcgm-exporter.yaml down
+
+[Install]
+WantedBy=multi-user.target
