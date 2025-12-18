@@ -1,0 +1,18 @@
+services:
+  crusoe-vector:
+    image: timberio/vector:0.50.0-debian
+    container_name: crusoe-vector
+    hostname: crusoe-vector
+    volumes:
+      - /etc/crusoe/telemetry_agent/vector.yaml:/etc/vector/vector.yaml:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    env_file:
+      - ./.env
+      - /etc/crusoe/secrets/.monitoring-token
+    environment:
+      - PROCFS_ROOT=/host/proc
+      - SYSFS_ROOT=/host/sys
+    privileged: true
+    entrypoint: /bin/sh -c "sleep 5 && /usr/bin/vector --config /etc/vector/vector.yaml"
+    network_mode: host

@@ -1,0 +1,20 @@
+services:
+  crusoe-dcgm-exporter:
+    image: nvidia/dcgm-exporter:${DCGM_EXPORTER_IMAGE_VERSION}
+    container_name: crusoe-dcgm-exporter
+    hostname: crusoe-dcgm-exporter
+    cap_add: [SYS_ADMIN]
+    volumes:
+      - /etc/crusoe/telemetry_agent/dcp-metrics-included.csv:/etc/dcgm-exporter/dcp-metrics-included.csv:ro
+    env_file:
+      - ./.env
+    command: -f /etc/dcgm-exporter/dcp-metrics-included.csv -r localhost:5555
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    network_mode: host
