@@ -9,12 +9,15 @@ Get credentials for your CMK cluster:
 
 ```bash
 crusoe kubernetes clusters get-credentials <cluster-name> --project-id <project-id>
+
 kubectl config current-context  # validate your current context
 ```
 
 Install agent: 
 ```bash
 helm repo add crusoe-watch-agent https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts
+
 helm repo update
+
 helm install crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent --namespace crusoe-system
 ```
