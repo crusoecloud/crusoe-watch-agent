@@ -2,7 +2,7 @@
 crusoe-watch-agent is a vector.dev based agent for collecting telemetry data from Crusoe Cloud resources.
 
 ## Installation
-Choose one of the following methods to install crusoe-watch-agent agent on your VM.
+Choose one of the following methods to install crusoe-watch-agent on your VM.
 
 ### Simple Download 
 Best for a quick, one-time installation.
@@ -22,13 +22,6 @@ sudo chmod +x /etc/crusoe/crusoe_watch_agent/crusoe_watch_agent.sh
 sudo ln -sf "/etc/crusoe/crusoe_watch_agent/crusoe_watch_agent.sh" "/usr/bin/crusoe-watch-agent" 
 ```
 
-**Note for Slurm images:**
-If you have a pre-installed dcgm-exporter systemd service, use `--replace-dcgm-exporter` to replace it with the Crusoe version for full metrics collection.
-Optional `SERVICE_NAME` defaults to `dcgm-exporter`:
-```
-sudo crusoe-watch-agent install --replace-dcgm-exporter [SERVICE_NAME]
-```
-
 ## Configuration and Startup
 Regardless of the installation method chosen above, follow these steps to authenticate and start the agent.
 
@@ -37,7 +30,7 @@ Generate a token via the Crusoe CLI.
 ```
 crusoe monitoring tokens create
 ```
-Save the token to the secrets directory to bypass manual prompts.
+Optional: Save the token to the secrets directory to bypass manual prompts.
 ```
 sudo mkdir -p /etc/crusoe/secrets
 sudo tee /etc/crusoe/secrets/.monitoring-token <<'EOF'
@@ -45,6 +38,19 @@ CRUSOE_AUTH_TOKEN='<paste-your-monitoring-token-here>'
 EOF
 sudo chmod 600 /etc/crusoe/secrets/.monitoring-token
 ```
+
+### Agent Installation
+If you used the Simple Download method, run `sudo ./crusoe_watch_agent.sh install`. Otherwise, run:
+```
+sudo crusoe-watch-agent install
+```
+
+> **Note for Slurm images:**
+> If you have a pre-installed use `--replace-dcgm-exporter` to replace it with the Crusoe version for full metrics collection. 
+> Optional `SERVICE_NAME` defaults to `dcgm-exporter`:
+> ```bash
+> sudo crusoe-watch-agent install --replace-dcgm-exporter [SERVICE_NAME]
+> ```
 
 ### Verification
 Once the service starts, it will download and launch two Docker containers: `crusoe-dcgm-exporter` and `crusoe-vector`.  Check the Docker logs to verify there are no errors:
