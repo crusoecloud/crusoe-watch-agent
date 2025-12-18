@@ -1,0 +1,48 @@
+name: semver tag ci
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+
+jobs:
+  tag-from-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false  # important: do not use GITHUB_TOKEN for pushes
+
+      - name: Detect VERSION change
+        id: changed
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q '^vector-config-reloader/VERSION$'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Read version
+        if: steps.changed.outputs.changed == 'true'
+        id: ver
+        run: |
+          V=$(tr -d ' \n' < vector-config-reloader/VERSION)
+          echo "version=$V" >> $GITHUB_OUTPUT
+
+      - name: Create tag if missing
+        if: steps.changed.outputs.changed == 'true'
+        env:
+          REPO_PAT: ${{ secrets.REPO_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Skipping."
+          else
+            git config user.name "${GITHUB_ACTOR}"
+            git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+            git tag "$TAG"
+            git push "https://x-access-token:${REPO_PAT}@github.com/${REPO}.git" "$TAG"
+          fi
