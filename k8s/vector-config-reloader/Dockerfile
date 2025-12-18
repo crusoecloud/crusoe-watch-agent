@@ -1,4 +1,4 @@
-FROM ghcr.io/crusoecloud/crusoe-watch-agent/python:3.11-slim
+FROM python:3.11-slim
 
 # Add app
 WORKDIR /app
