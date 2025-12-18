@@ -18,7 +18,7 @@ jobs:
       - name: Detect VERSION change
         id: changed
         run: |
-          if git diff --name-only HEAD~1 HEAD | grep -q '^vector-config-reloader/VERSION$'; then
+          if git diff --name-only HEAD~1 HEAD | grep -q '^k8s/vector-config-reloader/VERSION$'; then
             echo "changed=true" >> $GITHUB_OUTPUT
           else
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -28,7 +28,7 @@ jobs:
         if: steps.changed.outputs.changed == 'true'
         id: ver
         run: |
-          V=$(tr -d ' \n' < vector-config-reloader/VERSION)
+          V=$(tr -d ' \n' < k8s/vector-config-reloader/VERSION)
           echo "version=$V" >> $GITHUB_OUTPUT
 
       - name: Create tag if missing

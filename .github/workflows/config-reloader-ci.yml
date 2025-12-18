@@ -7,7 +7,7 @@ on:
       - "v*"
     # BUT only run if changes occur under the vector-config-reloader/ path
     paths:
-      - 'vector-config-reloader/**'
+      - 'k8s/vector-config-reloader/**'
   pull_request:
     branches: ["main"]
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest
-          pip install -r ./vector-config-reloader/requirements.txt
+          pip install -r ./k8s/vector-config-reloader/requirements.txt
 
       - name: Run tests
         run: pytest -v
@@ -69,8 +69,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v5
         with:
-          context: ./vector-config-reloader
-          file: ./vector-config-reloader/Dockerfile
+          context: ./k8s/vector-config-reloader
+          file: ./k8s/vector-config-reloader/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
