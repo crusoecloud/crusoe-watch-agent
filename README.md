@@ -1,26 +1,25 @@
 # Crusoe Watch
 Crusoe Watch is a vector.dev based agent for collecting telemetry data from Crusoe Cloud resources.
 
-
 ## Installation
-Choose one of the following methods to get the Crusoe Watch manager onto your system.
+Choose one of the following methods to install crusoe-watch agent on your VM.
 
 ### Simple Download 
 Best for a quick, one-time installation.
 ```
-wget https://raw.githubusercontent.com/crusoecloud/crusoe-watch/refs/heads/main/vm/crusoe_watch_manager.sh 
-chmod +x crusoe_watch_manager.sh
-sudo ./crusoe_watch_manager.sh install
+wget https://raw.githubusercontent.com/crusoecloud/crusoe-watch/refs/heads/main/vm/crusoe_watch.sh 
+chmod +x crusoe_watch.sh
+sudo ./crusoe_watch.sh install
 ```
 
 ### Symlink Installation
 Sets up the script as a global command for easier upgrades and management.
 ```
-wget https://raw.githubusercontent.com/crusoecloud/crusoe-watch/refs/heads/main/vm/crusoe_watch_manager.sh 
-sudo mkdir -p /etc/crusoe/crusoe-watch
-sudo mv crusoe_watch_manager.sh /etc/crusoe/crusoe-watch/.
-sudo chmod +x /etc/crusoe/crusoe-watch/crusoe_watch_manager.sh
-sudo ln -sf "/etc/crusoe/crusoe-watch/crusoe_watch_manager.sh" "/usr/bin/crusoe-watch" 
+wget https://raw.githubusercontent.com/crusoecloud/crusoe-watch/refs/heads/main/vm/crusoe_watch.sh 
+sudo mkdir -p /etc/crusoe/crusoe_watch
+sudo mv crusoe_watch.sh /etc/crusoe/crusoe_watch/.
+sudo chmod +x /etc/crusoe/crusoe_watch/crusoe_watch.sh
+sudo ln -sf "/etc/crusoe/crusoe_watch/crusoe_watch.sh" "/usr/bin/crusoe-watch" 
 ```
 
 **Note for Slurm images:**
