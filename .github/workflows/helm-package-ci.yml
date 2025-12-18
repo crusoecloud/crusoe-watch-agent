@@ -4,7 +4,7 @@ on:
     branches:
       - main
     paths:
-      - 'helm-charts/**'
+      - 'k8s/helm-charts/**'
 
 jobs:
   release:
@@ -21,14 +21,14 @@ jobs:
 
       - name: Package chart
         run: |
-          mkdir -p docs/helm-charts
-          helm package ./helm-charts -d docs/helm-charts
-          helm repo index docs/helm-charts --url https://crusoecloud.github.io/crusoe-watch-agent/helm-charts
+          mkdir -p docs/k8s/helm-charts
+          helm package ./k8s/helm-charts -d docs/k8s/helm-charts
+          helm repo index docs/k8s/helm-charts --url https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts
 
       - name: Commit and push
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add docs/helm-charts
+          git add docs/k8s/helm-charts
           git commit -m "Update helm repo"
           git push
