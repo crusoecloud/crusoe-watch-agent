@@ -16,12 +16,12 @@ REMOTE_VECTOR_CONFIG_CPU_VM="vm/config/vector_cpu_vm.yaml"
 REMOTE_DCGM_EXPORTER_METRICS_CONFIG="vm/config/dcp-metrics-included.csv"
 REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER="vm/docker/docker-compose-dcgm-exporter.yaml"
 REMOTE_DOCKER_COMPOSE_VECTOR="vm/docker/docker-compose-vector.yaml"
-REMOTE_CRUSOE_WATCH_SERVICE="vm/systemctl/crusoe-watch.service"
+REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE="vm/systemctl/crusoe-dcgm-exporter.service"
 SYSTEMCTL_DIR="/etc/systemd/system"
-CRUSOE_WATCH_DIR="/etc/crusoe/crusoe_watch"
+CRUSOE_WATCH_AGENT_DIR="/etc/crusoe/crusoe_watch_agent"
 CRUSOE_AUTH_TOKEN_LENGTH=82
-ENV_FILE="$CRUSOE_WATCH_DIR/.env" # Define the .env file path
+ENV_FILE="$CRUSOE_WATCH_AGENT_DIR/.env" # Define the .env file path
 # Secrets location for persisted monitoring token
 CRUSOE_SECRETS_DIR="/etc/crusoe/secrets"
 CRUSOE_MONITORING_TOKEN_FILE="$CRUSOE_SECRETS_DIR/.monitoring-token"
@@ -35,7 +35,7 @@ EXISTING_DCGM_EXPORTER_SERVICE="dcgm-exporter"
 
 # Versioning and upgrade helpers (use vm/VERSION)
 REMOTE_VERSION_FILE="vm/VERSION"
-INSTALLED_VERSION_FILE="$CRUSOE_WATCH_DIR/VERSION"
+INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
 
 # dcgm-exporter docker image version map
 declare -A -r DCGM_EXPORTER_VERSION_MAP=(
@@ -248,9 +248,9 @@ do_install() {
     (apt-get update && apt-get install -y wget) || error_exit "Failed to install wget."
   fi
 
-  status "Create crusoe_watch target directory."
-  if ! dir_exists "$CRUSOE_WATCH_DIR"; then
-    mkdir -p "$CRUSOE_WATCH_DIR"
+  status "Create crusoe_watch_agent target directory."
+  if ! dir_exists "$CRUSOE_WATCH_AGENT_DIR"; then
+    mkdir -p "$CRUSOE_WATCH_AGENT_DIR"
   fi
 
   # Detect NVIDIA GPUs
@@ -272,10 +272,10 @@ do_install() {
     check_os_support
 
     status "Download DCGM exporter metrics config."
-    wget -q -O "$CRUSOE_WATCH_DIR/dcp-metrics-included.csv" "$GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG"
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/dcp-metrics-included.csv" "$GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG"
 
     status "Download GPU Vector config."
-    wget -q -O "$CRUSOE_WATCH_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_GPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_GPU_VM"
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_GPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_GPU_VM"
 
     if $REPLACE_DCGM_EXPORTER; then
       status "Checking for pre-installed dcgm-exporter service: $EXISTING_DCGM_EXPORTER_SERVICE"
@@ -285,18 +285,18 @@ do_install() {
     # Download DCGM Exporter artifacts if service does not exist or replace flag is set
     if ! service_exists "$DCGM_EXPORTER_SERVICE_NAME" || $REPLACE_DCGM_EXPORTER; then
       status "Download DCGM Exporter docker-compose file."
-      wget -q -O "$CRUSOE_WATCH_DIR/docker-compose-dcgm-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER"
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-dcgm-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER"
 
       status "Download $DCGM_EXPORTER_SERVICE_NAME systemd unit."
       wget -q -O "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE"
     fi
   else
      status "Copy CPU Vector config."
-     wget -q -O "$CRUSOE_WATCH_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CPU_VM"
+     wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CPU_VM"
   fi
 
   status "Download Vector docker-compose file."
-  wget -q -O "$CRUSOE_WATCH_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
+  wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
 
   status "Ensuring Crusoe auth token in secrets."
   if [[ -n "$CRUSOE_AUTH_TOKEN" ]] && validate_token "$CRUSOE_AUTH_TOKEN"; then
@@ -347,31 +347,31 @@ EOF
     systemctl start "$DCGM_EXPORTER_SERVICE_NAME"
   fi
 
-  status "Download crusoe-watch.service."
-  wget -q -O "$SYSTEMCTL_DIR/crusoe-watch.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_SERVICE"
+  status "Download crusoe-watch-agent.service."
+  wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_SERVICE"
 
-  status "Enable and start systemd services for crusoe-watch."
+  status "Enable and start systemd services for crusoe-watch-agent."
   echo "systemctl daemon-reload"
   systemctl daemon-reload
-  echo "systemctl enable crusoe-watch.service"
-  systemctl enable crusoe-watch.service
-  echo "systemctl start crusoe-watch.service"
-  systemctl start crusoe-watch.service
+  echo "systemctl enable crusoe-watch-agent.service"
+  systemctl enable crusoe-watch-agent.service
+  echo "systemctl start crusoe-watch-agent.service"
+  systemctl start crusoe-watch-agent.service
 
   status "Setup Complete!"
   if $HAS_NVIDIA_GPUS; then
     echo "Check status of $DCGM_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DCGM_EXPORTER_SERVICE_NAME'"
   fi
-  echo "Check status of crusoe-watch service: 'sudo systemctl status crusoe-watch.service'"
+  echo "Check status of crusoe-watch-agent service: 'sudo systemctl status crusoe-watch-agent.service'"
   echo "Setup finished successfully!"
 }
 
 do_uninstall() {
   check_root
-  status "Stopping and disabling crusoe-watch service."
-  if service_exists "crusoe-watch.service"; then
-    systemctl stop crusoe-watch.service || true
-    systemctl disable crusoe-watch.service || true
+  status "Stopping and disabling crusoe-watch-agent service."
+  if service_exists "crusoe-watch-agent.service"; then
+    systemctl stop crusoe-watch-agent.service || true
+    systemctl disable crusoe-watch-agent.service || true
   fi
 
   status "Stopping and disabling DCGM Exporter service if installed by this script."
@@ -381,12 +381,12 @@ do_uninstall() {
   fi
 
   status "Removing systemd unit files."
-  rm -f "$SYSTEMCTL_DIR/crusoe-watch.service" || true
+  rm -f "$SYSTEMCTL_DIR/crusoe-watch-agent.service" || true
   rm -f "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" || true
   systemctl daemon-reload || true
 
-  status "Removing crusoe_watch directory."
-  rm -rf "$CRUSOE_WATCH_DIR" || true
+  status "Removing crusoe_watch_agent directory."
+  rm -rf "$CRUSOE_WATCH_AGENT_DIR" || true
 
   status "Uninstall complete."
 }
@@ -410,8 +410,8 @@ do_refresh_token() {
   chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
   status "Token refresh complete."
   echo "CRUSOE_AUTH_TOKEN has been updated in $CRUSOE_MONITORING_TOKEN_FILE."
-  echo "For the changes to take effect, you may need to restart the crusoe-watch service:"
-  echo "  sudo systemctl restart crusoe-watch"
+  echo "For the changes to take effect, you may need to restart the crusoe-watch-agent service:"
+  echo "  sudo systemctl restart crusoe-watch-agent"
 }
 
 do_upgrade() {
@@ -504,7 +504,7 @@ upgrade_dcgm() {
 parse_args "$@"
 
 # Update base URL to reflect chosen branch
-GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch/${GITHUB_BRANCH}"
+GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${GITHUB_BRANCH}"
 
 # --- Main Script ---
 
