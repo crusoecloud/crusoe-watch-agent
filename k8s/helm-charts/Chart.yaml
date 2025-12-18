@@ -1,0 +1,9 @@
+apiVersion: v2
+name: crusoe-watch-agent
+description: Helm chart to deploy Crusoe Watch Agent and monitoring token job
+type: application
+version: 0.2.6
+dependencies:
+  - name: vector
+    version: "0.45.0"
+    repository: "https://helm.vector.dev"

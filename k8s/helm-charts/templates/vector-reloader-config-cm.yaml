@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-reloader-config
+  namespace: crusoe-system
+data:
+  config.yaml: |
+    dcgm_metrics:
+      port: {{ .Values.metricsExporter.defaultDcgmExporterPort }}
+      path: {{ .Values.metricsExporter.defaultMetricsPath }}
+      scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
+    custom_metrics:
+      port: {{ .Values.metricsExporter.defaultMetricsPort }}
+      path: {{ .Values.metricsExporter.defaultMetricsPath }}
+      scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
+    sink:
+      endpoint: {{ index .Values.endpoints .Values.environment | quote }}
+    log_level: {{ .Values.logLevel }}

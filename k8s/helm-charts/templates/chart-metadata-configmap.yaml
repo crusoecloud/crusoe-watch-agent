@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crusoe-watch-agent-metadata
+  namespace: {{ .Values.namespace }}
+data:
+  chart-version: {{ .Chart.Version | quote }}
+  chart-name: {{ .Chart.Name | quote }}
