@@ -406,7 +406,9 @@ do_refresh_token() {
   fi
   status "Writing token to secrets store at $CRUSOE_MONITORING_TOKEN_FILE..."
   mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  echo "CRUSOE_AUTH_TOKEN=${NEW_CRUSOE_AUTH_TOKEN}" > "$CRUSOE_MONITORING_TOKEN_FILE"
+  # Escape dollar signs to prevent variable expansion in docker-compose/vector
+  local escaped_token="${NEW_CRUSOE_AUTH_TOKEN//\$/\$\$}"
+  echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
   chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
   status "Token refresh complete."
   echo "CRUSOE_AUTH_TOKEN has been updated in $CRUSOE_MONITORING_TOKEN_FILE."
