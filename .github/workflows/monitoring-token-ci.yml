@@ -7,7 +7,7 @@ on:
       - "v*"
     # Only run if changes occur under the monitoring-token/ path
     paths:
-      - 'monitoring-token/**'
+      - 'k8s/monitoring-token/**'
   pull_request:
     branches: ["main"]
 
@@ -48,8 +48,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v5
         with:
-          context: ./monitoring-token
-          file: ./monitoring-token/Dockerfile
+          context: ./k8s/monitoring-token
+          file: ./k8s/monitoring-token/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
