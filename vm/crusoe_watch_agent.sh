@@ -273,12 +273,13 @@ do_install() {
     check_os_support
 
     status "Checking NVLink status."
-    local METRICS_CONFIG_URL="$GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG"
-    if nvidia-smi nvlink --status 2>&1 | grep -q "all links are inActive"; then
-      echo "NVLink is inactive. Using no-nvlink metrics config."
+    local METRICS_CONFIG_URL="$GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG"  # default to standard config
+    NVLINK_STATUS=$(nvidia-smi nvlink --status 2>&1 | xargs)
+    if [[ -z "$NVLINK_STATUS" || "$NVLINK_STATUS" == *"all links are inActive"* ]]; then
+      echo "NVLink is inactive or unavailable. Using no-nvlink metrics config."
       METRICS_CONFIG_URL="$GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG_NO_NVLINK"
     else
-      echo "NVLink is active or not applicable. Using standard metrics config."
+      echo "NVLink is active. Using standard metrics config."
     fi
 
     status "Download DCGM exporter metrics config."
