@@ -1,6 +1,7 @@
 name: Config Reloader CI
 
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
     tags:

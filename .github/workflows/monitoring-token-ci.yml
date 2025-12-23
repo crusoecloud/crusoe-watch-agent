@@ -1,10 +1,9 @@
 name: Monitoring Token Job CI
 
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
-    tags:
-      - "v*"
     # Only run if changes occur under the monitoring-token/ path
     paths:
       - 'k8s/monitoring-token/**'

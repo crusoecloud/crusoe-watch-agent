@@ -46,3 +46,24 @@ jobs:
             git tag "$TAG"
             git push "https://x-access-token:${REPO_PAT}@github.com/${REPO}.git" "$TAG"
           fi
+
+      - name: Dispatch component builds
+        if: steps.changed.outputs.changed == 'true'
+        env:
+          REPO_PAT: ${{ secrets.REPO_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+
+          dispatch() {
+            local workflow_file="$1"
+            echo "Dispatching ${workflow_file} on ${TAG}"
+            curl -sSf -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${REPO_PAT}" \
+              "https://api.github.com/repos/${REPO}/actions/workflows/${workflow_file}/dispatches" \
+              -d "{\"ref\":\"${TAG}\"}"
+          }
+
+          dispatch "config-reloader-ci.yml"
+          dispatch "monitoring-token-ci.yml"
