@@ -7,9 +7,9 @@ Requires=docker.service
 Type=simple
 TimeoutStartSec=0
 Restart=always
-WorkingDirectory=/etc/crusoe/telemetry_agent
-ExecStart=/usr/bin/docker compose -f /etc/crusoe/telemetry_agent/docker-compose-amd-exporter.yaml up
-ExecStop=/usr/bin/docker compose -f /etc/crusoe/telemetry_agent/docker-compose-amd-exporter.yaml down
+WorkingDirectory=/etc/crusoe/crusoe_watch_agent
+ExecStart=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-amd-exporter.yaml up
+ExecStop=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-amd-exporter.yaml down
 
 [Install]
 WantedBy=multi-user.target
