@@ -8,7 +8,7 @@ services:
       - "/dev/kfd:/dev/kfd"
     restart: always
     volumes:
-      - "/etc/crusoe/telemetry_agent/config:/etc/metrics:ro"
+      - "/etc/crusoe/crusoe_watch_agent/config:/etc/metrics:ro"
     ports:
       - "${AMD_EXPORTER_PORT:-5000}:5000"
     healthcheck:
