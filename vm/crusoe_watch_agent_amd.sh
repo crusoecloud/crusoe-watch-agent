@@ -7,18 +7,28 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 # GitHub branch (optional override via CLI, defaults to main)
 GITHUB_BRANCH="main"
 
+# Crusoe environment (optional override via CLI, defaults to main)
+ENVIRONMENT="prod"
+
 # Define paths for config files within the GitHub repository
 REMOTE_VECTOR_CONFIG_AMD_GPU_VM="config/vector_amd_gpu_vm.yaml"
 REMOTE_DOCKER_COMPOSE_VECTOR="docker/docker-compose-vector.yaml"
 REMOTE_DOCKER_COMPOSE_AMD_EXPORTER="docker/docker-compose-amd-exporter.yaml"
-REMOTE_CRUSOE_TELEMETRY_SERVICE="systemctl/crusoe-telemetry-agent.service"
+REMOTE_CRUSOE_WATCH_AGENT_SERVICE="systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_AMD_EXPORTER_SERVICE="systemctl/crusoe-amd-exporter.service"
 REMOTE_AMD_METRICS_CONFIG="config/amd_metrics_config.json"
 SYSTEMCTL_DIR="/etc/systemd/system"
-CRUSOE_TELEMETRY_AGENT_DIR="/etc/crusoe/telemetry_agent"
+CRUSOE_WATCH_AGENT_DIR="/etc/crusoe/crusoe_watch_agent"
 CRUSOE_AUTH_TOKEN_LENGTH=82
-ENV_FILE="$CRUSOE_TELEMETRY_AGENT_DIR/.env" # Define the .env file path
+ENV_FILE="$CRUSOE_WATCH_AGENT_DIR/.env" # Define the .env file path
 CRUSOE_AUTH_TOKEN_REFRESH_ALIAS_PATH="/usr/bin/crusoe_auth_token_refresh"
+
+# environment to crusoe Ingress endpoint Map
+declare -A -r TELEMETRY_INGRESS_MAP=(
+  ["dev"]="https://cms-monitoring.crusoecloud.xyz/ingest"
+  ["staging"]="https://cms-monitoring.crusoecloud.site/ingest"
+  ["prod"]="https://cms-monitoring.crusoecloud.com/ingest"
+)
 
 # CLI args parsing
 usage() {
@@ -134,7 +144,7 @@ ensure_rocm_6_2_or_newer() {
 parse_args "$@"
 
 # Update base URL to reflect chosen branch
-GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-telemetry-agent/${GITHUB_BRANCH}"
+GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${GITHUB_BRANCH}"
 
 # --- Main Script ---
 
@@ -156,9 +166,9 @@ if ! command_exists wget; then
   apt-get update && apt-get install -y wget || error_exit "Failed to install wget."
 fi
 
-status "Create telemetry agent target directory."
-if ! dir_exists "$CRUSOE_TELEMETRY_AGENT_DIR"; then
-  mkdir -p "$CRUSOE_TELEMETRY_AGENT_DIR"
+status "Create crusoe_watch_agent target directory."
+if ! dir_exists "$CRUSOE_WATCH_AGENT_DIR"; then
+  mkdir -p "$CRUSOE_WATCH_AGENT_DIR"
 fi
 
 # Validate ROCm installation and version
@@ -166,19 +176,19 @@ ensure_rocm_6_2_or_newer
 
 # Download Vector config for AMD GPU VM (scrapes AMD exporter)
 status "Download AMD GPU Vector config."
-wget -q -O "$CRUSOE_TELEMETRY_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_AMD_GPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_AMD_GPU_VM"
+wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_AMD_GPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_AMD_GPU_VM"
 
 status "Download Vector docker-compose file."
-wget -q -O "$CRUSOE_TELEMETRY_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
+wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
 
 # Download AMD Exporter docker-compose and systemd unit, then enable/start service
 status "Prepare AMD metrics config directory."
-mkdir -p "$CRUSOE_TELEMETRY_AGENT_DIR/config" || error_exit "Failed to create $CRUSOE_TELEMETRY_AGENT_DIR/config"
+mkdir -p "$CRUSOE_WATCH_AGENT_DIR/config" || error_exit "Failed to create $CRUSOE_WATCH_AGENT_DIR/config"
 status "Download AMD metrics config.json."
-wget -q -O "$CRUSOE_TELEMETRY_AGENT_DIR/config/config.json" "$GITHUB_RAW_BASE_URL/$REMOTE_AMD_METRICS_CONFIG" || error_exit "Failed to download $REMOTE_AMD_METRICS_CONFIG"
+wget -q -O "$CRUSOE_WATCH_AGENT_DIR/config/config.json" "$GITHUB_RAW_BASE_URL/$REMOTE_AMD_METRICS_CONFIG" || error_exit "Failed to download $REMOTE_AMD_METRICS_CONFIG"
 
 status "Download AMD Exporter docker-compose file."
-wget -q -O "$CRUSOE_TELEMETRY_AGENT_DIR/docker-compose-amd-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_AMD_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_AMD_EXPORTER"
+wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-amd-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_AMD_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_AMD_EXPORTER"
 
 status "Install crusoe-amd-exporter systemd unit."
 wget -q -O "$SYSTEMCTL_DIR/crusoe-amd-exporter.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_EXPORTER_SERVICE"
@@ -217,23 +227,23 @@ EOF
 
 echo ".env file created at $ENV_FILE"
 
-status "Download crusoe-telemetry-agent.service."
-wget -q -O "$SYSTEMCTL_DIR/crusoe-telemetry-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_TELEMETRY_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_TELEMETRY_SERVICE"
+status "Download crusoe-watch-agent.service."
+wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_SERVICE"
 
 status "Download crusoe_auth_token_refresh.sh and make it executable command."
-wget -q -O "$CRUSOE_TELEMETRY_AGENT_DIR/crusoe_auth_token_refresh.sh" "$GITHUB_RAW_BASE_URL/crusoe_auth_token_refresh.sh" || error_exit "Failed to download crusoe_auth_token_refresh.sh"
-chmod +x "$CRUSOE_TELEMETRY_AGENT_DIR/crusoe_auth_token_refresh.sh"
+wget -q -O "$CRUSOE_WATCH_AGENT_DIR/crusoe_auth_token_refresh.sh" "$GITHUB_RAW_BASE_URL/crusoe_auth_token_refresh.sh" || error_exit "Failed to download crusoe_auth_token_refresh.sh"
+chmod +x "$CRUSOE_WATCH_AGENT_DIR/crusoe_auth_token_refresh.sh"
 # Create a symbolic link from /usr/bin to the actual script location.
-ln -sf "$CRUSOE_TELEMETRY_AGENT_DIR/crusoe_auth_token_refresh.sh" "$CRUSOE_AUTH_TOKEN_REFRESH_ALIAS_PATH"
+ln -sf "$CRUSOE_WATCH_AGENT_DIR/crusoe_auth_token_refresh.sh" "$CRUSOE_AUTH_TOKEN_REFRESH_ALIAS_PATH"
 
-status "Enable and start systemd services for crusoe-telemetry-agent."
+status "Enable and start systemd services for crusoe-watch-agent."
 echo "systemctl daemon-reload"
 systemctl daemon-reload
-echo "systemctl enable crusoe-telemetry-agent.service"
-systemctl enable crusoe-telemetry-agent.service
-echo "systemctl start crusoe-telemetry-agent.service"
-systemctl start crusoe-telemetry-agent
+echo "systemctl enable crusoe-watch-agent.service"
+systemctl enable crusoe-watch-agent.service
+echo "systemctl start crusoe-watch-agent.service"
+systemctl start crusoe-watch-agent
 
 status "Setup Complete!"
-echo "Check status of crusoe-telemetry-agent service: 'sudo systemctl status crusoe-telemetry-agent.service'"
+echo "Check status of crusoe-watch-agent service: 'sudo systemctl status crusoe-watch-agent.service'"
 echo "Setup finished successfully!"
