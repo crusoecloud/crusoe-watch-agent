@@ -51,7 +51,7 @@ sinks:
         inputs:
             - add_update_labels
             - add_internal_labels
-        endpoint: "https://cms-monitoring.crusoecloud.com/ingest"
+        endpoint: "${TELEMETRY_INGRESS_ENDPOINT}"
         auth:
             strategy: bearer
             token: "${CRUSOE_AUTH_TOKEN}"
