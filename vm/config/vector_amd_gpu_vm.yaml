@@ -1,0 +1,67 @@
+sources:
+    host_metrics:
+        type: host_metrics
+        collectors:
+            - cpu
+            - disk
+            - memory
+            - network
+        network:
+          devices:
+            excludes:
+              - "lo*"
+            includes:
+              - "ens*"
+        scrape_interval_secs: 60
+
+    amd_metrics:
+        type: prometheus_scrape
+        endpoints:
+            - http://localhost:${AMD_EXPORTER_PORT}/metrics
+        scrape_interval_secs: 60
+        scrape_timeout_secs: 50
+
+    internal_metrics:
+      type: internal_metrics
+      scrape_interval_secs: 60
+
+transforms:
+    add_update_labels:
+        type: remap
+        inputs:
+            - host_metrics
+            - amd_metrics
+        source: |
+            del(.tags.Hostname)
+            .tags.vm_id = "${VM_ID}"
+            .tags.crusoe_resource = "vm"
+
+    add_internal_labels:
+        type: remap
+        inputs:
+          - internal_metrics
+        source: |
+          .tags.vm_id = "${VM_ID}"
+          .tags.crusoe_resource = "vm"
+          .tags.agent_version = "${AGENT_VERSION}"
+
+sinks:
+    cms_gateway:
+        type: prometheus_remote_write
+        inputs:
+            - add_update_labels
+            - add_internal_labels
+        endpoint: "https://cms-monitoring.crusoecloud.com/ingest"
+        auth:
+            strategy: bearer
+            token: "${CRUSOE_AUTH_TOKEN}"
+        healthcheck:
+            enabled: false
+        request:
+          concurrency: adaptive
+        batch:
+          max_bytes: 500000 # ~500KB
+        compression: snappy
+        tls:
+            verify_certificate: true
+            verify_hostname: true

@@ -1,0 +1,18 @@
+services:
+  crusoe-amd-exporter:
+    image: ${AMD_EXPORTER_IMAGE:-rocm/device-metrics-exporter:v1.4.0}
+    container_name: crusoe-amd-exporter
+    hostname: crusoe-amd-exporter
+    devices:
+      - "/dev/dri:/dev/dri"
+      - "/dev/kfd:/dev/kfd"
+    restart: always
+    volumes:
+      - "/etc/crusoe/telemetry_agent/config:/etc/metrics:ro"
+    ports:
+      - "${AMD_EXPORTER_PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/metrics >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
