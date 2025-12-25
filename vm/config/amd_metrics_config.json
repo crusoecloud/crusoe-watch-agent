@@ -1,0 +1,45 @@
+{
+  "_comment": "Config for AMD Device Metrics Exporter v1.4.0",
+  "CommonConfig": {
+    "HealthService": {
+      "Enable": true
+    }
+  },
+  "GPUConfig": {
+    "Fields": [
+      "GPU_USED_VISIBLE_VRAM",
+      "GPU_TOTAL_VISIBLE_VRAM",
+      "GPU_GFX_ACTIVITY",
+      "GPU_POWER_USAGE",
+      "GPU_UMC_ACTIVITY",
+      "GPU_PROF_TENSOR_ACTIVE_PERCENT",
+      "PCIE_BANDWIDTH",
+      "GPU_JUNCTION_TEMPERATURE",
+      "GPU_XGMI_LINK_RX",
+      "GPU_XGMI_LINK_TX",
+      "PCIE_REPLAY_COUNT",
+      "GPU_ECC_UNCORRECT_TOTAL",
+      "GPU_ECC_CORRECT_TOTAL",
+      "GPU_PROF_OCCUPANCY_PERCENT",
+      "GPU_PROF_SM_ACTIVE"
+    ],
+    "Labels": [
+      "CARD_MODEL",
+      "CONTAINER",
+      "GPU_COMPUTE_PARTITION_TYPE",
+      "GPU_ID",
+      "GPU_MEMORY_PARTITION_TYPE",
+      "GPU_PARTITION_ID",
+      "HOSTNAME",
+      "JOB_ID",
+      "JOB_PARTITION",
+      "JOB_USER",
+      "NAMESPACE",
+      "POD",
+      "SERIAL_NUMBER"
+    ],
+    "ProfilerMetrics": {
+      "all": true
+    }
+  }
+}
