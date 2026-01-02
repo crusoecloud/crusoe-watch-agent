@@ -1,3 +1,4 @@
+{{- if not .Values.secrets.useProvidedMonitoringToken }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -10,37 +11,22 @@ spec:
       serviceAccountName: secret-manager-sa
       restartPolicy: Never
       containers:
-        - name: ubuntu-worker
+        - name: crusoe-token-creator
           image: {{ .Values.job.image }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CRUSOE_NAMESPACE
+              value: {{ .Values.namespace }}
+            - name: CRUSOE_MONITORING_TOKEN_SECRET_NAME
+              value: {{ .Values.secrets.crusoeMonitoringToken }}
           envFrom:
             - secretRef:
                 name: {{ .Values.secrets.existingSecret }}
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              set -ex
-              apt-get update && apt-get install -y curl ca-certificates
-              KUBE_LATEST=$(curl -L -s https://dl.k8s.io/release/stable.txt)
-              curl -LO "https://dl.k8s.io/release/${KUBE_LATEST}/bin/linux/amd64/kubectl"
-              install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-
-              # --- CHECK AND EARLY EXIT ---
-              # Check if the secret already exists.
-              SECRET_NAME="{{ .Values.secrets.crusoeMonitoringToken }}"
-              NAMESPACE="{{ .Values.namespace }}"
-              if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
-                echo "Secret $SECRET_NAME already exists. Exiting job successfully."
-                exit 0
-              fi
-
-              # Continue with installation and secret creation steps only if the secret is missing
-              echo "Secret $SECRET_NAME does not exist. Proceeding with token creation."
-
-              echo "deb [trusted=yes] https://apt.fury.io/crusoe/ * *" > /etc/apt/sources.list.d/fury.list
-              apt update && apt install -y crusoe
-              export CRUSOE_ACCESS_KEY_ID="${CRUSOE_ACCESS_KEY}"
-              crusoe whoami
-              export CRUSOE_MONITORING_TOKEN=$(crusoe monitoring tokens create | grep "monitor token:" | awk '{print $3}')
-              kubectl create secret generic $SECRET_NAME \
-                --from-literal=CRUSOE_MONITORING_TOKEN="${CRUSOE_MONITORING_TOKEN}" \
-                -n $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+{{- end }}

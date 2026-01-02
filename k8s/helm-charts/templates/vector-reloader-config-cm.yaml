@@ -15,4 +15,10 @@ data:
       scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
     sink:
       endpoint: {{ index .Values.endpoints .Values.environment | quote }}
+{{- if .Values.proxy.enabled }}
+      proxy:
+        enabled: {{ .Values.proxy.enabled }}
+        http: "http://{{ .Values.proxy.url }}:{{ .Values.proxy.port }}"
+        https: "http://{{ .Values.proxy.url }}:{{ .Values.proxy.port }}"
+{{- end }}
     log_level: {{ .Values.logLevel }}
