@@ -359,12 +359,17 @@ vector:
           - disk
           - memory
           - network
+          - process
         network:
           devices:
             excludes:
               - "lo*"
             includes:
               - "ens*"
+        process:
+          processes:
+            includes:
+              - "vector"
         scrape_interval_secs: 60
       internal_metrics:
         type: internal_metrics
