@@ -1,0 +1,21 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nvidia-log-collector-config
+  namespace: default
+data:
+  # Collection interval in seconds (default: 1 hour)
+  collection-interval: "3600"
+
+  # Log level (DEBUG, INFO, WARNING, ERROR)
+  log-level: "INFO"
+
+  # NVIDIA namespace where GPU driver pods run
+  nvidia-namespace: "nvidia-gpu-operator"
+
+  # Prefix for NVIDIA driver pod names
+  nvidia-driver-pod-prefix: "nvidia-gpu-driver"
+
+  # Run once and exit (true/false)
+  run-once: "false"
