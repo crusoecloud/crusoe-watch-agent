@@ -18,6 +18,7 @@ import time
 import logging
 import tarfile
 import tempfile
+import base64
 from pathlib import Path
 from typing import Optional, List
 from datetime import datetime
@@ -124,15 +125,19 @@ class NvidiaLogCollector:
 
         try:
             # Generate unique filename with timestamp
+            # Note: nvidia-bug-report.sh automatically adds .gz extension
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_filename = f"nvidia-bug-report-{self.node_name}-{timestamp}.log.gz"
-            log_path = f"/tmp/{log_filename}"
+            log_filename_base = f"nvidia-bug-report-{self.node_name}-{timestamp}.log"
+            log_path_base = f"/tmp/{log_filename_base}"
 
-            # Execute nvidia-bug-report.sh
+            # The actual file will have .gz appended by nvidia-bug-report.sh
+            actual_log_path = f"{log_path_base}.gz"
+
+            # Execute nvidia-bug-report.sh (it will add .gz automatically)
             exec_command = [
                 "/bin/bash",
                 "-c",
-                f"nvidia-bug-report.sh --output-file {log_path} && echo {log_path}"
+                f"nvidia-bug-report.sh --output-file {log_path_base} && echo {actual_log_path}"
             ]
 
             LOG.info(f"Running command: {' '.join(exec_command)}")
@@ -162,9 +167,9 @@ class NvidiaLogCollector:
 
             resp.close()
 
-            if log_path in output or "Bug report generated" in output:
-                LOG.info(f"nvidia-bug-report.sh completed successfully, log file: {log_path}")
-                return log_path
+            if actual_log_path in output or "Bug report generated" in output:
+                LOG.info(f"nvidia-bug-report.sh completed successfully, log file: {actual_log_path}")
+                return actual_log_path
             else:
                 LOG.error(f"nvidia-bug-report.sh execution may have failed. Output: {output}")
                 return None
@@ -197,8 +202,49 @@ class NvidiaLogCollector:
         LOG.info(f"Downloading {remote_path} from pod {pod_name}")
 
         try:
-            # Create tar of the file
-            exec_command = ["tar", "cf", "-", remote_path]
+            # First verify the file exists
+            LOG.debug(f"Verifying file exists: {remote_path}")
+            check_command = ["test", "-f", remote_path, "&&", "echo", "EXISTS"]
+
+            resp = stream(
+                self.k8s_api.connect_get_namespaced_pod_exec,
+                pod_name,
+                self.nvidia_namespace,
+                container=container_name,
+                command=["/bin/sh", "-c", " ".join(check_command)],
+                stderr=True,
+                stdin=False,
+                stdout=True,
+                tty=False
+            )
+
+            if "EXISTS" not in resp:
+                LOG.error(f"File does not exist: {remote_path}")
+                # List files in /tmp to help debug
+                list_resp = stream(
+                    self.k8s_api.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    self.nvidia_namespace,
+                    container=container_name,
+                    command=["ls", "-lh", "/tmp/"],
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False
+                )
+                LOG.debug(f"Files in /tmp:\n{list_resp}")
+                return None
+
+            # Use base64 to avoid binary encoding issues
+            # Create tar, pipe to base64, then decode on our side
+            remote_dir = os.path.dirname(remote_path)
+            remote_file = os.path.basename(remote_path)
+            exec_command = [
+                "/bin/sh", "-c",
+                f"tar -C {remote_dir} -cf - {remote_file} | base64"
+            ]
+
+            LOG.debug(f"Running command: {exec_command[2]}")
 
             resp = stream(
                 self.k8s_api.connect_get_namespaced_pod_exec,
@@ -209,26 +255,22 @@ class NvidiaLogCollector:
                 stderr=True,
                 stdin=False,
                 stdout=True,
-                tty=False,
-                _preload_content=False
+                tty=False
             )
 
-            # Read tar data
-            tar_data = b""
-            while resp.is_open():
-                resp.update(timeout=1)
-                if resp.peek_stdout():
-                    tar_data += resp.read_stdout().encode('latin-1')
-                if resp.peek_stderr():
-                    stderr = resp.read_stderr()
-                    if stderr:
-                        LOG.warning(f"tar stderr: {stderr}")
-
-            resp.close()
-
-            if not tar_data:
+            # Read base64-encoded data (this is text, not binary)
+            if resp:
+                LOG.debug(f"Received base64 data, decoding...")
+                try:
+                    tar_data = base64.b64decode(resp)
+                except Exception as e:
+                    LOG.error(f"Failed to decode base64 data: {e}")
+                    return None
+            else:
                 LOG.error(f"No data received when downloading {remote_path}")
                 return None
+
+            LOG.debug(f"Decoded {len(tar_data)} bytes of tar data")
 
             # Extract tar to output directory
             with tempfile.NamedTemporaryFile(delete=False, suffix=".tar") as tmp_tar:
@@ -237,12 +279,15 @@ class NvidiaLogCollector:
 
             try:
                 with tarfile.open(tmp_tar_path, 'r') as tar:
-                    # Extract only the specific file
-                    member = tar.getmember(remote_path.lstrip('/'))
-                    member.name = os.path.basename(remote_path)
+                    # List members for debugging
+                    members = tar.getmembers()
+                    LOG.debug(f"Tar contains {len(members)} members: {[m.name for m in members]}")
+
+                    # Extract the file (it should just be the filename without path now)
+                    member = tar.getmember(remote_file)
                     tar.extract(member, path=self.output_dir)
 
-                output_file = self.output_dir / os.path.basename(remote_path)
+                output_file = self.output_dir / remote_file
                 LOG.info(f"Successfully downloaded log to {output_file}")
                 return output_file
 
@@ -254,6 +299,9 @@ class NvidiaLogCollector:
             return None
         except tarfile.TarError as e:
             LOG.error(f"Error extracting tar file: {e}")
+            return None
+        except KeyError as e:
+            LOG.error(f"File not found in tar archive: {e}")
             return None
         except Exception as e:
             LOG.error(f"Unexpected error downloading log file: {e}")
