@@ -17,6 +17,10 @@ class YamlUtils:
         return cfg
 
     @staticmethod
+    def load_yaml_string(yaml_string: str) -> dict:
+        return dict(yaml.safe_load(yaml_string) or {})
+
+    @staticmethod
     def save_yaml(path: str, cfg: dict):
         with open(path, "w") as f:
             yaml.safe_dump(cfg, f)

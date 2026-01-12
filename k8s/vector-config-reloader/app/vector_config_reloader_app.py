@@ -3,6 +3,7 @@ from kubernetes import client, config, watch
 from utils import LiteralStr, YamlUtils
 from amd_exporter import AmdExporterManager
 
+NAMESPACE = "crusoe-system"
 VECTOR_CONFIG_PATH = "/etc/vector/vector.yaml"
 VECTOR_BASE_CONFIG_PATH = "/etc/vector-base/vector.yaml"
 RELOADER_CONFIG_PATH = "/etc/reloader/config.yaml"
@@ -27,6 +28,8 @@ nodepool_id_parts, _ = slice(prefix_parts, 0, length(prefix_parts) - 1)
 .tags.crusoe_resource = "vm"
 """)
 CUSTOM_METRICS_VECTOR_TRANSFORM_NAME = "enrich_custom_metrics"
+CUSTOM_METRICS_CONFIG_MAP_NAME = "crusoe-custom-metrics-config"
+CUSTOM_METRICS_CONFIG_MAP_KEY = "custom-metrics-config.yaml"
 CUSTOM_METRICS_SCRAPE_ANNOTATION = "crusoe.custom_metrics.enable_scrape"
 CUSTOM_METRICS_PORT_ANNOTATION = "crusoe.custom_metrics.port"
 CUSTOM_METRICS_PATH_ANNOTATION = "crusoe.custom_metrics.path"
@@ -68,7 +71,9 @@ class VectorConfigReloader:
         self.running = True
         config.load_incluster_config()
         self.k8s_api_client = client.CoreV1Api()
-        self.k8s_event_watcher = watch.Watch()
+        self.k8s_pod_event_watcher = watch.Watch()
+        self.k8s_config_map_event_watcher = watch.Watch()
+        self.custom_metrics_config_map_cache = {}
 
         reloader_cfg = YamlUtils.load_yaml_config(RELOADER_CONFIG_PATH)
         self.dcgm_exporter_port = reloader_cfg["dcgm_metrics"]["port"]
@@ -123,6 +128,62 @@ class VectorConfigReloader:
     def get_dcgm_exporter_scrape_endpoint(self, pod_ip) -> str:
         return f"http://{pod_ip}:{self.dcgm_exporter_port}{self.dcgm_exporter_path}"
 
+    def get_deployment_metrics_config(self, deployment_name: str) -> dict:
+        if not deployment_name:
+            return {}
+        try:
+            config_map = self.k8s_api_client.read_namespaced_config_map(
+                name=CUSTOM_METRICS_CONFIG_MAP_NAME,
+                namespace=NAMESPACE
+            )
+            config_map_data = config_map.data or {}
+        except client.ApiException as e:
+            LOG.warning(f"Failed to fetch ConfigMap '{CUSTOM_METRICS_CONFIG_MAP_NAME}': {e}")
+            return {}
+        config_yaml = config_map_data.get(CUSTOM_METRICS_CONFIG_MAP_KEY, "")
+        if not config_yaml:
+            return {}
+        config = YamlUtils.load_yaml_string(config_yaml)
+        return config.get(deployment_name, {})
+
+    @staticmethod
+    def build_deployment_transform_source(deployment_config: dict) -> str:
+        vrl_lines = []
+        allowlist = deployment_config.get("allowlist", [])
+        droplist = deployment_config.get("droplist", [])
+        drop_labels = deployment_config.get("dropLabels", [])
+        add_labels = deployment_config.get("addLabels", [])
+
+        if allowlist:
+            allowed_metrics = ", ".join([f'"{m}"' for m in allowlist])
+            vrl_lines.append(f'allowed_metrics = [{allowed_metrics}]')
+            vrl_lines.append('if !includes(allowed_metrics, .name) { abort }')
+        elif droplist:
+            dropped_metrics = ", ".join([f'"{m}"' for m in droplist])
+            vrl_lines.append(f'dropped_metrics = [{dropped_metrics}]')
+            vrl_lines.append('if includes(dropped_metrics, .name) { abort }')
+
+        for label in drop_labels:
+            vrl_lines.append(f'del(.tags.{label})')
+
+        for label_entry in add_labels:
+            if isinstance(label_entry, dict):
+                for key, value in label_entry.items():
+                    vrl_lines.append(f'.tags.{key} = "{value}"')
+
+        vrl_lines.append('if exists(.tags.Hostname) {')
+        vrl_lines.append('parts, _ = split(.tags.Hostname, ".")')
+        vrl_lines.append('host_prefix = get(parts, [0]) ?? ""')
+        vrl_lines.append('prefix_parts, _ = split(host_prefix, "-")')
+        vrl_lines.append('nodepool_id_parts, _ = slice(prefix_parts, 0, length(prefix_parts) - 1)')
+        vrl_lines.append('.tags.nodepool, _ = join(nodepool_id_parts, "-")')
+        vrl_lines.append('}')
+        vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
+        vrl_lines.append('.tags.vm_id = "${VM_ID}"')
+        vrl_lines.append('.tags.crusoe_resource = "custom_metrics"')
+
+        return "\n".join(vrl_lines)
+
     def get_custom_metrics_endpoint_cfg(self, pod) -> dict:
         pod_ip = pod.status.pod_ip
         pod_name = pod.metadata.name
@@ -133,9 +194,12 @@ class VectorConfigReloader:
         if interval < SCRAPE_INTERVAL_MIN_THRESHOLD:
             LOG.warning(f"For pod {pod_name}, scrape interval set to: {interval} (less than 5 seconds), defaulting to {SCRAPE_INTERVAL_MIN_THRESHOLD}")
             interval = SCRAPE_INTERVAL_MIN_THRESHOLD
+        parts = pod_name.rsplit("-", 2)
+        deployment_name = parts[0] if len(parts) == 3 else ""
         return {
             "url": f"http://{pod_ip}:{port}{path}",
             "pod_name": pod_name,
+            "deployment_name": deployment_name,
             "scrape_interval_secs": interval,
             "scrape_timeout_secs": int(interval * SCRAPE_TIMEOUT_PERCENTAGE)
         }
@@ -164,29 +228,48 @@ class VectorConfigReloader:
             return
         sources = vector_cfg.get("sources")
         transforms = vector_cfg.get("transforms")
-        enrich_custom_metrics = transforms.setdefault(CUSTOM_METRICS_VECTOR_TRANSFORM_NAME, CUSTOM_METRICS_VECTOR_TRANSFORM)
-        inputs = set(enrich_custom_metrics.get("inputs", []))
+        sinks = vector_cfg.get("sinks")
 
         for endpoint in custom_metrics_eps:
-            source_name = f"{VectorConfigReloader.sanitize_name(endpoint['pod_name'])}_scrape"
+            pod_name_sanitized = VectorConfigReloader.sanitize_name(endpoint['pod_name'])
+            source_name = f"{pod_name_sanitized}_scrape"
             sources[source_name] = {
                 "type": "prometheus_scrape",
                 "endpoints": [endpoint["url"]],
                 "scrape_interval_secs": endpoint["scrape_interval_secs"],
                 "scrape_timeout_secs": endpoint["scrape_timeout_secs"]
             }
-            inputs.add(source_name)
-        enrich_custom_metrics["inputs"] = sorted(inputs)
-        vector_cfg["sinks"]["cms_gateway_custom_metrics"] = self.custom_metrics_sink_config
+
+            deployment_name = endpoint.get("deployment_name", "")
+            deployment_config = self.get_deployment_metrics_config(deployment_name)
+
+            transform_name = f"{pod_name_sanitized}_transform"
+            transform_source = VectorConfigReloader.build_deployment_transform_source(deployment_config)
+            transforms[transform_name] = {
+                "type": "remap",
+                "inputs": [source_name],
+                "drop_on_abort": True,
+                "source": LiteralStr(transform_source)
+            }
+            LOG.info(f"Created transform '{transform_name}' for pod '{endpoint['pod_name']}'")
+
+            sink_name = f"{pod_name_sanitized}_sink"
+            sink_config = self.custom_metrics_sink_config.copy()
+            sink_config["inputs"] = [transform_name]
+            sinks[sink_name] = sink_config
+            LOG.info(f"Created custom metrics pipeline for pod '{endpoint['pod_name']}'")
 
     def remove_custom_metrics_scrape_config(self, vector_cfg: dict, custom_metrics_ep: dict):
-        source_name = f"{VectorConfigReloader.sanitize_name(custom_metrics_ep['pod_name'])}_scrape"
+        pod_name_sanitized = VectorConfigReloader.sanitize_name(custom_metrics_ep['pod_name'])
+        source_name = f"{pod_name_sanitized}_scrape"
+        transform_name = f"{pod_name_sanitized}_transform"
+        sink_name = f"{pod_name_sanitized}_sink"
+
         vector_cfg.get("sources", {}).pop(source_name, None)
-        inputs = set(vector_cfg["transforms"][CUSTOM_METRICS_VECTOR_TRANSFORM_NAME].get("inputs", []))
-        inputs.discard(source_name)
-        vector_cfg["transforms"][CUSTOM_METRICS_VECTOR_TRANSFORM_NAME]["inputs"] = sorted(inputs)
-        if not vector_cfg["transforms"][CUSTOM_METRICS_VECTOR_TRANSFORM_NAME]["inputs"]:
-            vector_cfg.get("sinks", {}).pop("cms_gateway_custom_metrics", None)
+        vector_cfg.get("transforms", {}).pop(transform_name, None)
+        vector_cfg.get("sinks", {}).pop(sink_name, None)
+
+        LOG.info(f"Removed custom metrics pipeline for pod '{custom_metrics_ep['pod_name']}'")
 
     def bootstrap_config(self):
         base_cfg = YamlUtils.load_yaml_config(VECTOR_BASE_CONFIG_PATH)
@@ -221,6 +304,23 @@ class VectorConfigReloader:
         base_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = NODE_METRICS_VECTOR_TRANSFORM_SOURCE
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, base_cfg)
         LOG.info(f"Vector config bootstrapped!")
+
+    def handle_custom_metrics_config_map_event(self, event):
+        custom_metrics_config_map = event["object"]
+        event_type = event["type"]
+        custom_metrics_config_map_name = custom_metrics_config_map.metadata.name
+
+        LOG.info(f"Custom metrics ConfigMap event received: {event_type} for {custom_metrics_config_map_name}")
+
+        # Store the custom metrics configmap data
+        self.custom_metrics_config_map_cache[custom_metrics_config_map_name] = custom_metrics_config_map.data
+
+        # Reload vector config when custom metrics configmap changes
+        if event_type in ("ADDED", "MODIFIED"):
+            LOG.info(f"Custom metrics ConfigMap {custom_metrics_config_map_name} changed, reloading vector config...")
+            self.bootstrap_config()
+        elif event_type == "DELETED":
+            LOG.error(f"CRITICAL: Custom metrics ConfigMap {custom_metrics_config_map_name} was deleted! This should never happen. Keeping internal cache intact.")
 
     def handle_pod_event(self, event):
         pod = event["object"]
@@ -258,6 +358,42 @@ class VectorConfigReloader:
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, current_vector_cfg)
         LOG.info(f"Vector config reloaded!")
 
+    def run_pod_event_watcher(self):
+        try:
+            stream = self.k8s_pod_event_watcher.stream(
+                self.k8s_api_client.list_pod_for_all_namespaces,
+                field_selector=f"spec.nodeName={self.node_name}",
+                _request_timeout=0
+            )
+            for event in stream:
+                try:
+                    self.handle_pod_event(event)
+                except Exception as e:
+                    LOG.error(f"Failed to handle pod event: {e}")
+                if not self.running:
+                    self.k8s_pod_event_watcher.stop()
+                    break
+        except client.ApiException as e:
+            LOG.error(f"k8s pod event watcher error: {e}")
+
+    def run_config_map_event_watcher(self):
+        try:
+            stream = self.k8s_config_map_event_watcher.stream(
+                self.k8s_api_client.list_namespaced_config_map,
+                namespace=NAMESPACE,
+                _request_timeout=0
+            )
+            for event in stream:
+                try:
+                    self.handle_custom_metrics_config_map_event(event)
+                except Exception as e:
+                    LOG.error(f"Failed to handle pod event: {e}")
+                if not self.running:
+                    self.k8s_config_map_event_watcher.stop()
+                    break
+        except client.ApiException as e:
+            LOG.error(f"k8s config_map event watcher error: {e}")
+
     def execute(self):
         signal.signal(signal.SIGINT, self.handle_sigterm)
         signal.signal(signal.SIGTERM, self.handle_sigterm)
@@ -265,7 +401,7 @@ class VectorConfigReloader:
         self.bootstrap_config()
 
         try:
-            stream = self.k8s_event_watcher.stream(
+            stream = self.k8s_pod_event_watcher.stream(
                 self.k8s_api_client.list_pod_for_all_namespaces,
                 field_selector=f"spec.nodeName={self.node_name}",
                 _request_timeout=0
@@ -273,7 +409,7 @@ class VectorConfigReloader:
             for event in stream:
                 self.handle_pod_event(event)
                 if not self.running:
-                    self.k8s_event_watcher.stop()
+                    self.k8s_pod_event_watcher.stop()
                     break
         except client.ApiException as e:
             LOG.error(f"k8s event watcher error: {e}")

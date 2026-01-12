@@ -8,7 +8,6 @@ from vector_config_reloader_app import (
     CUSTOM_METRICS_PORT_ANNOTATION,
     CUSTOM_METRICS_PATH_ANNOTATION,
     CUSTOM_METRICS_SCRAPE_INTERVAL_ANNOTATION,
-    CUSTOM_METRICS_VECTOR_TRANSFORM_NAME,
 )
 
 class DummyPod:
@@ -143,8 +142,8 @@ def test_set_and_remove_custom_metrics_scrape_config(monkeypatch):
     vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
 
     eps = [
-        {"url": "http://10.2.0.1:9100/metrics", "pod_name": "svc-x-1", "scrape_interval_secs": 15, "scrape_timeout_secs": 10},
-        {"url": "http://10.2.0.2:9100/metrics", "pod_name": "svc-y-2", "scrape_interval_secs": 20, "scrape_timeout_secs": 14},
+        {"url": "http://10.2.0.1:9100/metrics", "pod_name": "svc-x-1", "deployment_name": "", "scrape_interval_secs": 15, "scrape_timeout_secs": 10},
+        {"url": "http://10.2.0.2:9100/metrics", "pod_name": "svc-y-2", "deployment_name": "", "scrape_interval_secs": 20, "scrape_timeout_secs": 14},
     ]
 
     r.set_custom_metrics_scrape_config(vector_cfg, eps)
@@ -153,21 +152,29 @@ def test_set_and_remove_custom_metrics_scrape_config(monkeypatch):
     assert "svc_x_1_scrape" in vector_cfg["sources"]
     assert "svc_y_2_scrape" in vector_cfg["sources"]
 
-    # Transform created with inputs sorted
-    assert CUSTOM_METRICS_VECTOR_TRANSFORM_NAME in vector_cfg["transforms"]
-    inputs = vector_cfg["transforms"][CUSTOM_METRICS_VECTOR_TRANSFORM_NAME]["inputs"]
-    assert inputs == sorted(inputs) and set(inputs) == {"svc_x_1_scrape", "svc_y_2_scrape"}
+    # Per-pod transforms created
+    assert "svc_x_1_transform" in vector_cfg["transforms"]
+    assert "svc_y_2_transform" in vector_cfg["transforms"]
+    assert vector_cfg["transforms"]["svc_x_1_transform"]["inputs"] == ["svc_x_1_scrape"]
+    assert vector_cfg["transforms"]["svc_y_2_transform"]["inputs"] == ["svc_y_2_scrape"]
 
-    # Sink added
-    assert "cms_gateway_custom_metrics" in vector_cfg["sinks"]
+    # Per-pod sinks created
+    assert "svc_x_1_sink" in vector_cfg["sinks"]
+    assert "svc_y_2_sink" in vector_cfg["sinks"]
+    assert vector_cfg["sinks"]["svc_x_1_sink"]["inputs"] == ["svc_x_1_transform"]
+    assert vector_cfg["sinks"]["svc_y_2_sink"]["inputs"] == ["svc_y_2_transform"]
 
-    # Remove one endpoint -> transform input updated, sink remains
+    # Remove one endpoint -> its source, transform, sink removed; other remains
     r.remove_custom_metrics_scrape_config(vector_cfg, eps[0])
-    inputs_after_one = vector_cfg["transforms"][CUSTOM_METRICS_VECTOR_TRANSFORM_NAME]["inputs"]
-    assert inputs_after_one == ["svc_y_2_scrape"]
-    assert "cms_gateway_custom_metrics" in vector_cfg["sinks"]
+    assert "svc_x_1_scrape" not in vector_cfg["sources"]
+    assert "svc_x_1_transform" not in vector_cfg["transforms"]
+    assert "svc_x_1_sink" not in vector_cfg["sinks"]
+    assert "svc_y_2_scrape" in vector_cfg["sources"]
+    assert "svc_y_2_transform" in vector_cfg["transforms"]
+    assert "svc_y_2_sink" in vector_cfg["sinks"]
 
-    # Remove last endpoint -> transform empty and sink removed
+    # Remove last endpoint -> all components removed
     r.remove_custom_metrics_scrape_config(vector_cfg, eps[1])
-    assert vector_cfg["transforms"][CUSTOM_METRICS_VECTOR_TRANSFORM_NAME]["inputs"] == []
-    assert "cms_gateway_custom_metrics" not in vector_cfg["sinks"]
+    assert "svc_y_2_scrape" not in vector_cfg["sources"]
+    assert "svc_y_2_transform" not in vector_cfg["transforms"]
+    assert "svc_y_2_sink" not in vector_cfg["sinks"]
