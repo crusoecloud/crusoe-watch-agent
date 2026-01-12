@@ -125,83 +125,65 @@ class NvidiaLogCollector:
             LOG.error(f"Unexpected error checking for tasks: {e}")
             return None
 
-    def upload_logs(self, log_file: Path, event_id: str) -> bool:
+    def report_result(self, event_id: str, status: str, log_file: Optional[Path] = None, message: str = "") -> bool:
         """
-        Upload the collected log file to the API.
-
-        Args:
-            log_file: Path to the log file to upload
-            event_id: Event ID associated with this collection
-
-        Returns:
-            True if upload successful, False otherwise
-        """
-        try:
-            url = f"{API_BASE_URL}/upload-logs"
-
-            LOG.info(f"Uploading log file {log_file.name} to {url}")
-
-            with open(log_file, 'rb') as f:
-                files = {'file': (log_file.name, f, 'application/gzip')}
-                data = {
-                    'vm_id': self.vm_id,
-                    'event_id': event_id,
-                    'node_name': self.node_name
-                }
-
-                response = requests.post(url, files=files, data=data, timeout=60)
-
-            if response.status_code == 200:
-                LOG.info(f"Successfully uploaded log file for event {event_id}")
-                return True
-            else:
-                LOG.error(f"Upload failed with status {response.status_code}: {response.text}")
-                return False
-
-        except requests.exceptions.Timeout:
-            LOG.error("Upload request timed out")
-            return False
-        except requests.exceptions.RequestException as e:
-            LOG.error(f"Upload request failed: {e}")
-            return False
-        except Exception as e:
-            LOG.error(f"Unexpected error during upload: {e}")
-            return False
-
-    def send_status(self, event_id: str, status: str, message: str = "") -> bool:
-        """
-        Send status update to the API (success or failed).
+        Report collection result to the API - combines upload and status in a single call.
 
         Args:
             event_id: Event ID for this collection
             status: Status string ('success' or 'failed')
-            message: Optional message with details
+            log_file: Optional path to log file (for success case)
+            message: Optional message with details (for failed case or additional info)
 
         Returns:
-            True if status sent successfully, False otherwise
+            True if report successful, False otherwise
         """
         try:
-            url = f"{API_BASE_URL}/upload-logs"  # Same endpoint for status
-            data = {
-                'vm_id': self.vm_id,
-                'event_id': event_id,
-                'status': status,
-                'message': message,
-                'node_name': self.node_name
-            }
+            url = f"{API_BASE_URL}/upload-logs"
 
-            LOG.info(f"Sending {status} status for event {event_id}")
-            response = requests.post(url, json=data, timeout=10)
+            if log_file and status == "success":
+                # Success case - upload file with success status
+                LOG.info(f"Uploading log file {log_file.name} with success status for event {event_id}")
+
+                with open(log_file, 'rb') as f:
+                    files = {'file': (log_file.name, f, 'application/gzip')}
+                    data = {
+                        'vm_id': self.vm_id,
+                        'event_id': event_id,
+                        'node_name': self.node_name,
+                        'status': status,
+                        'message': message if message else 'Logs collected and uploaded successfully'
+                    }
+
+                    response = requests.post(url, files=files, data=data, timeout=60)
+            else:
+                # Failed case - send status only
+                LOG.info(f"Sending {status} status for event {event_id}: {message}")
+                data = {
+                    'vm_id': self.vm_id,
+                    'event_id': event_id,
+                    'status': status,
+                    'message': message,
+                    'node_name': self.node_name
+                }
+
+                response = requests.post(url, json=data, timeout=10)
 
             if response.status_code == 200:
-                LOG.info(f"Status '{status}' sent successfully for event {event_id}")
+                LOG.info(f"Successfully reported {status} result for event {event_id}")
                 return True
             else:
-                LOG.warning(f"Failed to send status: {response.status_code} - {response.text}")
+                LOG.error(f"Failed to report result: {response.status_code} - {response.text}")
                 return False
 
+        except requests.exceptions.Timeout:
+            LOG.error("Report request timed out")
+            return False
+        except requests.exceptions.RequestException as e:
+            LOG.error(f"Report request failed: {e}")
+            return False
         except Exception as e:
-            LOG.error(f"Failed to send status: {e}")
+            LOG.error(f"Unexpected error during report: {e}")
             return False
 
     def find_nvidia_driver_pod(self) -> Optional[client.V1Pod]:
@@ -667,20 +649,13 @@ class NvidiaLogCollector:
                     success, log_path, error_msg = self.collect_logs_with_timeout(event_id)
 
                     if success and log_path:
-                        # Upload the collected logs
-                        LOG.info(f"Uploading collected logs for event {event_id}")
-                        upload_success = self.upload_logs(log_path, event_id)
-
-                        if upload_success:
-                            LOG.info(f"Successfully completed collection and upload for event {event_id}")
-                            self.send_status(event_id, "success", "Logs collected and uploaded successfully")
-                        else:
-                            LOG.error(f"Failed to upload logs for event {event_id}")
-                            self.send_status(event_id, "failed", "Log collection succeeded but upload failed")
+                        # Report success and upload logs in a single call
+                        LOG.info(f"Reporting success and uploading logs for event {event_id}")
+                        self.report_result(event_id, "success", log_file=log_path)
                     else:
-                        # Collection failed or timed out
+                        # Report failure with error message
                         LOG.error(f"Collection failed for event {event_id}: {error_msg}")
-                        self.send_status(event_id, "failed", error_msg)
+                        self.report_result(event_id, "failed", message=error_msg)
 
                 else:
                     # No tasks available

@@ -29,16 +29,15 @@ When `API_ENABLED=true`, the collector operates in event-driven mode:
 1. Polls the API endpoint (`/check-tasks?vm_id=<VM_ID>`) at regular intervals
 2. When the API returns a task with an `event_id`, collection begins
 3. Log filename includes the `event_id` for tracking
-4. After collection, logs are uploaded via `/upload-logs` endpoint
-5. Status updates (success/failed) are sent back to the API
-6. Automatic timeout handling after 5 minutes (configurable)
+4. After collection, results are reported via `/upload-logs` endpoint (single call for both upload and status)
+5. Automatic timeout handling after 5 minutes (configurable)
 
 **API Endpoints:**
 - `GET /check-tasks?vm_id=<VM_ID>` - Check for pending collection tasks
   - Response: `{"status": "success", "event_id": "12345"}` if task available
-- `POST /upload-logs` - Upload collected logs
-  - Form data: `file`, `vm_id`, `event_id`, `node_name`
-  - JSON data (for status): `vm_id`, `event_id`, `status` ("success"/"failed"), `message`, `node_name`
+- `POST /upload-logs` - Report collection results (combines upload and status)
+  - **Success case** (multipart/form-data): `file`, `vm_id`, `event_id`, `node_name`, `status` ("success"), `message`
+  - **Failure case** (JSON): `vm_id`, `event_id`, `status` ("failed"), `message`, `node_name`
 
 ### One-Time Mode
 Set `RUN_ONCE=true` to collect logs once and exit. Useful for testing or manual collection.
@@ -226,8 +225,7 @@ In this mode, the collector will:
 - Poll the API every 60 seconds for new tasks
 - Execute log collection when an `event_id` is received
 - Include the `event_id` in the log filename
-- Upload logs to the API after collection
-- Send status updates (success/failed)
+- Report results to the API in a single call (upload logs + status for success, or just status for failure)
 - Timeout after 5 minutes if collection takes too long
 
 ### Manual Execution (One-time Collection)
