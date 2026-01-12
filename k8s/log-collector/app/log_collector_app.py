@@ -59,14 +59,15 @@ class NvidiaLogCollector:
 
     def __init__(self):
         """Initialize the log collector."""
-        self.node_name = NODE_NAME
+        # Read from environment for testability
+        self.node_name = os.environ.get("NODE_NAME")
         if not self.node_name:
             raise RuntimeError("NODE_NAME environment variable not set")
 
-        self.vm_id = os.environ.get("VM_ID")  # Unique VM identifier (optional) - read from env for testability
-        self.nvidia_namespace = NVIDIA_NAMESPACE
-        self.driver_pod_prefix = NVIDIA_DRIVER_POD_PREFIX
-        self.output_dir = Path(LOG_OUTPUT_DIR)
+        self.vm_id = os.environ.get("VM_ID")  # Unique VM identifier (optional)
+        self.nvidia_namespace = os.environ.get("NVIDIA_NAMESPACE", NVIDIA_NAMESPACE)
+        self.driver_pod_prefix = os.environ.get("NVIDIA_DRIVER_POD_PREFIX", NVIDIA_DRIVER_POD_PREFIX)
+        self.output_dir = Path(os.environ.get("LOG_OUTPUT_DIR", LOG_OUTPUT_DIR))
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Kubernetes client
