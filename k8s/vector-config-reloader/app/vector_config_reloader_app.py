@@ -81,12 +81,13 @@ class VectorConfigReloader:
         self.dcgm_exporter_scrape_interval = reloader_cfg["dcgm_metrics"]["scrape_interval"]
         self.amd_manager = AmdExporterManager(reloader_cfg.get("amd_metrics", {}))
         self.default_custom_metrics_config = reloader_cfg["custom_metrics"]
-        self.sink_endpoint = reloader_cfg["sink"]["endpoint"]
+        self.infra_sink_endpoint = f"{reloader_cfg["sink"]["endpoint"]}/ingest"
+        self.custom_sink_endpoint = f"{reloader_cfg["sink"]["endpoint"]}/custom"
         self.sink_proxy_cfg = reloader_cfg["sink"].get("proxy", {}) or {}
         self.custom_metrics_sink_config = {
             "type": "prometheus_remote_write",
             "inputs": [CUSTOM_METRICS_VECTOR_TRANSFORM_NAME],
-            "endpoint": self.sink_endpoint,
+            "endpoint": self.custom_sink_endpoint,
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "healthcheck": {"enabled": False},
             "compression": "snappy",
@@ -293,7 +294,7 @@ class VectorConfigReloader:
             self.amd_manager.set_scrape(base_cfg, amd_exporter_ep, NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
 
         # set endpoint as per env
-        base_cfg["sinks"]["cms_gateway_node_metrics"]["endpoint"] = self.sink_endpoint
+        base_cfg["sinks"]["cms_gateway_node_metrics"]["endpoint"] = self.infra_sink_endpoint
 
         # set proxy config if enabled in reloader config
         if self.sink_proxy_cfg.get("enabled"):
