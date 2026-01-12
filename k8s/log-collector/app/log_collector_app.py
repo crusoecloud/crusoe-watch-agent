@@ -63,7 +63,7 @@ class NvidiaLogCollector:
         if not self.node_name:
             raise RuntimeError("NODE_NAME environment variable not set")
 
-        self.vm_id = VM_ID  # Unique VM identifier (optional)
+        self.vm_id = os.environ.get("VM_ID")  # Unique VM identifier (optional) - read from env for testability
         self.nvidia_namespace = NVIDIA_NAMESPACE
         self.driver_pod_prefix = NVIDIA_DRIVER_POD_PREFIX
         self.output_dir = Path(LOG_OUTPUT_DIR)
