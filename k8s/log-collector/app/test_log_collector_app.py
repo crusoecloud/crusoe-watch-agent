@@ -32,7 +32,7 @@ class TestNvidiaLogCollector(unittest.TestCase):
         }
 
         # Set test environment
-        os.environ['NODE_NAME'] = 'test-node-1'
+        os.environ['NODE_NAME'] = 'test-node'
         os.environ['LOG_OUTPUT_DIR'] = self.output_dir
         os.environ['NVIDIA_NAMESPACE'] = 'nvidia-gpu-operator'
 
@@ -52,7 +52,7 @@ class TestNvidiaLogCollector(unittest.TestCase):
         """Test collector initialization."""
         collector = NvidiaLogCollector()
 
-        self.assertEqual(collector.node_name, 'test-node-1')
+        self.assertEqual(collector.node_name, 'test-node')
         self.assertEqual(collector.nvidia_namespace, 'nvidia-gpu-operator')
         self.assertTrue(collector.output_dir.exists())
         mock_load_config.assert_called_once()
