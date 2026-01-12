@@ -3,7 +3,7 @@ from kubernetes import client, config, watch
 from utils import LiteralStr, YamlUtils
 from amd_exporter import AmdExporterManager
 
-NAMESPACE = "crusoe-system"
+CUSTOM_METRICS_CM_NAMESPACE = "crusoe-monitoring"
 VECTOR_CONFIG_PATH = "/etc/vector/vector.yaml"
 VECTOR_BASE_CONFIG_PATH = "/etc/vector-base/vector.yaml"
 RELOADER_CONFIG_PATH = "/etc/reloader/config.yaml"
@@ -30,9 +30,9 @@ nodepool_id_parts, _ = slice(prefix_parts, 0, length(prefix_parts) - 1)
 CUSTOM_METRICS_VECTOR_TRANSFORM_NAME = "enrich_custom_metrics"
 CUSTOM_METRICS_CONFIG_MAP_NAME = "crusoe-custom-metrics-config"
 CUSTOM_METRICS_CONFIG_MAP_KEY = "custom-metrics-config.yaml"
-CUSTOM_METRICS_SCRAPE_ANNOTATION = "crusoe.custom_metrics.enable_scrape"
-CUSTOM_METRICS_PORT_ANNOTATION = "crusoe.custom_metrics.port"
-CUSTOM_METRICS_PATH_ANNOTATION = "crusoe.custom_metrics.path"
+CUSTOM_METRICS_SCRAPE_ANNOTATION = "crusoe.ai/scrape"
+CUSTOM_METRICS_PORT_ANNOTATION = "crusoe.ai/port"
+CUSTOM_METRICS_PATH_ANNOTATION = "crusoe.ai/path"
 CUSTOM_METRICS_SCRAPE_INTERVAL_ANNOTATION = f"crusoe.custom_metrics.scrape_interval"
 CUSTOM_METRICS_VECTOR_TRANSFORM = {
     "type": "remap",
@@ -134,7 +134,7 @@ class VectorConfigReloader:
         try:
             config_map = self.k8s_api_client.read_namespaced_config_map(
                 name=CUSTOM_METRICS_CONFIG_MAP_NAME,
-                namespace=NAMESPACE
+                namespace=CUSTOM_METRICS_CM_NAMESPACE
             )
             config_map_data = config_map.data or {}
         except client.ApiException as e:
@@ -380,7 +380,7 @@ class VectorConfigReloader:
         try:
             stream = self.k8s_config_map_event_watcher.stream(
                 self.k8s_api_client.list_namespaced_config_map,
-                namespace=NAMESPACE,
+                namespace=CUSTOM_METRICS_CM_NAMESPACE,
                 _request_timeout=0
             )
             for event in stream:
