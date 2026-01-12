@@ -11,8 +11,37 @@ This application runs as a DaemonSet in your Kubernetes cluster and periodically
 - **Automatic Discovery**: Finds NVIDIA GPU driver pods running on the same node
 - **Log Collection**: Executes `nvidia-bug-report.sh` in the driver pod
 - **File Download**: Transfers generated log files to the collector pod
-- **Periodic Collection**: Runs on a configurable schedule or one-time
+- **Flexible Execution Modes**:
+  - **Scheduled Mode**: Runs on a configurable schedule (default)
+  - **API-Driven Mode**: Polls an API and collects logs on-demand
+  - **One-Time Mode**: Runs once and exits
 - **Multi-Node Support**: Deploys as DaemonSet for cluster-wide coverage
+- **Timeout Handling**: Automatic timeout protection (5 minutes default)
+- **Automatic Cleanup**: Keeps only the most recent logs to prevent disk exhaustion
+
+## Execution Modes
+
+### Scheduled Mode (Default)
+The collector runs periodically at a fixed interval (`COLLECTION_INTERVAL`). This is the default mode when `API_ENABLED=false`.
+
+### API-Driven Mode
+When `API_ENABLED=true`, the collector operates in event-driven mode:
+1. Polls the API endpoint (`/check-tasks?vm_id=<VM_ID>`) at regular intervals
+2. When the API returns a task with an `event_id`, collection begins
+3. Log filename includes the `event_id` for tracking
+4. After collection, logs are uploaded via `/upload-logs` endpoint
+5. Status updates (success/failed) are sent back to the API
+6. Automatic timeout handling after 5 minutes (configurable)
+
+**API Endpoints:**
+- `GET /check-tasks?vm_id=<VM_ID>` - Check for pending collection tasks
+  - Response: `{"status": "success", "event_id": "12345"}` if task available
+- `POST /upload-logs` - Upload collected logs
+  - Form data: `file`, `vm_id`, `event_id`, `node_name`
+  - JSON data (for status): `vm_id`, `event_id`, `status` ("success"/"failed"), `message`, `node_name`
+
+### One-Time Mode
+Set `RUN_ONCE=true` to collect logs once and exit. Useful for testing or manual collection.
 
 ## Architecture
 
@@ -55,13 +84,18 @@ The application is configured via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NODE_NAME` | *required* | Name of the node (injected via downward API) |
+| `VM_ID` | - | Unique VM identifier (required for API-driven mode) |
 | `LOG_OUTPUT_DIR` | `/logs` | Directory to store collected logs |
 | `NVIDIA_NAMESPACE` | `nvidia-gpu-operator` | Namespace where GPU driver pods run |
 | `NVIDIA_DRIVER_POD_PREFIX` | `nvidia-gpu-driver` | Prefix of GPU driver pod names |
-| `COLLECTION_INTERVAL` | `3600` | Seconds between collections (1 hour) |
+| `COLLECTION_INTERVAL` | `3600` | Seconds between collections (1 hour) - used in scheduled mode |
 | `RUN_ONCE` | `false` | If true, run once and exit |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
 | `MAX_LOGS_TO_KEEP` | `5` | Maximum number of old logs to keep (prevents disk space issues) |
+| `API_ENABLED` | `false` | Enable API-driven mode instead of scheduled collection |
+| `API_BASE_URL` | `https://cms-logging.com` | Base URL for the log collection API |
+| `API_POLL_INTERVAL` | `60` | Seconds between API polls for new tasks |
+| `COLLECTION_TIMEOUT` | `300` | Maximum seconds (5 minutes) for log collection before timeout |
 
 ## Deployment
 
@@ -165,6 +199,37 @@ subjects:
 
 ## Usage
 
+### Scheduled Collection (Default)
+
+Default behavior - runs every hour (configurable via `COLLECTION_INTERVAL`):
+
+```bash
+# Deploy with default scheduled mode
+kubectl apply -f k8s/log-collector/manifests/
+```
+
+### API-Driven Collection
+
+Enable API-driven mode to collect logs on-demand based on API tasks:
+
+```bash
+kubectl set env daemonset/nvidia-log-collector \
+  API_ENABLED=true \
+  API_BASE_URL=https://cms-logging.com \
+  API_POLL_INTERVAL=60 \
+  COLLECTION_TIMEOUT=300 \
+  VM_ID=<your-vm-id> \
+  -n default
+```
+
+In this mode, the collector will:
+- Poll the API every 60 seconds for new tasks
+- Execute log collection when an `event_id` is received
+- Include the `event_id` in the log filename
+- Upload logs to the API after collection
+- Send status updates (success/failed)
+- Timeout after 5 minutes if collection takes too long
+
 ### Manual Execution (One-time Collection)
 
 Deploy with `RUN_ONCE=true`:
@@ -172,10 +237,6 @@ Deploy with `RUN_ONCE=true`:
 ```bash
 kubectl set env daemonset/nvidia-log-collector RUN_ONCE=true -n default
 ```
-
-### Periodic Collection
-
-Default behavior - runs every hour (configurable via `COLLECTION_INTERVAL`).
 
 ### Accessing Collected Logs
 
@@ -293,13 +354,21 @@ docker run --rm \
 ## Log File Format
 
 Generated log files follow this naming convention:
+
+**Scheduled/One-Time Mode:**
 ```
 nvidia-bug-report-<node-name>-<timestamp>.log.gz
 ```
 
-Example:
+**API-Driven Mode:**
+```
+nvidia-bug-report-<node-name>-<event-id>-<timestamp>.log.gz
+```
+
+Examples:
 ```
 nvidia-bug-report-gpu-node-1-20260106_143022.log.gz
+nvidia-bug-report-gpu-node-1-evt-12345-20260106_143022.log.gz
 ```
 
 The log file is a compressed tar.gz containing:

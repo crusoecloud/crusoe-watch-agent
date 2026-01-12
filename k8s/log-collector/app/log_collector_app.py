@@ -19,8 +19,9 @@ import logging
 import tarfile
 import tempfile
 import base64
+import requests
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 from kubernetes import client, config
@@ -37,6 +38,12 @@ COLLECTION_INTERVAL = int(os.environ.get("COLLECTION_INTERVAL", "3600"))  # 1 ho
 RUN_ONCE = os.environ.get("RUN_ONCE", "false").lower() == "true"
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 MAX_LOGS_TO_KEEP = int(os.environ.get("MAX_LOGS_TO_KEEP", "5"))  # Keep only last 5 logs
+
+# API configuration for event-driven collection
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://cms-logging.com")
+API_POLL_INTERVAL = int(os.environ.get("API_POLL_INTERVAL", "60"))  # Poll every 60 seconds
+API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
+COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))  # 5 minutes timeout
 
 # Logging setup
 logging.basicConfig(
@@ -75,6 +82,128 @@ class NvidiaLogCollector:
         if self.vm_id:
             LOG.info(f"VM ID: {self.vm_id}")
 
+    def check_for_tasks(self) -> Optional[Dict[str, Any]]:
+        """
+        Poll the API to check if there are any log collection tasks.
+
+        Returns:
+            Dictionary with task details including event_id, or None if no tasks
+        """
+        if not self.vm_id:
+            LOG.warning("VM_ID not set, cannot check for tasks")
+            return None
+
+        try:
+            url = f"{API_BASE_URL}/check-tasks"
+            params = {"vm_id": self.vm_id}
+
+            LOG.debug(f"Polling API: {url} with params: {params}")
+            response = requests.get(url, params=params, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "success" and data.get("event_id"):
+                    LOG.info(f"Received task with event_id: {data['event_id']}")
+                    return data
+                else:
+                    LOG.debug(f"No tasks available: {data}")
+                    return None
+            elif response.status_code == 404:
+                LOG.debug("No tasks found for this VM")
+                return None
+            else:
+                LOG.warning(f"Unexpected API response: {response.status_code} - {response.text}")
+                return None
+
+        except requests.exceptions.Timeout:
+            LOG.warning("API request timed out")
+            return None
+        except requests.exceptions.RequestException as e:
+            LOG.error(f"API request failed: {e}")
+            return None
+        except Exception as e:
+            LOG.error(f"Unexpected error checking for tasks: {e}")
+            return None
+
+    def upload_logs(self, log_file: Path, event_id: str) -> bool:
+        """
+        Upload the collected log file to the API.
+
+        Args:
+            log_file: Path to the log file to upload
+            event_id: Event ID associated with this collection
+
+        Returns:
+            True if upload successful, False otherwise
+        """
+        try:
+            url = f"{API_BASE_URL}/upload-logs"
+
+            LOG.info(f"Uploading log file {log_file.name} to {url}")
+
+            with open(log_file, 'rb') as f:
+                files = {'file': (log_file.name, f, 'application/gzip')}
+                data = {
+                    'vm_id': self.vm_id,
+                    'event_id': event_id,
+                    'node_name': self.node_name
+                }
+
+                response = requests.post(url, files=files, data=data, timeout=60)
+
+            if response.status_code == 200:
+                LOG.info(f"Successfully uploaded log file for event {event_id}")
+                return True
+            else:
+                LOG.error(f"Upload failed with status {response.status_code}: {response.text}")
+                return False
+
+        except requests.exceptions.Timeout:
+            LOG.error("Upload request timed out")
+            return False
+        except requests.exceptions.RequestException as e:
+            LOG.error(f"Upload request failed: {e}")
+            return False
+        except Exception as e:
+            LOG.error(f"Unexpected error during upload: {e}")
+            return False
+
+    def send_status(self, event_id: str, status: str, message: str = "") -> bool:
+        """
+        Send status update to the API (success or failed).
+
+        Args:
+            event_id: Event ID for this collection
+            status: Status string ('success' or 'failed')
+            message: Optional message with details
+
+        Returns:
+            True if status sent successfully, False otherwise
+        """
+        try:
+            url = f"{API_BASE_URL}/upload-logs"  # Same endpoint for status
+            data = {
+                'vm_id': self.vm_id,
+                'event_id': event_id,
+                'status': status,
+                'message': message,
+                'node_name': self.node_name
+            }
+
+            LOG.info(f"Sending {status} status for event {event_id}")
+            response = requests.post(url, json=data, timeout=10)
+
+            if response.status_code == 200:
+                LOG.info(f"Status '{status}' sent successfully for event {event_id}")
+                return True
+            else:
+                LOG.warning(f"Failed to send status: {response.status_code} - {response.text}")
+                return False
+
+        except Exception as e:
+            LOG.error(f"Failed to send status: {e}")
+            return False
+
     def find_nvidia_driver_pod(self) -> Optional[client.V1Pod]:
         """
         Find the NVIDIA GPU driver pod running on this node.
@@ -109,12 +238,13 @@ class NvidiaLogCollector:
             LOG.error(f"Error finding NVIDIA driver pod: {e}")
             return None
 
-    def execute_nvidia_bug_report(self, pod: client.V1Pod) -> Optional[str]:
+    def execute_nvidia_bug_report(self, pod: client.V1Pod, event_id: Optional[str] = None) -> Optional[str]:
         """
         Execute nvidia-bug-report.sh in the driver pod.
 
         Args:
             pod: The NVIDIA driver pod
+            event_id: Optional event ID to include in filename
 
         Returns:
             Path to the generated log file within the pod, or None on error
@@ -129,10 +259,13 @@ class NvidiaLogCollector:
         LOG.info(f"Executing nvidia-bug-report.sh in pod {pod_name}, container {container_name}")
 
         try:
-            # Generate unique filename with timestamp
+            # Generate unique filename with timestamp and optional event_id
             # Note: nvidia-bug-report.sh automatically adds .gz extension
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_filename_base = f"nvidia-bug-report-{self.node_name}-{timestamp}.log"
+            if event_id:
+                log_filename_base = f"nvidia-bug-report-{self.node_name}-{event_id}-{timestamp}.log"
+            else:
+                log_filename_base = f"nvidia-bug-report-{self.node_name}-{timestamp}.log"
             log_path_base = f"/tmp/{log_filename_base}"
 
             # The actual file will have .gz appended by nvidia-bug-report.sh
@@ -391,14 +524,17 @@ class NvidiaLogCollector:
         except Exception as e:
             LOG.warning(f"Error during log cleanup (non-critical): {e}")
 
-    def collect_logs(self) -> bool:
+    def collect_logs(self, event_id: Optional[str] = None) -> Optional[Path]:
         """
         Main log collection workflow.
 
+        Args:
+            event_id: Optional event ID to include in filename and for API tracking
+
         Returns:
-            True if logs collected successfully, False otherwise
+            Path to collected log file if successful, None otherwise
         """
-        LOG.info("Starting log collection cycle")
+        LOG.info(f"Starting log collection cycle{f' for event {event_id}' if event_id else ''}")
 
         # Clean up old logs to prevent disk space issues
         self.cleanup_old_logs()
@@ -407,25 +543,66 @@ class NvidiaLogCollector:
         driver_pod = self.find_nvidia_driver_pod()
         if not driver_pod:
             LOG.error("Cannot collect logs: NVIDIA driver pod not found")
-            return False
+            return None
 
         # Execute nvidia-bug-report.sh
-        remote_log_path = self.execute_nvidia_bug_report(driver_pod)
+        remote_log_path = self.execute_nvidia_bug_report(driver_pod, event_id)
         if not remote_log_path:
             LOG.error("Failed to generate nvidia-bug-report")
-            return False
+            return None
 
         # Download the log file
         local_log_path = self.download_log_file(driver_pod, remote_log_path)
         if not local_log_path:
             LOG.error("Failed to download nvidia-bug-report")
-            return False
+            return None
 
         # Cleanup remote log file
         self.cleanup_remote_log(driver_pod, remote_log_path)
 
         LOG.info(f"Log collection completed successfully: {local_log_path}")
-        return True
+        return local_log_path
+
+    def collect_logs_with_timeout(self, event_id: str) -> tuple[bool, Optional[Path], str]:
+        """
+        Collect logs with timeout handling.
+
+        Args:
+            event_id: Event ID for this collection task
+
+        Returns:
+            Tuple of (success, log_path, error_message)
+        """
+        import threading
+
+        result = {"log_path": None, "error": None, "completed": False}
+
+        def collection_target():
+            try:
+                log_path = self.collect_logs(event_id)
+                result["log_path"] = log_path
+                result["completed"] = True
+            except Exception as e:
+                result["error"] = str(e)
+                result["completed"] = True
+
+        thread = threading.Thread(target=collection_target, daemon=True)
+        thread.start()
+        thread.join(timeout=COLLECTION_TIMEOUT)
+
+        if not result["completed"]:
+            # Timeout occurred
+            error_msg = f"Collection timeout after {COLLECTION_TIMEOUT} seconds"
+            LOG.error(error_msg)
+            return False, None, error_msg
+
+        if result["error"]:
+            return False, None, result["error"]
+
+        if result["log_path"]:
+            return True, result["log_path"], ""
+        else:
+            return False, None, "Collection failed without specific error"
 
     def _get_driver_container_name(self, pod: client.V1Pod) -> Optional[str]:
         """
@@ -453,22 +630,81 @@ class NvidiaLogCollector:
         LOG.info(f"NVIDIA Log Collector started on node: {self.node_name}")
         LOG.info(f"Output directory: {self.output_dir}")
         LOG.info(f"Run once mode: {RUN_ONCE}")
-        LOG.info(f"Collection interval: {COLLECTION_INTERVAL}s")
+        LOG.info(f"API-driven mode: {API_ENABLED}")
 
         if RUN_ONCE:
             # Run once and exit
-            success = self.collect_logs()
-            sys.exit(0 if success else 1)
+            log_path = self.collect_logs()
+            sys.exit(0 if log_path else 1)
+        elif API_ENABLED:
+            # API-driven mode: poll for tasks and collect logs on-demand
+            self._run_api_mode()
         else:
-            # Run continuously
-            while True:
-                try:
-                    self.collect_logs()
-                except Exception as e:
-                    LOG.error(f"Error during log collection: {e}", exc_info=True)
+            # Scheduled mode: collect logs at regular intervals
+            self._run_scheduled_mode()
 
-                LOG.info(f"Sleeping for {COLLECTION_INTERVAL} seconds until next collection")
-                time.sleep(COLLECTION_INTERVAL)
+    def _run_api_mode(self):
+        """Run in API-driven mode - poll for tasks and collect on-demand."""
+        LOG.info(f"Running in API-driven mode")
+        LOG.info(f"API base URL: {API_BASE_URL}")
+        LOG.info(f"Polling interval: {API_POLL_INTERVAL}s")
+        LOG.info(f"Collection timeout: {COLLECTION_TIMEOUT}s")
+
+        if not self.vm_id:
+            LOG.error("VM_ID not set - cannot run in API-driven mode")
+            sys.exit(1)
+
+        while True:
+            try:
+                # Check if there's a task to process
+                task = self.check_for_tasks()
+
+                if task and task.get("event_id"):
+                    event_id = task["event_id"]
+                    LOG.info(f"Processing collection task for event: {event_id}")
+
+                    # Collect logs with timeout
+                    success, log_path, error_msg = self.collect_logs_with_timeout(event_id)
+
+                    if success and log_path:
+                        # Upload the collected logs
+                        LOG.info(f"Uploading collected logs for event {event_id}")
+                        upload_success = self.upload_logs(log_path, event_id)
+
+                        if upload_success:
+                            LOG.info(f"Successfully completed collection and upload for event {event_id}")
+                            self.send_status(event_id, "success", "Logs collected and uploaded successfully")
+                        else:
+                            LOG.error(f"Failed to upload logs for event {event_id}")
+                            self.send_status(event_id, "failed", "Log collection succeeded but upload failed")
+                    else:
+                        # Collection failed or timed out
+                        LOG.error(f"Collection failed for event {event_id}: {error_msg}")
+                        self.send_status(event_id, "failed", error_msg)
+
+                else:
+                    # No tasks available
+                    LOG.debug("No collection tasks available")
+
+            except Exception as e:
+                LOG.error(f"Error in API polling loop: {e}", exc_info=True)
+
+            # Wait before polling again
+            time.sleep(API_POLL_INTERVAL)
+
+    def _run_scheduled_mode(self):
+        """Run in scheduled mode - collect logs at regular intervals."""
+        LOG.info(f"Running in scheduled mode")
+        LOG.info(f"Collection interval: {COLLECTION_INTERVAL}s")
+
+        while True:
+            try:
+                self.collect_logs()
+            except Exception as e:
+                LOG.error(f"Error during log collection: {e}", exc_info=True)
+
+            LOG.info(f"Sleeping for {COLLECTION_INTERVAL} seconds until next collection")
+            time.sleep(COLLECTION_INTERVAL)
 
 
 def main():

@@ -61,6 +61,20 @@ spec:
         - name: MAX_LOGS_TO_KEEP
           value: "5"
 
+        # VM ID (required for API-driven mode)
+        # - name: VM_ID
+        #   value: ""
+
+        # API-driven mode configuration (disabled by default)
+        # - name: API_ENABLED
+        #   value: "true"
+        # - name: API_BASE_URL
+        #   value: "https://cms-logging.com"
+        # - name: API_POLL_INTERVAL
+        #   value: "60"
+        # - name: COLLECTION_TIMEOUT
+        #   value: "300"
+
         volumeMounts:
         - name: logs
           mountPath: /logs
