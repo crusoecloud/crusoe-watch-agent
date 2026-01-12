@@ -1,0 +1,132 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-custom-metrics
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake-metrics
+  namespace: test-custom-metrics
+data:
+  metrics.txt: |
+    # HELP my_app_requests_total Total number of requests
+    # TYPE my_app_requests_total counter
+    my_app_requests_total{method="GET",endpoint="/api/users"} 1234
+    my_app_requests_total{method="POST",endpoint="/api/users"} 567
+    my_app_requests_total{method="GET",endpoint="/api/orders"} 890
+    # HELP my_app_request_duration_seconds Request latency in seconds
+    # TYPE my_app_request_duration_seconds histogram
+    my_app_request_duration_seconds_bucket{le="0.1"} 500
+    my_app_request_duration_seconds_bucket{le="0.5"} 800
+    my_app_request_duration_seconds_bucket{le="1.0"} 950
+    my_app_request_duration_seconds_bucket{le="+Inf"} 1000
+    my_app_request_duration_seconds_sum 450.5
+    my_app_request_duration_seconds_count 1000
+    # HELP my_app_active_connections Current number of active connections
+    # TYPE my_app_active_connections gauge
+    my_app_active_connections 42
+    # HELP my_app_memory_usage_bytes Memory usage in bytes
+    # TYPE my_app_memory_usage_bytes gauge
+    my_app_memory_usage_bytes 104857600
+    # HELP my_app_errors_total Total number of errors
+    # TYPE my_app_errors_total counter
+    my_app_errors_total{type="timeout"} 12
+    my_app_errors_total{type="validation"} 45
+    my_app_errors_total{type="internal"} 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-metrics-app
+  namespace: test-custom-metrics
+  labels:
+    app: fake-metrics-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fake-metrics-app
+  template:
+    metadata:
+      labels:
+        app: fake-metrics-app
+      annotations:
+        crusoe.ai/scrape: "true"
+        crusoe.ai/port: "8080"
+        crusoe.ai/path: "/metrics"
+    spec:
+      containers:
+        - name: metrics-server
+          image: python:3.11-alpine
+          command:
+            - python
+            - -c
+            - |
+              import http.server
+              import socketserver
+
+              class MetricsHandler(http.server.SimpleHTTPRequestHandler):
+                  def do_GET(self):
+                      if self.path == '/metrics':
+                          with open('/metrics/metrics.txt', 'r') as f:
+                              content = f.read()
+                          self.send_response(200)
+                          self.send_header('Content-type', 'text/plain; charset=utf-8')
+                          self.end_headers()
+                          self.wfile.write(content.encode())
+                      elif self.path == '/health':
+                          self.send_response(200)
+                          self.send_header('Content-type', 'text/plain')
+                          self.end_headers()
+                          self.wfile.write(b'OK')
+                      else:
+                          self.send_response(404)
+                          self.end_headers()
+
+              with socketserver.TCPServer(("", 8080), MetricsHandler) as httpd:
+                  print("Serving metrics on port 8080")
+                  httpd.serve_forever()
+          ports:
+            - containerPort: 8080
+              name: metrics
+          volumeMounts:
+            - name: metrics-volume
+              mountPath: /metrics
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "50m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: metrics-volume
+          configMap:
+            name: fake-metrics
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-metrics-app
+  namespace: test-custom-metrics
+spec:
+  selector:
+    app: fake-metrics-app
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: metrics
