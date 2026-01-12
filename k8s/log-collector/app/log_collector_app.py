@@ -29,6 +29,7 @@ from kubernetes.stream import stream
 
 # Configuration from environment variables
 NODE_NAME = os.environ.get("NODE_NAME")
+VM_ID = os.environ.get("VM_ID")  # Unique VM identifier
 LOG_OUTPUT_DIR = os.environ.get("LOG_OUTPUT_DIR", "/logs")
 NVIDIA_NAMESPACE = os.environ.get("NVIDIA_NAMESPACE", "nvidia-gpu-operator")
 NVIDIA_DRIVER_POD_PREFIX = os.environ.get("NVIDIA_DRIVER_POD_PREFIX", "nvidia-gpu-driver")
@@ -55,6 +56,7 @@ class NvidiaLogCollector:
         if not self.node_name:
             raise RuntimeError("NODE_NAME environment variable not set")
 
+        self.vm_id = VM_ID  # Unique VM identifier (optional)
         self.nvidia_namespace = NVIDIA_NAMESPACE
         self.driver_pod_prefix = NVIDIA_DRIVER_POD_PREFIX
         self.output_dir = Path(LOG_OUTPUT_DIR)
@@ -70,6 +72,8 @@ class NvidiaLogCollector:
 
         self.k8s_api = client.CoreV1Api()
         LOG.info(f"Initialized log collector for node: {self.node_name}")
+        if self.vm_id:
+            LOG.info(f"VM ID: {self.vm_id}")
 
     def find_nvidia_driver_pod(self) -> Optional[client.V1Pod]:
         """
