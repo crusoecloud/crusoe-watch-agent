@@ -33,7 +33,7 @@ CUSTOM_METRICS_CONFIG_MAP_KEY = "custom-metrics-config.yaml"
 CUSTOM_METRICS_SCRAPE_ANNOTATION = "crusoe.ai/scrape"
 CUSTOM_METRICS_PORT_ANNOTATION = "crusoe.ai/port"
 CUSTOM_METRICS_PATH_ANNOTATION = "crusoe.ai/path"
-CUSTOM_METRICS_SCRAPE_INTERVAL_ANNOTATION = f"crusoe.custom_metrics.scrape_interval"
+CUSTOM_METRICS_DEFAULT_SCRAPE_INTERVAL = 30
 CUSTOM_METRICS_VECTOR_TRANSFORM = {
     "type": "remap",
     "inputs": [],
@@ -148,7 +148,7 @@ class VectorConfigReloader:
         return config.get(deployment_name, {})
 
     @staticmethod
-    def build_deployment_transform_source(deployment_config: dict) -> str:
+    def build_deployment_transform_source(deployment_config: dict, endpoint_config: dict) -> str:
         vrl_lines = []
         allowlist = deployment_config.get("allowlist", [])
         droplist = deployment_config.get("droplist", [])
@@ -182,6 +182,8 @@ class VectorConfigReloader:
         vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
         vrl_lines.append('.tags.vm_id = "${VM_ID}"')
         vrl_lines.append('.tags.crusoe_resource = "custom_metrics"')
+        vrl_lines.append(f'.tags.pod_ip = "{endpoint_config["pod_ip"]}"')
+        vrl_lines.append(f'.tags.pod_name = "{endpoint_config["pod_name"]}"')
 
         return "\n".join(vrl_lines)
 
@@ -191,18 +193,14 @@ class VectorConfigReloader:
         annotations = pod.metadata.annotations
         port = int(annotations.get(CUSTOM_METRICS_PORT_ANNOTATION, self.default_custom_metrics_config["port"]))
         path = annotations.get(CUSTOM_METRICS_PATH_ANNOTATION, self.default_custom_metrics_config["path"])
-        interval = int(annotations.get(CUSTOM_METRICS_SCRAPE_INTERVAL_ANNOTATION, self.default_custom_metrics_config["scrape_interval"]))
-        if interval < SCRAPE_INTERVAL_MIN_THRESHOLD:
-            LOG.warning(f"For pod {pod_name}, scrape interval set to: {interval} (less than 5 seconds), defaulting to {SCRAPE_INTERVAL_MIN_THRESHOLD}")
-            interval = SCRAPE_INTERVAL_MIN_THRESHOLD
+
         parts = pod_name.rsplit("-", 2)
         deployment_name = parts[0] if len(parts) == 3 else ""
         return {
             "url": f"http://{pod_ip}:{port}{path}",
+            "pod_ip": pod_ip,
             "pod_name": pod_name,
             "deployment_name": deployment_name,
-            "scrape_interval_secs": interval,
-            "scrape_timeout_secs": int(interval * SCRAPE_TIMEOUT_PERCENTAGE)
         }
 
     def set_dcgm_exporter_scrape_config(self, vector_cfg: dict, dcgm_exporter_scrape_endpoint: str):
@@ -234,18 +232,23 @@ class VectorConfigReloader:
         for endpoint in custom_metrics_eps:
             pod_name_sanitized = VectorConfigReloader.sanitize_name(endpoint['pod_name'])
             source_name = f"{pod_name_sanitized}_scrape"
-            sources[source_name] = {
-                "type": "prometheus_scrape",
-                "endpoints": [endpoint["url"]],
-                "scrape_interval_secs": endpoint["scrape_interval_secs"],
-                "scrape_timeout_secs": endpoint["scrape_timeout_secs"]
-            }
 
             deployment_name = endpoint.get("deployment_name", "")
             deployment_config = self.get_deployment_metrics_config(deployment_name)
 
+            scrape_interval_secs = max(deployment_config.get("scrape_interval_secs", CUSTOM_METRICS_DEFAULT_SCRAPE_INTERVAL), SCRAPE_INTERVAL_MIN_THRESHOLD)
+            if scrape_interval_secs < SCRAPE_INTERVAL_MIN_THRESHOLD:
+                LOG.warning(f'For pod {endpoint["pod_name"]}, scrape interval set to: {scrape_interval_secs} (less than 5 seconds), defaulting to {SCRAPE_INTERVAL_MIN_THRESHOLD}')
+
+            sources[source_name] = {
+                "type": "prometheus_scrape",
+                "endpoints": [endpoint["url"]],
+                "scrape_interval_secs": scrape_interval_secs,
+                "scrape_timeout_secs": int(scrape_interval_secs * SCRAPE_TIMEOUT_PERCENTAGE)
+            }
+
             transform_name = f"{pod_name_sanitized}_transform"
-            transform_source = VectorConfigReloader.build_deployment_transform_source(deployment_config)
+            transform_source = VectorConfigReloader.build_deployment_transform_source(deployment_config, endpoint)
             transforms[transform_name] = {
                 "type": "remap",
                 "inputs": [source_name],

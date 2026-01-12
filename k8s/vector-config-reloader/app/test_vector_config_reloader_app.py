@@ -7,7 +7,6 @@ from vector_config_reloader_app import (
     CUSTOM_METRICS_SCRAPE_ANNOTATION,
     CUSTOM_METRICS_PORT_ANNOTATION,
     CUSTOM_METRICS_PATH_ANNOTATION,
-    CUSTOM_METRICS_SCRAPE_INTERVAL_ANNOTATION,
 )
 
 class DummyPod:
@@ -51,7 +50,7 @@ def _isolate_env(monkeypatch, tmp_path):
     reloader_cfg = {
         "dcgm_metrics": {"port": 9400, "path": "/metrics", "scrape_interval": 30},
         "custom_metrics": {"port": 9100, "path": "/metrics", "scrape_interval": 30},
-        "sink": {"endpoint": "https://cms-monitoring.example.com/ingest"},
+        "sink": {"endpoint": "https://cms-monitoring.example.com"},
         "log_level": "INFO",
     }
     base_vector_cfg = {
@@ -106,34 +105,32 @@ def _new_reloader_with_pods(monkeypatch, pods):
     return r
 
 
-def test_get_custom_metrics_endpoint_cfg_defaults_and_min_threshold(monkeypatch):
+def test_get_custom_metrics_endpoint_cfg_defaults(monkeypatch):
     r = _new_reloader_with_pods(monkeypatch, [])
 
-    # No port/path/interval annotations -> defaults from reloader config
+    # No port/path annotations -> defaults from reloader config
     pod_default = DummyPod("svc-a-123", "ns", ip="10.1.1.1", ann={CUSTOM_METRICS_SCRAPE_ANNOTATION: "true"})
     cfg_default = r.get_custom_metrics_endpoint_cfg(pod_default)
     assert cfg_default["url"] == "http://10.1.1.1:9100/metrics"
-    # scrape_interval should be integer seconds
-    assert isinstance(cfg_default["scrape_interval_secs"], int)
-    assert cfg_default["scrape_interval_secs"] == 30
-    assert cfg_default["scrape_timeout_secs"] == int(30 * 0.7)
+    assert cfg_default["pod_ip"] == "10.1.1.1"
+    assert cfg_default["pod_name"] == "svc-a-123"
+    assert cfg_default["deployment_name"] == "svc"  # extracted from pod name pattern
 
-    # Interval below threshold should clamp to 5 seconds
-    pod_low = DummyPod(
-        "svc-b-456",
+    # Custom port/path annotations
+    pod_custom = DummyPod(
+        "myapp-abc-456",
         "ns",
         ip="10.1.1.2",
         ann={
             CUSTOM_METRICS_SCRAPE_ANNOTATION: "true",
             CUSTOM_METRICS_PORT_ANNOTATION: "9200",
             CUSTOM_METRICS_PATH_ANNOTATION: "/m",
-            CUSTOM_METRICS_SCRAPE_INTERVAL_ANNOTATION: "3",
         },
     )
-    cfg_low = r.get_custom_metrics_endpoint_cfg(pod_low)
-    assert cfg_low["url"] == "http://10.1.1.2:9200/m"
-    assert cfg_low["scrape_interval_secs"] == 5
-    assert cfg_low["scrape_timeout_secs"] == int(5 * 0.7)
+    cfg_custom = r.get_custom_metrics_endpoint_cfg(pod_custom)
+    assert cfg_custom["url"] == "http://10.1.1.2:9200/m"
+    assert cfg_custom["pod_ip"] == "10.1.1.2"
+    assert cfg_custom["deployment_name"] == "myapp"
 
 
 def test_set_and_remove_custom_metrics_scrape_config(monkeypatch):
@@ -142,8 +139,8 @@ def test_set_and_remove_custom_metrics_scrape_config(monkeypatch):
     vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
 
     eps = [
-        {"url": "http://10.2.0.1:9100/metrics", "pod_name": "svc-x-1", "deployment_name": "", "scrape_interval_secs": 15, "scrape_timeout_secs": 10},
-        {"url": "http://10.2.0.2:9100/metrics", "pod_name": "svc-y-2", "deployment_name": "", "scrape_interval_secs": 20, "scrape_timeout_secs": 14},
+        {"url": "http://10.2.0.1:9100/metrics", "pod_ip": "10.2.0.1", "pod_name": "svc-x-1", "deployment_name": ""},
+        {"url": "http://10.2.0.2:9100/metrics", "pod_ip": "10.2.0.2", "pod_name": "svc-y-2", "deployment_name": ""},
     ]
 
     r.set_custom_metrics_scrape_config(vector_cfg, eps)
