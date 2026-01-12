@@ -254,6 +254,47 @@ If using hostPath volume:
 # Logs are available on the node at /var/log/nvidia-bug-reports
 ```
 
+## CI/CD
+
+The log collector has automated CI/CD pipelines that build and push Docker images:
+
+### GitHub Actions (Primary)
+
+The repository uses GitHub Actions for CI/CD. The workflow is defined in `.github/workflows/log-collector-ci.yml`:
+
+- **Triggers**: Pushes to `main`, pull requests, or version tags (`v*`)
+- **Test Stage**: Runs unit tests with Python 3.11
+- **Build Stage**: Builds Docker image and pushes to GitHub Container Registry (GHCR)
+- **Image Tags**:
+  - `latest` - Latest release from main branch
+  - `main` - Latest commit on main branch
+  - `v1.2.3` - Semantic version tags
+  - `pr-123` - Pull request builds
+  - `main-abc1234` - Commit SHA tags
+
+Images are pushed to: `ghcr.io/crusoecloud/crusoe-watch-agent/nvidia-log-collector`
+
+### GitLab CI (Alternative)
+
+A GitLab CI configuration is also provided in `.gitlab-ci.yml`:
+
+- **Stages**: `test`, `build`
+- **Test Job**: Runs unit tests
+- **Build Job**: Builds and pushes Docker images to GitLab Container Registry
+- **Registry Variables**:
+  - `CI_REGISTRY` - GitLab container registry URL
+  - `CI_REGISTRY_USER` - Registry username
+  - `CI_REGISTRY_PASSWORD` - Registry password (set in GitLab CI/CD settings)
+
+### Manual Build
+
+To build the Docker image locally:
+
+```bash
+cd k8s/log-collector
+docker build -t nvidia-log-collector:dev .
+```
+
 ## Development
 
 ### Local Testing
