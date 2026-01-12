@@ -35,6 +35,7 @@ NVIDIA_DRIVER_POD_PREFIX = os.environ.get("NVIDIA_DRIVER_POD_PREFIX", "nvidia-gp
 COLLECTION_INTERVAL = int(os.environ.get("COLLECTION_INTERVAL", "3600"))  # 1 hour default
 RUN_ONCE = os.environ.get("RUN_ONCE", "false").lower() == "true"
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+MAX_LOGS_TO_KEEP = int(os.environ.get("MAX_LOGS_TO_KEEP", "5"))  # Keep only last 5 logs
 
 # Logging setup
 logging.basicConfig(
@@ -348,6 +349,44 @@ class NvidiaLogCollector:
             LOG.warning(f"Error cleaning up remote log file (non-critical): {e}")
             return False
 
+    def cleanup_old_logs(self) -> None:
+        """
+        Clean up old log files to prevent disk space issues.
+        Keeps only the most recent MAX_LOGS_TO_KEEP files.
+        """
+        try:
+            # Find all nvidia-bug-report log files
+            log_pattern = "nvidia-bug-report-*.log.gz"
+            log_files = sorted(
+                self.output_dir.glob(log_pattern),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True  # Newest first
+            )
+
+            if not log_files:
+                LOG.debug("No existing log files found to clean up")
+                return
+
+            total_files = len(log_files)
+            files_to_keep = log_files[:MAX_LOGS_TO_KEEP]
+            files_to_delete = log_files[MAX_LOGS_TO_KEEP:]
+
+            if files_to_delete:
+                LOG.info(f"Found {total_files} log files, keeping {len(files_to_keep)}, removing {len(files_to_delete)} old logs")
+
+                for log_file in files_to_delete:
+                    try:
+                        file_size = log_file.stat().st_size
+                        log_file.unlink()
+                        LOG.info(f"Deleted old log: {log_file.name} ({file_size / (1024*1024):.2f} MB)")
+                    except Exception as e:
+                        LOG.warning(f"Failed to delete {log_file.name}: {e}")
+            else:
+                LOG.debug(f"No cleanup needed, only {total_files} log files found (max: {MAX_LOGS_TO_KEEP})")
+
+        except Exception as e:
+            LOG.warning(f"Error during log cleanup (non-critical): {e}")
+
     def collect_logs(self) -> bool:
         """
         Main log collection workflow.
@@ -356,6 +395,9 @@ class NvidiaLogCollector:
             True if logs collected successfully, False otherwise
         """
         LOG.info("Starting log collection cycle")
+
+        # Clean up old logs to prevent disk space issues
+        self.cleanup_old_logs()
 
         # Find the NVIDIA driver pod
         driver_pod = self.find_nvidia_driver_pod()

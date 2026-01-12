@@ -57,6 +57,10 @@ spec:
         - name: LOG_OUTPUT_DIR
           value: "/logs"
 
+        # Maximum number of old logs to keep (prevents disk space issues)
+        - name: MAX_LOGS_TO_KEEP
+          value: "5"
+
         volumeMounts:
         - name: logs
           mountPath: /logs

@@ -61,6 +61,7 @@ The application is configured via environment variables:
 | `COLLECTION_INTERVAL` | `3600` | Seconds between collections (1 hour) |
 | `RUN_ONCE` | `false` | If true, run once and exit |
 | `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `MAX_LOGS_TO_KEEP` | `5` | Maximum number of old logs to keep (prevents disk space issues) |
 
 ## Deployment
 
