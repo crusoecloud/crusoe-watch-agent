@@ -1,0 +1,29 @@
+{{- if .Values.vector.rbac.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crusoe-watch-agent-log-collector
+rules:
+  # Need to list and get pods to find NVIDIA driver pods
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Need to exec into pods to run nvidia-bug-report.sh
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crusoe-watch-agent-log-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crusoe-watch-agent-log-collector
+subjects:
+  - kind: ServiceAccount
+    name: crusoe-watch-agent
+    namespace: {{ .Values.namespace }}
+{{- end }}
