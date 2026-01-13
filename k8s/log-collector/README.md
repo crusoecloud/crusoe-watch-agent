@@ -9,6 +9,7 @@ This application runs as a DaemonSet in your Kubernetes cluster and periodically
 ## Features
 
 - **Automatic Discovery**: Finds NVIDIA GPU driver pods running on the same node
+- **VM ID Auto-Detection**: Automatically reads VM ID from DMI (`/sys/class/dmi/id/product_uuid`)
 - **Log Collection**: Executes `nvidia-bug-report.sh` in the driver pod
 - **File Download**: Transfers generated log files to the collector pod
 - **Flexible Execution Modes**:
@@ -75,6 +76,7 @@ Set `RUN_ONCE=true` to collect logs once and exit. Useful for testing or manual 
 - NVIDIA GPU Operator installed (or standalone GPU driver pods)
 - RBAC permissions for pod listing and exec operations
 - Python 3.11+ (in container)
+- Access to `/sys/class/dmi/id/product_uuid` on the host (for VM_ID auto-detection)
 
 ## Configuration
 
@@ -83,7 +85,7 @@ The application is configured via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NODE_NAME` | *required* | Name of the node (injected via downward API) |
-| `VM_ID` | - | Unique VM identifier (required for API-driven mode) |
+| `VM_ID` | *auto-detected* | Unique VM identifier (auto-read from `/host/sys/class/dmi/id/product_uuid` if not set; required for API-driven mode) |
 | `LOG_OUTPUT_DIR` | `/logs` | Directory to store collected logs |
 | `NVIDIA_NAMESPACE` | `nvidia-gpu-operator` | Namespace where GPU driver pods run |
 | `NVIDIA_DRIVER_POD_PREFIX` | `nvidia-gpu-driver` | Prefix of GPU driver pod names |
@@ -145,6 +147,9 @@ spec:
         volumeMounts:
         - name: logs
           mountPath: /logs
+        - name: host-sys
+          mountPath: /host/sys
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -157,6 +162,10 @@ spec:
         hostPath:
           path: /var/log/nvidia-bug-reports
           type: DirectoryOrCreate
+      - name: host-sys
+        hostPath:
+          path: /sys
+          type: Directory
       nodeSelector:
         nvidia.com/gpu: "true"  # Only run on GPU nodes
 ```

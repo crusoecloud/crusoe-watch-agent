@@ -64,7 +64,11 @@ class NvidiaLogCollector:
         if not self.node_name:
             raise RuntimeError("NODE_NAME environment variable not set")
 
-        self.vm_id = os.environ.get("VM_ID")  # Unique VM identifier (optional)
+        # Get VM_ID from environment or read from DMI
+        self.vm_id = os.environ.get("VM_ID")
+        if not self.vm_id:
+            self.vm_id = self._read_vm_id_from_dmi()
+
         self.nvidia_namespace = os.environ.get("NVIDIA_NAMESPACE", NVIDIA_NAMESPACE)
         self.driver_pod_prefix = os.environ.get("NVIDIA_DRIVER_POD_PREFIX", NVIDIA_DRIVER_POD_PREFIX)
         self.output_dir = Path(os.environ.get("LOG_OUTPUT_DIR", LOG_OUTPUT_DIR))
@@ -82,6 +86,26 @@ class NvidiaLogCollector:
         LOG.info(f"Initialized log collector for node: {self.node_name}")
         if self.vm_id:
             LOG.info(f"VM ID: {self.vm_id}")
+
+    def _read_vm_id_from_dmi(self) -> Optional[str]:
+        """
+        Read VM ID from DMI product_uuid file.
+
+        Returns:
+            VM ID string if available, None otherwise
+        """
+        dmi_path = Path("/host/sys/class/dmi/id/product_uuid")
+        try:
+            if dmi_path.exists():
+                vm_id = dmi_path.read_text().strip()
+                LOG.info(f"Read VM ID from DMI: {vm_id}")
+                return vm_id
+            else:
+                LOG.warning(f"DMI file not found: {dmi_path}")
+                return None
+        except Exception as e:
+            LOG.warning(f"Failed to read VM ID from DMI: {e}")
+            return None
 
     def check_for_tasks(self) -> Optional[Dict[str, Any]]:
         """

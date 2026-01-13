@@ -476,6 +476,10 @@ vector:
     - name: reloader-config
       configMap:
         name: vector-reloader-config
+    - name: nvidia-logs
+      hostPath:
+        path: /var/log/nvidia-bug-reports
+        type: DirectoryOrCreate
 
   # extraVolumeMounts -- Additional Volume to mount into Vector Containers.
   extraVolumeMounts:
@@ -525,6 +529,45 @@ vector:
         requests:
           cpu: 50m
           memory: 64Mi
+    - name: log-collector
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector:pr-12
+      env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: LOG_OUTPUT_DIR
+          value: "/logs"
+        - name: NVIDIA_NAMESPACE
+          value: "nvidia-gpu-operator"
+        - name: NVIDIA_DRIVER_POD_PREFIX
+          value: "nvidia-gpu-driver"
+        - name: COLLECTION_INTERVAL
+          value: "3600"
+        - name: RUN_ONCE
+          value: "false"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: MAX_LOGS_TO_KEEP
+          value: "5"
+        - name: API_ENABLED
+          value: "false"
+        - name: API_BASE_URL
+          value: "https://cms-logging.com"
+        - name: API_POLL_INTERVAL
+          value: "60"
+        - name: COLLECTION_TIMEOUT
+          value: "300"
+      volumeMounts:
+        - name: nvidia-logs
+          mountPath: /logs
+        - name: sysfs
+          mountPath: /host/sys
+          readOnly: true
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
 
   # Configuration for Vector's data persistence.
   persistence:
