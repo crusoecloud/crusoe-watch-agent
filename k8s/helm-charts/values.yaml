@@ -187,7 +187,8 @@ vector:
 
   # podSecurityContext -- Allows you to overwrite the default [PodSecurityContext](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
   # for Vector Pods.
-  podSecurityContext: { }
+  podSecurityContext:
+    fsGroup: 1000  # Ensure files are writable by user 1000 (log-collector)
 
   # workloadResourceAnnotations -- Set annotations on the Vector DaemonSet, Deployment or StatefulSet.
   workloadResourceAnnotations: { }
@@ -494,18 +495,21 @@ vector:
 
   # initContainers -- Init Containers to be added to the Vector Pods.
   # This also supports template content, which will eventually be converted to yaml.
-  initContainers: [ ]
-  # initContainers:
-  #   - name: test
-  #     image: busybox:latest
-  #     command:
-  #       - cp
-  #     args:
-  #       - /bin/sleep
-  #       - /test/sleep
-  #     volumeMounts:
-  #       - name: test
-  #         mountPath: /test
+  initContainers:
+    - name: fix-nvidia-logs-permissions
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+        - |
+          mkdir -p /logs
+          chown -R 1000:1000 /logs
+          chmod -R 755 /logs
+      volumeMounts:
+        - name: nvidia-logs
+          mountPath: /logs
+      securityContext:
+        runAsUser: 0  # Run as root to change ownership
 
   # extraContainers -- Extra Containers to be added to the Vector Pods.
   # This also supports template content, which will eventually be converted to yaml.
