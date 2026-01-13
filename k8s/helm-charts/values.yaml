@@ -1,9 +1,9 @@
 namespace: crusoe-system
 environment: prod
 endpoints:
-  prod: "https://cms-monitoring.crusoecloud.com/ingest"
-  staging: "https://cms-monitoring.crusoecloud.site/ingest"
-  dev: "https://cms-monitoring.crusoecloud.xyz/ingest"
+  prod: "https://cms-monitoring.crusoecloud.com"
+  staging: "https://cms-monitoring.crusoecloud.site"
+  dev: "https://cms-monitoring.crusoecloud.xyz"
 
 proxy:
   enabled: false
@@ -28,6 +28,9 @@ metricsExporter:
   defaultScrapeInterval: 60
 
 logLevel: INFO
+
+customMetrics:
+  namespace: crusoe-monitoring
 
 # CPU profile for Vector subchart
 # Adjust according to https://helm.vector.dev
@@ -507,7 +510,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.1.6
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:f8df39a
       env:
         - name: NODE_NAME
           valueFrom:
