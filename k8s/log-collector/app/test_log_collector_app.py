@@ -150,12 +150,12 @@ class TestNvidiaLogCollector(unittest.TestCase):
             log_file = collector.output_dir / f"nvidia-bug-report-node-{i}.log.gz"
             log_file.touch()
 
-        # Run cleanup (should keep only 5 newest)
+        # Run cleanup (should keep only 1 newest based on MAX_LOGS_TO_KEEP=1)
         collector.cleanup_old_logs()
 
         # Count remaining files
         remaining_files = list(collector.output_dir.glob("nvidia-bug-report-*.log.gz"))
-        self.assertEqual(len(remaining_files), 5)
+        self.assertEqual(len(remaining_files), 1)
 
 
 class TestAPIMode(unittest.TestCase):
