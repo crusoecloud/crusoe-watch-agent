@@ -19,7 +19,7 @@ spec:
       labels:
         app: {{ .Values.logCollector.name }}
     spec:
-      serviceAccountName: {{ .Values.vector.serviceAccount.name | default "crusoe-watch-agent" }}
+      serviceAccountName: {{ .Values.logCollector.name }}
 
       # Only schedule on GPU nodes
       {{- if .Values.logCollector.nodeSelector }}
