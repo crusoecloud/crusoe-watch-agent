@@ -816,8 +816,8 @@ vector:
 
 # NVIDIA Log Collector configuration
 logCollector:
-  enabled: true
-  name: nvidia-log-collector
+  enabled: false
+  name: crusoe-log-collector
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
