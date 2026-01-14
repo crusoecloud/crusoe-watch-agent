@@ -553,7 +553,7 @@ vector:
         - name: LOG_LEVEL
           value: "INFO"
         - name: MAX_LOGS_TO_KEEP
-          value: "5"
+          value: "1"
         - name: API_ENABLED
           value: "false"
         - name: API_BASE_URL

@@ -37,7 +37,7 @@ NVIDIA_DRIVER_POD_PREFIX = os.environ.get("NVIDIA_DRIVER_POD_PREFIX", "nvidia-gp
 COLLECTION_INTERVAL = int(os.environ.get("COLLECTION_INTERVAL", "3600"))  # 1 hour default
 RUN_ONCE = os.environ.get("RUN_ONCE", "false").lower() == "true"
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-MAX_LOGS_TO_KEEP = int(os.environ.get("MAX_LOGS_TO_KEEP", "5"))  # Keep only last 5 logs
+MAX_LOGS_TO_KEEP = int(os.environ.get("MAX_LOGS_TO_KEEP", "1"))  # Keep only last 1 logs
 
 # API configuration for event-driven collection
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://cms-logging.com")
@@ -472,7 +472,11 @@ class NvidiaLogCollector:
         LOG.info(f"Cleaning up {remote_path} from pod {pod_name}")
 
         try:
-            exec_command = ["rm", "-f", remote_path]
+            # Delete the file and verify it's gone
+            exec_command = [
+                "/bin/sh", "-c",
+                f"rm -f {remote_path} && if [ -f {remote_path} ]; then echo 'STILL_EXISTS'; else echo 'DELETED'; fi"
+            ]
 
             resp = stream(
                 self.k8s_api.connect_get_namespaced_pod_exec,
@@ -486,8 +490,15 @@ class NvidiaLogCollector:
                 tty=False
             )
 
-            LOG.info(f"Successfully cleaned up {remote_path}")
-            return True
+            if "DELETED" in resp:
+                LOG.info(f"Successfully cleaned up {remote_path}")
+                return True
+            elif "STILL_EXISTS" in resp:
+                LOG.error(f"File still exists after deletion attempt: {remote_path}")
+                return False
+            else:
+                LOG.warning(f"Unexpected cleanup response: {resp}")
+                return False
 
         except Exception as e:
             LOG.warning(f"Error cleaning up remote log file (non-critical): {e}")
