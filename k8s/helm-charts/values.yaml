@@ -894,9 +894,9 @@ logCollector:
       memory: 128Mi
 
   # Security context
+  # Note: Running as root to read /host/sys/class/dmi/id/product_uuid for VM_ID
   securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
+    runAsUser: 0
     allowPrivilegeEscalation: false
     capabilities:
       drop:
