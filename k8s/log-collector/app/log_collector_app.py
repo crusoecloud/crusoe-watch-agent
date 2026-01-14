@@ -44,6 +44,7 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://cms-logging.com")
 API_POLL_INTERVAL = int(os.environ.get("API_POLL_INTERVAL", "60"))  # Poll every 60 seconds
 API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
 COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))  # 5 minutes timeout
+CRUSOE_MONITORING_TOKEN = os.environ.get("CRUSOE_MONITORING_TOKEN")  # Auth token for API calls
 
 # Logging setup
 logging.basicConfig(
@@ -87,6 +88,10 @@ class NvidiaLogCollector:
         if self.vm_id:
             LOG.info(f"VM ID: {self.vm_id}")
 
+        # Warn if API mode is enabled but token is missing
+        if API_ENABLED and not CRUSOE_MONITORING_TOKEN:
+            LOG.warning("API_ENABLED is true but CRUSOE_MONITORING_TOKEN is not set. API calls may fail authentication.")
+
     def _read_vm_id_from_dmi(self) -> Optional[str]:
         """
         Read VM ID from DMI product_uuid file.
@@ -107,6 +112,18 @@ class NvidiaLogCollector:
             LOG.warning(f"Failed to read VM ID from DMI: {e}")
             return None
 
+    def _get_auth_headers(self) -> Dict[str, str]:
+        """
+        Get authentication headers for API requests.
+
+        Returns:
+            Dictionary with Authorization header if token is available
+        """
+        headers = {}
+        if CRUSOE_MONITORING_TOKEN:
+            headers['Authorization'] = f'Bearer {CRUSOE_MONITORING_TOKEN}'
+        return headers
+
     def check_for_tasks(self) -> Optional[Dict[str, Any]]:
         """
         Poll the API to check if there are any log collection tasks.
@@ -121,9 +138,10 @@ class NvidiaLogCollector:
         try:
             url = f"{API_BASE_URL}/check-tasks"
             params = {"vm_id": self.vm_id}
+            headers = self._get_auth_headers()
 
             LOG.debug(f"Polling API: {url} with params: {params}")
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, headers=headers, timeout=10)
 
             if response.status_code == 200:
                 data = response.json()
@@ -165,6 +183,7 @@ class NvidiaLogCollector:
         """
         try:
             url = f"{API_BASE_URL}/upload-logs"
+            headers = self._get_auth_headers()
 
             if log_file and status == "success":
                 # Success case - upload file with success status
@@ -180,7 +199,7 @@ class NvidiaLogCollector:
                         'message': message if message else 'Logs collected and uploaded successfully'
                     }
 
-                    response = requests.post(url, files=files, data=data, timeout=60)
+                    response = requests.post(url, files=files, data=data, headers=headers, timeout=60)
             else:
                 # Failed case - send status only
                 LOG.info(f"Sending {status} status for event {event_id}: {message}")
@@ -192,7 +211,7 @@ class NvidiaLogCollector:
                     'node_name': self.node_name
                 }
 
-                response = requests.post(url, json=data, timeout=10)
+                response = requests.post(url, json=data, headers=headers, timeout=10)
 
             if response.status_code == 200:
                 LOG.info(f"Successfully reported {status} result for event {event_id}")
