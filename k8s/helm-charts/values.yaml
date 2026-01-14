@@ -203,9 +203,9 @@ vector:
   ]
 
   # args -- Override Vector's default arguments.
-  # Removed --config-dir to prevent "too many open files" error
-  # The command already specifies --config /etc/vector/vector.yaml
-  args: []
+  args:
+    - --config-dir
+    - "/etc/vector/"
 
   # env -- Set environment variables for Vector containers.
   env:
