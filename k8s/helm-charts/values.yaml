@@ -816,7 +816,7 @@ vector:
 
 # NVIDIA Log Collector configuration
 logCollector:
-  enabled: true
+  enabled: false
   name: crusoe-log-collector
 
   image:
