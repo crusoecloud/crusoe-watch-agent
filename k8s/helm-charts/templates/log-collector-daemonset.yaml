@@ -1,0 +1,85 @@
+{{- if .Values.logCollector.enabled }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Values.logCollector.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.logCollector.name }}
+    app.kubernetes.io/name: {{ .Values.logCollector.name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.logCollector.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.logCollector.name }}
+    spec:
+      serviceAccountName: {{ .Values.logCollector.name }}
+
+      # Only schedule on GPU nodes
+      {{- if .Values.logCollector.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.logCollector.nodeSelector | nindent 8 }}
+      {{- end }}
+
+      {{- if .Values.logCollector.tolerations }}
+      tolerations:
+        {{- toYaml .Values.logCollector.tolerations | nindent 8 }}
+      {{- end }}
+
+      {{- if .Values.logCollector.initContainers }}
+      initContainers:
+        {{- toYaml .Values.logCollector.initContainers | nindent 8 }}
+      {{- end }}
+
+      containers:
+      - name: log-collector
+        image: "{{ .Values.logCollector.image.repository }}:{{ .Values.logCollector.image.tag }}"
+        imagePullPolicy: {{ .Values.logCollector.image.pullPolicy }}
+
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: CRUSOE_MONITORING_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: crusoe-monitoring-token
+              key: CRUSOE_MONITORING_TOKEN
+              optional: true
+        {{- range $key, $value := .Values.logCollector.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+
+        envFrom:
+        - secretRef:
+            name: crusoe-secrets
+            optional: true
+
+        volumeMounts:
+        {{- if .Values.logCollector.volumeMounts }}
+          {{- toYaml .Values.logCollector.volumeMounts | nindent 8 }}
+        {{- end }}
+
+        {{- if .Values.logCollector.resources }}
+        resources:
+          {{- toYaml .Values.logCollector.resources | nindent 10 }}
+        {{- end }}
+
+        {{- if .Values.logCollector.securityContext }}
+        securityContext:
+          {{- toYaml .Values.logCollector.securityContext | nindent 10 }}
+        {{- end }}
+
+      volumes:
+      {{- if .Values.logCollector.volumes }}
+        {{- toYaml .Values.logCollector.volumes | nindent 6 }}
+      {{- end }}
+{{- end }}

@@ -816,3 +816,91 @@ vector:
     #   data:
   #     vector.json: |
   #       {{ .Files.Get "dashboards/vector.json" | fromJson | toJson }}
+
+# NVIDIA Log Collector configuration
+logCollector:
+  enabled: false
+  name: crusoe-log-collector
+
+  image:
+    repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
+    tag: pr-12
+    pullPolicy: IfNotPresent
+
+  # Environment variables for log collector
+  env:
+    LOG_OUTPUT_DIR: "/logs"
+    NVIDIA_NAMESPACE: "nvidia-gpu-operator"
+    NVIDIA_DRIVER_POD_PREFIX: "nvidia-gpu-driver"
+    COLLECTION_INTERVAL: "3600"
+    RUN_ONCE: "false"
+    LOG_LEVEL: "INFO"
+    MAX_LOGS_TO_KEEP: "1"
+    API_ENABLED: "false"
+    API_BASE_URL: "https://cms-logging.com"
+    API_POLL_INTERVAL: "60"
+    COLLECTION_TIMEOUT: "300"
+
+  # Schedule on GPU nodes only
+  # Comment out to deploy on all nodes for testing
+  nodeSelector: {}
+    # nvidia.com/gpu: "true"
+
+  # Tolerations for GPU nodes
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+  # Init container to fix permissions
+  initContainers:
+    - name: fix-nvidia-logs-permissions
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+        - |
+          mkdir -p /logs
+          chown -R 1000:1000 /logs
+          chmod -R 755 /logs
+      volumeMounts:
+        - name: nvidia-logs
+          mountPath: /logs
+      securityContext:
+        runAsUser: 0
+
+  # Volume mounts for log collector
+  volumeMounts:
+    - name: nvidia-logs
+      mountPath: /logs
+    - name: sysfs
+      mountPath: /host/sys
+      readOnly: true
+
+  # Volumes
+  volumes:
+    - name: nvidia-logs
+      hostPath:
+        path: /var/log/nvidia-bug-reports
+        type: DirectoryOrCreate
+    - name: sysfs
+      hostPath:
+        path: /sys
+
+  # Resources
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+  # Security context
+  # Note: Running as root to read /host/sys/class/dmi/id/product_uuid for VM_ID
+  securityContext:
+    runAsUser: 0
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
