@@ -1,4 +1,4 @@
-import os, signal, re, logging, sys
+import os, signal, time, re, logging, threading, sys
 from kubernetes import client, config, watch
 from utils import LiteralStr, YamlUtils
 from amd_exporter import AmdExporterManager
@@ -275,6 +275,28 @@ class VectorConfigReloader:
 
         LOG.info(f"Removed custom metrics pipeline for pod '{custom_metrics_ep['pod_name']}'")
 
+    def refresh_custom_metrics_config(self):
+        """Refresh only custom metrics transforms when ConfigMap changes."""
+        current_cfg = YamlUtils.load_yaml_config(VECTOR_CONFIG_PATH)
+
+        # Find all running custom metrics pods
+        custom_metrics_eps = []
+        for pod in self.k8s_api_client.list_pod_for_all_namespaces(
+            field_selector=f"spec.nodeName={self.node_name},status.phase=Running"
+        ).items:
+            if VectorConfigReloader.is_custom_metrics_pod(pod):
+                custom_metrics_eps.append(self.get_custom_metrics_endpoint_cfg(pod))
+
+        # Remove existing custom metrics components
+        for ep in custom_metrics_eps:
+            self.remove_custom_metrics_scrape_config(current_cfg, ep)
+
+        # Re-add with new config (fetches fresh deployment config from ConfigMap)
+        self.set_custom_metrics_scrape_config(current_cfg, custom_metrics_eps)
+
+        YamlUtils.save_yaml(VECTOR_CONFIG_PATH, current_cfg)
+        LOG.info("Custom metrics config refreshed from ConfigMap")
+
     def bootstrap_config(self):
         base_cfg = YamlUtils.load_yaml_config(VECTOR_BASE_CONFIG_PATH)
 
@@ -319,10 +341,10 @@ class VectorConfigReloader:
         # Store the custom metrics configmap data
         self.custom_metrics_config_map_cache[custom_metrics_config_map_name] = custom_metrics_config_map.data
 
-        # Reload vector config when custom metrics configmap changes
+        # Refresh custom metrics config when configmap changes
         if event_type in ("ADDED", "MODIFIED"):
-            LOG.info(f"Custom metrics ConfigMap {custom_metrics_config_map_name} changed, reloading vector config...")
-            self.bootstrap_config()
+            LOG.info(f"Custom metrics ConfigMap {custom_metrics_config_map_name} changed, refreshing custom metrics config...")
+            self.refresh_custom_metrics_config()
         elif event_type == "DELETED":
             LOG.error(f"CRITICAL: Custom metrics ConfigMap {custom_metrics_config_map_name} was deleted! This should never happen. Keeping internal cache intact.")
 
@@ -362,7 +384,7 @@ class VectorConfigReloader:
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, current_vector_cfg)
         LOG.info(f"Vector config reloaded!")
 
-    def run_pod_event_watcher(self):
+    def run_pod_event_handler(self):
         try:
             stream = self.k8s_pod_event_watcher.stream(
                 self.k8s_api_client.list_pod_for_all_namespaces,
@@ -380,7 +402,7 @@ class VectorConfigReloader:
         except client.ApiException as e:
             LOG.error(f"k8s pod event watcher error: {e}")
 
-    def run_config_map_event_watcher(self):
+    def run_config_map_event_handler(self):
         try:
             stream = self.k8s_config_map_event_watcher.stream(
                 self.k8s_api_client.list_namespaced_config_map,
@@ -404,19 +426,19 @@ class VectorConfigReloader:
 
         self.bootstrap_config()
 
-        try:
-            stream = self.k8s_pod_event_watcher.stream(
-                self.k8s_api_client.list_pod_for_all_namespaces,
-                field_selector=f"spec.nodeName={self.node_name}",
-                _request_timeout=0
-            )
-            for event in stream:
-                self.handle_pod_event(event)
-                if not self.running:
-                    self.k8s_pod_event_watcher.stop()
-                    break
-        except client.ApiException as e:
-            LOG.error(f"k8s event watcher error: {e}")
+        pod_event_handler_thread = threading.Thread(target=self.run_pod_event_handler())
+        cm_event_handler_thread = threading.Thread(target=self.run_config_map_event_handler())
+
+        LOG.info("Starting pod event handler thread...")
+        pod_event_handler_thread.start()
+
+        LOG.info("Starting config map event handler thread...")
+        cm_event_handler_thread.start()
+
+        pod_event_handler_thread.join()
+        LOG.info("Pod event handler thread completed.")
+        cm_event_handler_thread.join()
+        LOG.info("ConfigMap event handler thread completed.")
 
         LOG.info("Exiting config reloader.")
 
