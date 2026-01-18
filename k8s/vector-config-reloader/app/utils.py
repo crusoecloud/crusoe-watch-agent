@@ -1,3 +1,5 @@
+import os
+import tempfile
 import yaml
 
 class LiteralStr(str): pass
@@ -22,5 +24,8 @@ class YamlUtils:
 
     @staticmethod
     def save_yaml(path: str, cfg: dict):
-        with open(path, "w") as f:
+        dir_name = os.path.dirname(path) or "."
+        with tempfile.NamedTemporaryFile(mode="w", dir=dir_name, delete=False) as f:
             yaml.safe_dump(cfg, f)
+            temp_path = f.name
+        os.rename(temp_path, path)
