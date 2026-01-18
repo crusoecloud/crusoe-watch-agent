@@ -426,10 +426,10 @@ class VectorConfigReloader:
 
         self.bootstrap_config()
 
-        LOG.info("Created thread pod event handler thread...")
-        pod_event_handler_thread = threading.Thread(target=self.run_pod_event_handler())
-        LOG.info("Created thread pod event handler thread...")
-        cm_event_handler_thread = threading.Thread(target=self.run_config_map_event_handler())
+        LOG.info("Creating pod event handler thread...")
+        pod_event_handler_thread = threading.Thread(target=self.run_pod_event_handler)
+        LOG.info("Creating config map event handler thread...")
+        cm_event_handler_thread = threading.Thread(target=self.run_config_map_event_handler)
 
         LOG.info("Starting pod event handler thread...")
         pod_event_handler_thread.start()
