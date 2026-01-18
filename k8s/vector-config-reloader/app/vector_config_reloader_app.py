@@ -329,7 +329,7 @@ class VectorConfigReloader:
         # always update the node metrics transform source to handle LiteralStr issue
         base_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = NODE_METRICS_VECTOR_TRANSFORM_SOURCE
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, base_cfg)
-        LOG.info(f"Vector config bootstrapped!")
+        LOG.info(f"Vector config bootstrapped 2!")
 
     def handle_custom_metrics_config_map_event(self, event):
         custom_metrics_config_map = event["object"]
@@ -426,7 +426,9 @@ class VectorConfigReloader:
 
         self.bootstrap_config()
 
+        LOG.info("Created thread pod event handler thread...")
         pod_event_handler_thread = threading.Thread(target=self.run_pod_event_handler())
+        LOG.info("Created thread pod event handler thread...")
         cm_event_handler_thread = threading.Thread(target=self.run_config_map_event_handler())
 
         LOG.info("Starting pod event handler thread...")
