@@ -1,9 +1,8 @@
-{{- $customMetricsNs := .Values.customMetrics.namespace | default "crusoe-monitoring" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: crusoe-custom-metrics-config
-  namespace: {{ $customMetricsNs }}
+  namespace: crusoe-monitoring
 data:
   custom-metrics-config.yaml: |
     default_scrape_interval_sec: 30
