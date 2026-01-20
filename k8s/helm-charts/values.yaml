@@ -25,6 +25,7 @@ metricsExporter:
   defaultMetricsPath: /metrics
   defaultMetricsPort: 9100
   defaultDcgmExporterPort: 9400
+  defaultKubeStateMetricsPort: 8080
   defaultScrapeInterval: 60
 
 logLevel: INFO

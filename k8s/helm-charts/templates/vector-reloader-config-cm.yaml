@@ -9,6 +9,10 @@ data:
       port: {{ .Values.metricsExporter.defaultDcgmExporterPort }}
       path: {{ .Values.metricsExporter.defaultMetricsPath }}
       scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
+    kube_state_metrics:
+      port: {{ .Values.metricsExporter.defaultKubeStateMetricsPort }}
+      path: {{ .Values.metricsExporter.defaultMetricsPath }}
+      scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
     custom_metrics:
       port: {{ .Values.metricsExporter.defaultMetricsPort }}
       path: {{ .Values.metricsExporter.defaultMetricsPath }}

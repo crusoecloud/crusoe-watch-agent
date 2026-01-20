@@ -1,4 +1,4 @@
-import os, signal, time, re, logging, threading, sys
+import os, signal, re, logging, threading, sys
 from kubernetes import client, config, watch
 from utils import LiteralStr, YamlUtils
 from amd_exporter import AmdExporterManager
@@ -10,6 +10,13 @@ RELOADER_CONFIG_PATH = "/etc/reloader/config.yaml"
 
 DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
 DCGM_EXPORTER_APP_LABEL = "nvidia-dcgm-exporter"
+KUBE_STATE_METRICS_SOURCE_NAME = "kube_state_metrics_scrape"
+KUBE_STATE_METRICS_TRANSFORM_NAME = "enrich_kube_state_metrics"
+KUBE_STATE_METRICS_APP_LABEL = "kube-state-metrics"
+KUBE_STATE_METRICS_TRANSFORM_SOURCE = LiteralStr("""
+.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
+.tags.crusoe_resource = "cmk"
+""")
 NODE_METRICS_VECTOR_TRANSFORM_NAME = "enrich_node_metrics"
 NODE_METRICS_VECTOR_TRANSFORM_SOURCE = LiteralStr("""
 if exists(.tags.Hostname) {
@@ -79,6 +86,10 @@ class VectorConfigReloader:
         self.dcgm_exporter_port = reloader_cfg["dcgm_metrics"]["port"]
         self.dcgm_exporter_path = reloader_cfg["dcgm_metrics"]["path"]
         self.dcgm_exporter_scrape_interval = reloader_cfg["dcgm_metrics"]["scrape_interval"]
+        ksm_cfg = reloader_cfg.get("kube_state_metrics", {})
+        self.ksm_port = ksm_cfg.get("port", 8080)
+        self.ksm_path = ksm_cfg.get("path", "/metrics")
+        self.ksm_scrape_interval = ksm_cfg.get("scrape_interval", 60)
         self.amd_manager = AmdExporterManager(reloader_cfg.get("amd_metrics", {}))
         self.default_custom_metrics_config = reloader_cfg["custom_metrics"]
         self.infra_sink_endpoint = f'{reloader_cfg["sink"]["endpoint"]}/ingest'
@@ -91,6 +102,8 @@ class VectorConfigReloader:
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "healthcheck": {"enabled": False},
             "compression": "snappy",
+            "request": {"concurrency": "adaptive"},
+            "batch": {"max_bytes": 500000},
             "tls": {"verify_certificate": True, "verify_hostname": True},
         }
 
@@ -123,11 +136,19 @@ class VectorConfigReloader:
         labels = pod.metadata.labels or {}
         return labels and "app" in labels and labels["app"] == DCGM_EXPORTER_APP_LABEL
 
+    @staticmethod
+    def is_kube_state_metrics_pod(pod):
+        labels = pod.metadata.labels or {}
+        return labels.get("app.kubernetes.io/name") == KUBE_STATE_METRICS_APP_LABEL
+
     def handle_sigterm(self, sig, frame):
         self.running = False
 
     def get_dcgm_exporter_scrape_endpoint(self, pod_ip) -> str:
         return f"http://{pod_ip}:{self.dcgm_exporter_port}{self.dcgm_exporter_path}"
+
+    def get_kube_state_metrics_scrape_endpoint(self, pod_ip) -> str:
+        return f"http://{pod_ip}:{self.ksm_port}{self.ksm_path}"
 
     def get_deployment_metrics_config(self, deployment_name: str) -> dict:
         if not deployment_name:
@@ -222,6 +243,31 @@ class VectorConfigReloader:
         inputs.discard(DCGM_EXPORTER_SOURCE_NAME)
         vector_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["inputs"] = sorted(inputs)
 
+    def set_kube_state_metrics_scrape_config(self, vector_cfg: dict, ksm_scrape_endpoint: str):
+        if ksm_scrape_endpoint is None:
+            return
+        vector_cfg.setdefault("sources", {})[KUBE_STATE_METRICS_SOURCE_NAME] = {
+            "type": "prometheus_scrape",
+            "endpoints": [ksm_scrape_endpoint],
+            "scrape_interval_secs": self.ksm_scrape_interval,
+            "scrape_timeout_secs": int(self.ksm_scrape_interval * SCRAPE_TIMEOUT_PERCENTAGE)
+        }
+        vector_cfg.setdefault("transforms", {})[KUBE_STATE_METRICS_TRANSFORM_NAME] = {
+            "type": "remap",
+            "inputs": [KUBE_STATE_METRICS_SOURCE_NAME],
+            "source": KUBE_STATE_METRICS_TRANSFORM_SOURCE
+        }
+        sink_inputs = set(vector_cfg["sinks"]["cms_gateway_node_metrics"].get("inputs", []))
+        if KUBE_STATE_METRICS_TRANSFORM_NAME not in sink_inputs:
+            vector_cfg["sinks"]["cms_gateway_node_metrics"]["inputs"].append(KUBE_STATE_METRICS_TRANSFORM_NAME)
+
+    def remove_kube_state_metrics_scrape_config(self, vector_cfg: dict):
+        vector_cfg.get("sources", {}).pop(KUBE_STATE_METRICS_SOURCE_NAME, None)
+        vector_cfg.get("transforms", {}).pop(KUBE_STATE_METRICS_TRANSFORM_NAME, None)
+        sink_inputs = set(vector_cfg["sinks"]["cms_gateway_node_metrics"].get("inputs", []))
+        sink_inputs.discard(KUBE_STATE_METRICS_TRANSFORM_NAME)
+        vector_cfg["sinks"]["cms_gateway_node_metrics"]["inputs"] = sorted(sink_inputs)
+
     def set_custom_metrics_scrape_config(self, vector_cfg: dict, custom_metrics_eps: list):
         if not custom_metrics_eps:
             return
@@ -302,12 +348,15 @@ class VectorConfigReloader:
 
         dcgm_exporter_ep = None
         amd_exporter_ep = None
+        ksm_ep = None
         custom_metrics_eps = []
         for pod in self.k8s_api_client.list_pod_for_all_namespaces(field_selector=f"spec.nodeName={self.node_name},status.phase=Running").items:
             if VectorConfigReloader.is_custom_metrics_pod(pod):
                 custom_metrics_eps.append(self.get_custom_metrics_endpoint_cfg(pod))
             elif VectorConfigReloader.is_dcgm_exporter_pod(pod):
                 dcgm_exporter_ep = self.get_dcgm_exporter_scrape_endpoint(pod.status.pod_ip)
+            elif VectorConfigReloader.is_kube_state_metrics_pod(pod):
+                ksm_ep = self.get_kube_state_metrics_scrape_endpoint(pod.status.pod_ip)
             elif self.amd_manager.is_exporter_pod(pod):
                 amd_exporter_ep = self.amd_manager.build_endpoint(pod.status.pod_ip)
             else:
@@ -315,6 +364,7 @@ class VectorConfigReloader:
 
         self.set_custom_metrics_scrape_config(base_cfg, custom_metrics_eps)
         self.set_dcgm_exporter_scrape_config(base_cfg, dcgm_exporter_ep)
+        self.set_kube_state_metrics_scrape_config(base_cfg, ksm_ep)
         if self.amd_manager.enabled and amd_exporter_ep:
             self.amd_manager.set_scrape(base_cfg, amd_exporter_ep, NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
 
@@ -361,6 +411,8 @@ class VectorConfigReloader:
                 self.set_custom_metrics_scrape_config(current_vector_cfg, [self.get_custom_metrics_endpoint_cfg(pod)])
             elif VectorConfigReloader.is_dcgm_exporter_pod(pod):
                 self.set_dcgm_exporter_scrape_config(current_vector_cfg, self.get_dcgm_exporter_scrape_endpoint(pod.status.pod_ip))
+            elif VectorConfigReloader.is_kube_state_metrics_pod(pod):
+                self.set_kube_state_metrics_scrape_config(current_vector_cfg, self.get_kube_state_metrics_scrape_endpoint(pod.status.pod_ip))
             elif self.amd_manager.is_exporter_pod(pod):
                 if self.amd_manager.enabled:
                     self.amd_manager.set_scrape(current_vector_cfg, self.amd_manager.build_endpoint(pod.status.pod_ip), NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
@@ -372,6 +424,8 @@ class VectorConfigReloader:
                 self.remove_custom_metrics_scrape_config(current_vector_cfg, self.get_custom_metrics_endpoint_cfg(pod))
             elif VectorConfigReloader.is_dcgm_exporter_pod(pod):
                 self.remove_dcgm_exporter_scrape_config(current_vector_cfg)
+            elif VectorConfigReloader.is_kube_state_metrics_pod(pod):
+                self.remove_kube_state_metrics_scrape_config(current_vector_cfg)
             elif self.amd_manager.is_exporter_pod(pod):
                 self.amd_manager.remove_scrape(current_vector_cfg, NODE_METRICS_VECTOR_TRANSFORM_NAME)
             else:
