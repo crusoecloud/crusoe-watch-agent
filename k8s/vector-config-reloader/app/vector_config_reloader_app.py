@@ -15,7 +15,7 @@ KUBE_STATE_METRICS_TRANSFORM_NAME = "enrich_kube_state_metrics"
 KUBE_STATE_METRICS_APP_LABEL = "kube-state-metrics"
 KUBE_STATE_METRICS_TRANSFORM_SOURCE = LiteralStr("""
 .tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
-.tags.crusoe_resource = "kube_state_metrics"
+.tags.crusoe_resource = "cmk"
 """)
 NODE_METRICS_VECTOR_TRANSFORM_NAME = "enrich_node_metrics"
 NODE_METRICS_VECTOR_TRANSFORM_SOURCE = LiteralStr("""
