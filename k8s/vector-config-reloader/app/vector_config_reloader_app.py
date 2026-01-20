@@ -163,7 +163,6 @@ class VectorConfigReloader:
         config = YamlUtils.load_yaml_string(config_yaml)
         return config.get(deployment_name, {})
 
-    @staticmethod
     def build_deployment_transform_source(self, deployment_config: dict, endpoint_config: dict) -> str:
         vrl_lines = []
         allowlist = deployment_config.get("allowlist", [])

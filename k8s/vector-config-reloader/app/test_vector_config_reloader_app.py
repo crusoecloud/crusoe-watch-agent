@@ -37,6 +37,17 @@ def _isolate_env(monkeypatch, tmp_path):
         def list_pod_for_all_namespaces(self, **kwargs):
             return types.SimpleNamespace(items=self._pods)
 
+        def read_node(self, name):
+            return types.SimpleNamespace(
+                metadata=types.SimpleNamespace(
+                    labels={
+                        "crusoe.ai/instance.id": "test-vm-id",
+                        "crusoe.ai/nodepool.id": "test-nodepool-id",
+                        "beta.kubernetes.io/instance-type": "test-instance-type",
+                    }
+                )
+            )
+
     class _DummyWatch:
         def stream(self, *args, **kwargs):
             return []
