@@ -101,6 +101,7 @@ class VectorConfigReloader:
             self.instance_type = labels.get("beta.kubernetes.io/instance-type")
         except client.exceptions.ApiException as e:
             print(f"Failed to fetch node labels: {e}")
+            sys.exit(1)
 
         self.node_metrics_vector_transform_source = LiteralStr(f"""
 .tags.nodepool = "{self.nodepool_id}"
