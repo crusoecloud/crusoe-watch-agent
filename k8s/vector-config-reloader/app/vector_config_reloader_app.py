@@ -96,9 +96,10 @@ class VectorConfigReloader:
         try:
             node = self.k8s_api_client.read_node(self.node_name)
             labels = node.metadata.labels
-            self.vm_id = labels.get("crusoe.ai/instance.id")
-            self.nodepool_id = labels.get("crusoe.ai/nodepool.id")
-            self.instance_type = labels.get("beta.kubernetes.io/instance-type")
+            self.vm_id = labels.get("crusoe.ai/instance.id", None)
+            self.nodepool_id = labels.get("crusoe.ai/nodepool.id", None)
+            self.instance_type = labels.get("beta.kubernetes.io/instance-type", None)
+            self.pod_id = labels.get("crusoe.ai/pod.id", None)
         except client.exceptions.ApiException as e:
             print(f"Failed to fetch node labels: {e}")
             sys.exit(1)
@@ -107,6 +108,7 @@ class VectorConfigReloader:
 .tags.nodepool = "{self.nodepool_id}"
 .tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
 .tags.vm_id = "{self.vm_id}"
+.tags.pod_id = "{self.pod_id}"
 .tags.crusoe_resource = "vm"
 .tags.metrics_source = "node-metrics"
 """)
@@ -118,6 +120,7 @@ class VectorConfigReloader:
 .tags.nodepool = "{self.nodepool_id}"
 .tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
 .tags.vm_id = "{self.vm_id}"
+.tags.pod_id = "{self.pod_id}"
 .tags.crusoe_resource = "custom_metrics"
 .tags.metrics_source = "custom-metrics"
 """)
@@ -207,6 +210,7 @@ class VectorConfigReloader:
         vrl_lines.append(f'.tags.nodepool = "{self.nodepool_id}"')
         vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
         vrl_lines.append(f'.tags.vm_id = "{self.vm_id}"')
+        vrl_lines.append(f'.tags.pod_id = "{self.pod_id}"')
         vrl_lines.append('.tags.crusoe_resource = "custom_metrics"')
         vrl_lines.append('.tags.metrics_source = "custom-metrics"')
         vrl_lines.append(f'.tags.pod_ip = "{endpoint_config["pod_ip"]}"')
