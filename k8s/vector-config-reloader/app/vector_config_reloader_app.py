@@ -12,10 +12,12 @@ DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
 DCGM_EXPORTER_APP_LABEL = "nvidia-dcgm-exporter"
 KUBE_STATE_METRICS_SOURCE_NAME = "kube_state_metrics_scrape"
 KUBE_STATE_METRICS_TRANSFORM_NAME = "enrich_kube_state_metrics"
+KUBE_STATE_METRICS_SINK_NAME = "kube_state_metrics_sink"
 KUBE_STATE_METRICS_APP_LABEL = "kube-state-metrics"
 KUBE_STATE_METRICS_TRANSFORM_SOURCE = LiteralStr("""
 .tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
 .tags.crusoe_resource = "cmk"
+.tags.metrics_source = "kube-state-metrics"
 """)
 NODE_METRICS_VECTOR_TRANSFORM_NAME = "enrich_node_metrics"
 CUSTOM_METRICS_VECTOR_TRANSFORM_NAME = "enrich_custom_metrics"
@@ -79,6 +81,18 @@ class VectorConfigReloader:
         if self.sink_proxy_cfg.get("enabled"):
             self.custom_metrics_sink_config["proxy"] = self.sink_proxy_cfg
 
+        self.kube_state_metrics_sink_config = {
+            "type": "prometheus_remote_write",
+            "inputs": [KUBE_STATE_METRICS_TRANSFORM_NAME],
+            "endpoint": self.infra_sink_endpoint,
+            "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
+            "healthcheck": {"enabled": False},
+            "compression": "snappy",
+            "request": {"concurrency": "adaptive"},
+            "batch": {"max_bytes": 500000},
+            "tls": {"verify_certificate": True, "verify_hostname": True},
+        }
+
         try:
             node = self.k8s_api_client.read_node(self.node_name)
             labels = node.metadata.labels
@@ -91,8 +105,9 @@ class VectorConfigReloader:
         self.node_metrics_vector_transform_source = LiteralStr(f"""
 .tags.nodepool = "{self.nodepool_id}"
 .tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
-.tags.vm_id = "${{VM_ID}}"
+.tags.vm_id = "{self.vm_id}"
 .tags.crusoe_resource = "vm"
+.tags.metrics_source = "node-metrics"
 """)
 
         self.custom_metrics_vector_transform = {
@@ -101,8 +116,9 @@ class VectorConfigReloader:
             "source": LiteralStr(f"""
 .tags.nodepool = "{self.nodepool_id}"
 .tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
-.tags.vm_id = "${{VM_ID}}"
+.tags.vm_id = "{self.vm_id}"
 .tags.crusoe_resource = "custom_metrics"
+.tags.metrics_source = "custom-metrics"
 """)
         }
 
@@ -189,8 +205,9 @@ class VectorConfigReloader:
 
         vrl_lines.append(f'.tags.nodepool = "{self.nodepool_id}"')
         vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
-        vrl_lines.append('.tags.vm_id = "${VM_ID}"')
+        vrl_lines.append(f'.tags.vm_id = "{self.vm_id}"')
         vrl_lines.append('.tags.crusoe_resource = "custom_metrics"')
+        vrl_lines.append('.tags.metrics_source = "custom-metrics"')
         vrl_lines.append(f'.tags.pod_ip = "{endpoint_config["pod_ip"]}"')
         vrl_lines.append(f'.tags.pod_name = "{endpoint_config["pod_name"]}"')
 
@@ -245,16 +262,12 @@ class VectorConfigReloader:
             "inputs": [KUBE_STATE_METRICS_SOURCE_NAME],
             "source": KUBE_STATE_METRICS_TRANSFORM_SOURCE
         }
-        sink_inputs = set(vector_cfg["sinks"]["cms_gateway_node_metrics"].get("inputs", []))
-        if KUBE_STATE_METRICS_TRANSFORM_NAME not in sink_inputs:
-            vector_cfg["sinks"]["cms_gateway_node_metrics"]["inputs"].append(KUBE_STATE_METRICS_TRANSFORM_NAME)
+        vector_cfg.setdefault("sinks", {})[KUBE_STATE_METRICS_SINK_NAME] = self.kube_state_metrics_sink_config
 
     def remove_kube_state_metrics_scrape_config(self, vector_cfg: dict):
         vector_cfg.get("sources", {}).pop(KUBE_STATE_METRICS_SOURCE_NAME, None)
         vector_cfg.get("transforms", {}).pop(KUBE_STATE_METRICS_TRANSFORM_NAME, None)
-        sink_inputs = set(vector_cfg["sinks"]["cms_gateway_node_metrics"].get("inputs", []))
-        sink_inputs.discard(KUBE_STATE_METRICS_TRANSFORM_NAME)
-        vector_cfg["sinks"]["cms_gateway_node_metrics"]["inputs"] = sorted(sink_inputs)
+        vector_cfg.get("sinks", {}).pop(KUBE_STATE_METRICS_SINK_NAME, None)
 
     def set_custom_metrics_scrape_config(self, vector_cfg: dict, custom_metrics_eps: list):
         if not custom_metrics_eps:
