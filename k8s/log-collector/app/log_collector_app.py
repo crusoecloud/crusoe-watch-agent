@@ -136,7 +136,7 @@ class NvidiaLogCollector:
             return None
 
         try:
-            url = f"{API_BASE_URL}/check-tasks"
+            url = f"{API_BASE_URL}/agent/check-tasks"
             params = {"vm_id": self.vm_id}
             headers = self._get_auth_headers()
 
@@ -182,7 +182,7 @@ class NvidiaLogCollector:
             True if report successful, False otherwise
         """
         try:
-            url = f"{API_BASE_URL}/upload-logs"
+            url = f"{API_BASE_URL}/agent/upload-logs"
             headers = self._get_auth_headers()
 
             if log_file and status == "success":
