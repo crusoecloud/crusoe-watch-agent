@@ -78,6 +78,8 @@ class VectorConfigReloader:
             "tls": {"verify_certificate": True, "verify_hostname": True},
         }
 
+        LOG.setLevel(reloader_cfg["log_level"])
+
         # set proxy if enabled
         if self.sink_proxy_cfg.get("enabled"):
             self.custom_metrics_sink_config["proxy"] = self.sink_proxy_cfg
@@ -103,7 +105,7 @@ class VectorConfigReloader:
             self.pod_id = labels.get("crusoe.ai/pod.id", None)
             self.project_id = labels.get("crusoe.ai/project.id", None)
         except client.exceptions.ApiException as e:
-            print(f"Failed to fetch node labels: {e}")
+            LOG.error(f"Failed to fetch node labels: {e}. Exiting!")
             sys.exit(1)
 
         self.node_metrics_vector_transform_source = LiteralStr(f"""
@@ -128,7 +130,7 @@ class VectorConfigReloader:
 """)
         }
 
-        LOG.setLevel(reloader_cfg["log_level"])
+
 
     @staticmethod
     def sanitize_name(name: str) -> str:
