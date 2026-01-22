@@ -16,6 +16,7 @@ KUBE_STATE_METRICS_SINK_NAME = "kube_state_metrics_sink"
 KUBE_STATE_METRICS_APP_LABEL = "kube-state-metrics"
 KUBE_STATE_METRICS_TRANSFORM_SOURCE = LiteralStr("""
 .tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
+.tags.project_id = "${CRUSOE_PROJECT_ID}"
 .tags.crusoe_resource = "cmk"
 .tags.metrics_source = "kube-state-metrics"
 """)
@@ -100,6 +101,7 @@ class VectorConfigReloader:
             self.nodepool_id = labels.get("crusoe.ai/nodepool.id", None)
             self.instance_type = labels.get("beta.kubernetes.io/instance-type", None)
             self.pod_id = labels.get("crusoe.ai/pod.id", None)
+            self.project_id = labels.get("crusoe.ai/project.id", None)
         except client.exceptions.ApiException as e:
             print(f"Failed to fetch node labels: {e}")
             sys.exit(1)
