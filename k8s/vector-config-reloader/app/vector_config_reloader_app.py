@@ -12,28 +12,15 @@ DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
 DCGM_EXPORTER_APP_LABEL = "nvidia-dcgm-exporter"
 KUBE_STATE_METRICS_SOURCE_NAME = "kube_state_metrics_scrape"
 KUBE_STATE_METRICS_TRANSFORM_NAME = "enrich_kube_state_metrics"
+KUBE_STATE_METRICS_SINK_NAME = "kube_state_metrics_sink"
 KUBE_STATE_METRICS_APP_LABEL = "kube-state-metrics"
 KUBE_STATE_METRICS_TRANSFORM_SOURCE = LiteralStr("""
 .tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
+.tags.project_id = "${CRUSOE_PROJECT_ID}"
 .tags.crusoe_resource = "cmk"
+.tags.metrics_source = "kube-state-metrics"
 """)
 NODE_METRICS_VECTOR_TRANSFORM_NAME = "enrich_node_metrics"
-NODE_METRICS_VECTOR_TRANSFORM_SOURCE = LiteralStr("""
-if exists(.tags.Hostname) {
-parts, _ = split(.tags.Hostname, ".")
-host_prefix = get(parts, [0]) ?? ""
-prefix_parts, _ = split(host_prefix, "-")
-nodepool_id_parts, _ = slice(prefix_parts, 0, length(prefix_parts) - 1)
-.tags.nodepool, _ = join(nodepool_id_parts, "-")
-} else if exists(.tags.host) {
-prefix_parts, _ = split(.tags.host, "-")
-nodepool_id_parts, _ = slice(prefix_parts, 0, length(prefix_parts) - 1)
-.tags.nodepool, _ = join(nodepool_id_parts, "-")
-}
-.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
-.tags.vm_id = "${VM_ID}"
-.tags.crusoe_resource = "vm"
-""")
 CUSTOM_METRICS_VECTOR_TRANSFORM_NAME = "enrich_custom_metrics"
 CUSTOM_METRICS_CONFIG_MAP_NAME = "crusoe-custom-metrics-config"
 CUSTOM_METRICS_CONFIG_MAP_KEY = "custom-metrics-config.yaml"
@@ -41,22 +28,6 @@ CUSTOM_METRICS_SCRAPE_ANNOTATION = "crusoe.ai/scrape"
 CUSTOM_METRICS_PORT_ANNOTATION = "crusoe.ai/port"
 CUSTOM_METRICS_PATH_ANNOTATION = "crusoe.ai/path"
 CUSTOM_METRICS_DEFAULT_SCRAPE_INTERVAL = 30
-CUSTOM_METRICS_VECTOR_TRANSFORM = {
-    "type": "remap",
-    "inputs": [],
-    "source": LiteralStr("""
-if exists(.tags.Hostname) {
-parts, _ = split(.tags.Hostname, ".")
-host_prefix = get(parts, [0]) ?? ""
-prefix_parts, _ = split(host_prefix, "-")
-nodepool_id_parts, _ = slice(prefix_parts, 0, length(prefix_parts) - 1)
-.tags.nodepool, _ = join(nodepool_id_parts, "-")
-}
-.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
-.tags.vm_id = "${VM_ID}"
-.tags.crusoe_resource = "custom_metrics"
-""")
-}
 
 SCRAPE_INTERVAL_MIN_THRESHOLD = 5
 SCRAPE_TIMEOUT_PERCENTAGE = 0.7
@@ -107,11 +78,59 @@ class VectorConfigReloader:
             "tls": {"verify_certificate": True, "verify_hostname": True},
         }
 
+        LOG.setLevel(reloader_cfg["log_level"])
+
         # set proxy if enabled
         if self.sink_proxy_cfg.get("enabled"):
             self.custom_metrics_sink_config["proxy"] = self.sink_proxy_cfg
 
-        LOG.setLevel(reloader_cfg["log_level"])
+        self.kube_state_metrics_sink_config = {
+            "type": "prometheus_remote_write",
+            "inputs": [KUBE_STATE_METRICS_TRANSFORM_NAME],
+            "endpoint": self.infra_sink_endpoint,
+            "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
+            "healthcheck": {"enabled": False},
+            "compression": "snappy",
+            "request": {"concurrency": "adaptive"},
+            "batch": {"max_bytes": 500000},
+            "tls": {"verify_certificate": True, "verify_hostname": True},
+        }
+
+        try:
+            node = self.k8s_api_client.read_node(self.node_name)
+            labels = node.metadata.labels
+            self.vm_id = labels.get("crusoe.ai/instance.id", None)
+            self.nodepool_id = labels.get("crusoe.ai/nodepool.id", None)
+            self.instance_type = labels.get("beta.kubernetes.io/instance-type", None)
+            self.pod_id = labels.get("crusoe.ai/pod.id", None)
+            self.project_id = labels.get("crusoe.ai/project.id", None)
+        except client.exceptions.ApiException as e:
+            LOG.error(f"Failed to fetch node labels: {e}. Exiting!")
+            sys.exit(1)
+
+        self.node_metrics_vector_transform_source = LiteralStr(f"""
+.tags.nodepool = "{self.nodepool_id}"
+.tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
+.tags.vm_id = "{self.vm_id}"
+.tags.pod_id = "{self.pod_id}"
+.tags.crusoe_resource = "vm"
+.tags.metrics_source = "node-metrics"
+""")
+
+        self.custom_metrics_vector_transform = {
+            "type": "remap",
+            "inputs": [],
+            "source": LiteralStr(f"""
+.tags.nodepool = "{self.nodepool_id}"
+.tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
+.tags.vm_id = "{self.vm_id}"
+.tags.pod_id = "{self.pod_id}"
+.tags.crusoe_resource = "custom_metrics"
+.tags.metrics_source = "custom-metrics"
+""")
+        }
+
+
 
     @staticmethod
     def sanitize_name(name: str) -> str:
@@ -168,8 +187,7 @@ class VectorConfigReloader:
         config = YamlUtils.load_yaml_string(config_yaml)
         return config.get(deployment_name, {})
 
-    @staticmethod
-    def build_deployment_transform_source(deployment_config: dict, endpoint_config: dict) -> str:
+    def build_deployment_transform_source(self, deployment_config: dict, endpoint_config: dict) -> str:
         vrl_lines = []
         allowlist = deployment_config.get("allowlist", [])
         droplist = deployment_config.get("droplist", [])
@@ -193,16 +211,12 @@ class VectorConfigReloader:
                 for key, value in label_entry.items():
                     vrl_lines.append(f'.tags.{key} = "{value}"')
 
-        vrl_lines.append('if exists(.tags.Hostname) {')
-        vrl_lines.append('parts, _ = split(.tags.Hostname, ".")')
-        vrl_lines.append('host_prefix = get(parts, [0]) ?? ""')
-        vrl_lines.append('prefix_parts, _ = split(host_prefix, "-")')
-        vrl_lines.append('nodepool_id_parts, _ = slice(prefix_parts, 0, length(prefix_parts) - 1)')
-        vrl_lines.append('.tags.nodepool, _ = join(nodepool_id_parts, "-")')
-        vrl_lines.append('}')
+        vrl_lines.append(f'.tags.nodepool = "{self.nodepool_id}"')
         vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
-        vrl_lines.append('.tags.vm_id = "${VM_ID}"')
+        vrl_lines.append(f'.tags.vm_id = "{self.vm_id}"')
+        vrl_lines.append(f'.tags.pod_id = "{self.pod_id}"')
         vrl_lines.append('.tags.crusoe_resource = "custom_metrics"')
+        vrl_lines.append('.tags.metrics_source = "custom-metrics"')
         vrl_lines.append(f'.tags.pod_ip = "{endpoint_config["pod_ip"]}"')
         vrl_lines.append(f'.tags.pod_name = "{endpoint_config["pod_name"]}"')
 
@@ -257,16 +271,12 @@ class VectorConfigReloader:
             "inputs": [KUBE_STATE_METRICS_SOURCE_NAME],
             "source": KUBE_STATE_METRICS_TRANSFORM_SOURCE
         }
-        sink_inputs = set(vector_cfg["sinks"]["cms_gateway_node_metrics"].get("inputs", []))
-        if KUBE_STATE_METRICS_TRANSFORM_NAME not in sink_inputs:
-            vector_cfg["sinks"]["cms_gateway_node_metrics"]["inputs"].append(KUBE_STATE_METRICS_TRANSFORM_NAME)
+        vector_cfg.setdefault("sinks", {})[KUBE_STATE_METRICS_SINK_NAME] = self.kube_state_metrics_sink_config
 
     def remove_kube_state_metrics_scrape_config(self, vector_cfg: dict):
         vector_cfg.get("sources", {}).pop(KUBE_STATE_METRICS_SOURCE_NAME, None)
         vector_cfg.get("transforms", {}).pop(KUBE_STATE_METRICS_TRANSFORM_NAME, None)
-        sink_inputs = set(vector_cfg["sinks"]["cms_gateway_node_metrics"].get("inputs", []))
-        sink_inputs.discard(KUBE_STATE_METRICS_TRANSFORM_NAME)
-        vector_cfg["sinks"]["cms_gateway_node_metrics"]["inputs"] = sorted(sink_inputs)
+        vector_cfg.get("sinks", {}).pop(KUBE_STATE_METRICS_SINK_NAME, None)
 
     def set_custom_metrics_scrape_config(self, vector_cfg: dict, custom_metrics_eps: list):
         if not custom_metrics_eps:
@@ -294,7 +304,7 @@ class VectorConfigReloader:
             }
 
             transform_name = f"{pod_name_sanitized}_transform"
-            transform_source = VectorConfigReloader.build_deployment_transform_source(deployment_config, endpoint)
+            transform_source = self.build_deployment_transform_source(deployment_config, endpoint)
             transforms[transform_name] = {
                 "type": "remap",
                 "inputs": [source_name],
@@ -377,7 +387,7 @@ class VectorConfigReloader:
 
         LOG.debug(f"Writing vector config {str(base_cfg)}")
         # always update the node metrics transform source to handle LiteralStr issue
-        base_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = NODE_METRICS_VECTOR_TRANSFORM_SOURCE
+        base_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = self.node_metrics_vector_transform_source
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, base_cfg)
         LOG.info(f"Vector config bootstrapped!")
 
@@ -434,7 +444,7 @@ class VectorConfigReloader:
 
         LOG.debug(f"Writing vector config: {str(current_vector_cfg)}")
         # always update the node metrics transform source to handle LiteralStr issue
-        current_vector_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = NODE_METRICS_VECTOR_TRANSFORM_SOURCE
+        current_vector_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = self.node_metrics_vector_transform_source
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, current_vector_cfg)
         LOG.info(f"Vector config reloaded!")
 
