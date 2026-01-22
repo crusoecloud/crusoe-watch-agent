@@ -62,6 +62,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=ref,event=tag
+            type=sha,format=short,prefix=
             type=semver,pattern={{version}},prefix=
           flavor: |
             latest=auto
