@@ -364,6 +364,15 @@ vector:
   customConfig:
     data_dir: /vector-data-dir
     sources:
+      journald_logs:
+        type: "journald"
+        journal_directory: "/var/log/journal"
+      dmesg_logs:
+        type: "file"
+        include: [ "/var/log/dmesg", "/var/log/kern.log" ]
+      nvidia_bug_reports:
+        type: "file"
+        include: [ "/var/log/nvidia-bug-reports/**/*.log" ]
       host_metrics:
         type: host_metrics
         collectors:
@@ -388,6 +397,31 @@ vector:
         scrape_interval_secs: 60
 
     transforms:
+      enrich_logs:
+        type: "remap"
+        inputs:
+          - "journald_logs"
+          - "dmesg_logs"
+          - "nvidia_bug_reports"
+        source: |
+          .agent = "crusoe-watch-agent"
+          .host = get_hostname!()
+          
+          if .source_type == "journald" {
+              .log_source = "journald"
+          } else if .source_type == "file" {
+              if contains(string!(.file), "nvidia-bug-reports") {
+                  .log_source = "nvidia_diagnostic"
+              } else if contains(string!(.file), "dmesg") || contains(string!(.file), "kern.log") {
+                  .log_source = "dmesg"
+              } else {
+                  .log_source = "generic_file"
+              }
+          }
+          
+          .project_id = "${CRUSOE_PROJECT_ID:-unknown}"
+          .vm_id = "${CRUSOE_VM_ID:-unknown}"
+          del(.source_type)
       enrich_node_metrics:
         type: remap
         inputs:
@@ -418,6 +452,16 @@ vector:
             .tags.chart_version = "${CHART_VERSION}"
 
     sinks:
+      crusoe_ingest:
+        type: "http"
+        inputs:
+          - "enrich_logs"
+        uri: "https://api.crusoecloud.com/v1alpha5/ingest/logs"
+        auth:
+          strategy: "bearer"
+          token: "${CRUSOE_AUTH_TOKEN}"
+        encoding:
+          codec: "json"
       cms_gateway_node_metrics:
         type: prometheus_remote_write
         inputs:
@@ -472,6 +516,9 @@ vector:
 
   # extraVolumes -- Additional Volumes to use with Vector Pods.
   extraVolumes:
+    - name: journal-logs
+      hostPath:
+        path: /var/log/journal
     - name: vector-config   # shared writable config
       emptyDir: { }
     - name: base-config     # mount your existing configmap
@@ -483,6 +530,9 @@ vector:
 
   # extraVolumeMounts -- Additional Volume to mount into Vector Containers.
   extraVolumeMounts:
+    - name: journal-logs
+      mountPath: /var/log/journal
+      readOnly: true
     - name: vector-config
       mountPath: /etc/vector
     - name: base-config
