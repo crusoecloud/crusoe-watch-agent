@@ -1,40 +1,19 @@
-name: Config Reloader CI
+name: Monitoring Token Job CI
 
 on:
   push:
     branches: ["main"]
     tags:
       - "v*"
-    # BUT only run if changes occur under the vector-config-reloader/ path
+    # Only run if changes occur under the monitoring-token/ path
     paths:
-      - 'k8s/vector-config-reloader/**'
+      - 'k8s/monitoring-token/**'
   pull_request:
     branches: ["main"]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest
-          pip install -r ./k8s/vector-config-reloader/requirements.txt
-
-      - name: Run tests
-        run: pytest -v
-
   build-and-push:
     runs-on: ubuntu-latest
-    needs: test   # only build if tests pass
     permissions:
       contents: read
       packages: write
@@ -57,12 +36,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/vector-config-reloader
+          images: ghcr.io/${{ github.repository }}/token-job
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=ref,event=tag
-            type=sha,format=short,prefix=
             type=semver,pattern={{version}},prefix=
           flavor: |
             latest=auto
@@ -70,8 +48,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v5
         with:
-          context: ./k8s/vector-config-reloader
-          file: ./k8s/vector-config-reloader/Dockerfile
+          context: ./k8s/monitoring-token
+          file: ./k8s/monitoring-token/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -1,15 +1,17 @@
-name: Config Reloader CI
+name: Log Collector CI
 
 on:
   push:
     branches: ["main"]
     tags:
       - "v*"
-    # BUT only run if changes occur under the vector-config-reloader/ path
+    # Only run if changes occur under the log-collector/ path
     paths:
-      - 'k8s/vector-config-reloader/**'
+      - 'k8s/log-collector/**'
   pull_request:
     branches: ["main"]
+    paths:
+      - 'k8s/log-collector/**'
 
 jobs:
   test:
@@ -26,11 +28,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest
-          pip install -r ./k8s/vector-config-reloader/requirements.txt
+          pip install -r ./k8s/log-collector/requirements.txt
 
       - name: Run tests
-        run: pytest -v
+        run: |
+          cd k8s/log-collector/app
+          python -m unittest test_log_collector_app -v
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -57,12 +60,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/vector-config-reloader
+          images: ghcr.io/${{ github.repository }}/log-collector
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=ref,event=tag
-            type=sha,format=short,prefix=
             type=semver,pattern={{version}},prefix=
           flavor: |
             latest=auto
@@ -70,8 +72,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v5
         with:
-          context: ./k8s/vector-config-reloader
-          file: ./k8s/vector-config-reloader/Dockerfile
+          context: ./k8s/log-collector
+          file: ./k8s/log-collector/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

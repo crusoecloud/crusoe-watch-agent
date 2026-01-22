@@ -14,6 +14,7 @@ ENVIRONMENT="prod"
 REMOTE_VECTOR_CONFIG_GPU_VM="vm/config/vector_gpu_vm.yaml"
 REMOTE_VECTOR_CONFIG_CPU_VM="vm/config/vector_cpu_vm.yaml"
 REMOTE_DCGM_EXPORTER_METRICS_CONFIG="vm/config/dcp-metrics-included.csv"
+REMOTE_DCGM_EXPORTER_METRICS_CONFIG_NO_NVLINK="vm/config/dcp-metrics-included-no-nvlink.csv"
 REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER="vm/docker/docker-compose-dcgm-exporter.yaml"
 REMOTE_DOCKER_COMPOSE_VECTOR="vm/docker/docker-compose-vector.yaml"
 REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
@@ -271,8 +272,18 @@ do_install() {
 
     check_os_support
 
+    status "Checking NVLink status."
+    local METRICS_CONFIG_URL="$GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG"  # default to standard config
+    NVLINK_STATUS=$(nvidia-smi nvlink --status 2>&1 | xargs)
+    if [[ -z "$NVLINK_STATUS" || "$NVLINK_STATUS" == *"all links are inActive"* ]]; then
+      echo "NVLink is inactive or unavailable. Using no-nvlink metrics config."
+      METRICS_CONFIG_URL="$GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG_NO_NVLINK"
+    else
+      echo "NVLink is active. Using standard metrics config."
+    fi
+
     status "Download DCGM exporter metrics config."
-    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/dcp-metrics-included.csv" "$GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG"
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/dcp-metrics-included.csv" "$METRICS_CONFIG_URL" || error_exit "Failed to download $METRICS_CONFIG_URL"
 
     status "Download GPU Vector config."
     wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_GPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_GPU_VM"
