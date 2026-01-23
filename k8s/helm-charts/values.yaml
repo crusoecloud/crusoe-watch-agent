@@ -838,7 +838,7 @@ logCollector:
     LOG_LEVEL: "INFO"
     MAX_LOGS_TO_KEEP: "1"
     API_ENABLED: "false"
-    API_BASE_URL: "https://cms-logging.com"
+    API_BASE_URL: "https://cms-monitoring.crusoecloud.com"
     API_POLL_INTERVAL: "60"
     COLLECTION_TIMEOUT: "300"
 
