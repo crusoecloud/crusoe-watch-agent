@@ -10,13 +10,13 @@ GITHUB_BRANCH="main"
 # Crusoe environment (optional override via CLI, defaults to main)
 ENVIRONMENT="prod"
 
-# Define paths for config files within the GitHub repository
-REMOTE_VECTOR_CONFIG_AMD_GPU_VM="config/vector_amd_gpu_vm.yaml"
-REMOTE_DOCKER_COMPOSE_VECTOR="docker/docker-compose-vector.yaml"
-REMOTE_DOCKER_COMPOSE_AMD_EXPORTER="docker/docker-compose-amd-exporter.yaml"
-REMOTE_CRUSOE_WATCH_AGENT_SERVICE="systemctl/crusoe-watch-agent.service"
-REMOTE_CRUSOE_AMD_EXPORTER_SERVICE="systemctl/crusoe-amd-exporter.service"
-REMOTE_AMD_METRICS_CONFIG="config/amd_metrics_config.json"
+# Define paths for config files within the GitHub repository (vm subdir)
+REMOTE_VECTOR_CONFIG_AMD_GPU_VM="vm/config/vector_amd_gpu_vm.yaml"
+REMOTE_DOCKER_COMPOSE_VECTOR="vm/docker/docker-compose-vector.yaml"
+REMOTE_DOCKER_COMPOSE_AMD_EXPORTER="vm/docker/docker-compose-amd-exporter.yaml"
+REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
+REMOTE_CRUSOE_AMD_EXPORTER_SERVICE="vm/systemctl/crusoe-amd-exporter.service"
+REMOTE_AMD_METRICS_CONFIG="vm/config/amd_metrics_config.json"
 SYSTEMCTL_DIR="/etc/systemd/system"
 CRUSOE_WATCH_AGENT_DIR="/etc/crusoe/crusoe_watch_agent"
 CRUSOE_AUTH_TOKEN_LENGTH=82
