@@ -13,7 +13,7 @@ proxy:
 
 job:
   name: crusoe-monitoring-token-job
-  image: ghcr.io/crusoecloud/crusoe-watch-agent/token-job:v0.1.6
+  image: ghcr.io/crusoecloud/crusoe-watch-agent/token-job:v0.1.9
   ttlSecondsAfterFinished: 300
 secrets:
   crusoeMonitoringToken: crusoe-monitoring-token
@@ -511,7 +511,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.1.8
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.1.9
       env:
         - name: NODE_NAME
           valueFrom:
@@ -825,7 +825,7 @@ logCollector:
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
-    tag: pr-12
+    tag: v0.1.9
     pullPolicy: IfNotPresent
 
   # Environment variables for log collector
@@ -838,7 +838,7 @@ logCollector:
     LOG_LEVEL: "INFO"
     MAX_LOGS_TO_KEEP: "1"
     API_ENABLED: "false"
-    API_BASE_URL: "https://cms-logging.com"
+    API_BASE_URL: "https://cms-monitoring.crusoecloud.com"
     API_POLL_INTERVAL: "60"
     COLLECTION_TIMEOUT: "300"
 
