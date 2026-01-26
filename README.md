@@ -21,7 +21,7 @@ chmod +x crusoe_watch_agent_amd.sh
 sudo ./crusoe_watch_agent_amd.sh install
 ```
 
-> **Note:** For AMD GPU VMs, use `crusoe_watch_agent_amd.sh` script which deploys the AMD exporter instead of DCGM exporter. All commands (`install`, `uninstall`, `upgrade`, `refresh-token`, `help`) work the same way for both scripts.
+> **Note:** For AMD GPU VMs, use `crusoe_watch_agent_amd.sh` script. All commands (`install`, `uninstall`, `upgrade`, `refresh-token`, `help`) work the same way for both scripts.
 
 ### Symlink Installation
 Sets up the script as a global command for easier upgrades and management.
