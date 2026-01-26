@@ -112,7 +112,8 @@ class VectorConfigReloader:
 .tags.nodepool = "{self.nodepool_id}"
 .tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
 .tags.vm_id = "{self.vm_id}"
-.tags.pod_id = "{self.pod_id}"
+.tags.vm_instance_type = "{self.instance_type}"
+if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .tags.crusoe_resource = "vm"
 .tags.metrics_source = "node-metrics"
 """)
@@ -124,7 +125,8 @@ class VectorConfigReloader:
 .tags.nodepool = "{self.nodepool_id}"
 .tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
 .tags.vm_id = "{self.vm_id}"
-.tags.pod_id = "{self.pod_id}"
+.tags.vm_instance_type = "{self.instance_type}"
+if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .tags.crusoe_resource = "custom_metrics"
 .tags.metrics_source = "custom-metrics"
 """)
@@ -214,7 +216,8 @@ class VectorConfigReloader:
         vrl_lines.append(f'.tags.nodepool = "{self.nodepool_id}"')
         vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
         vrl_lines.append(f'.tags.vm_id = "{self.vm_id}"')
-        vrl_lines.append(f'.tags.pod_id = "{self.pod_id}"')
+        vrl_lines.append(f'.tags.vm_instance_type = "{self.instance_type}"')
+        vrl_lines.append(f'if "{self.pod_id or ""}" != "" {{ .tags.pod_id = "{self.pod_id or ""}" }}')
         vrl_lines.append('.tags.crusoe_resource = "custom_metrics"')
         vrl_lines.append('.tags.metrics_source = "custom-metrics"')
         vrl_lines.append(f'.tags.pod_ip = "{endpoint_config["pod_ip"]}"')
