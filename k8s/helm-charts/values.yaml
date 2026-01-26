@@ -418,9 +418,6 @@ vector:
                   .log_source = "generic_file"
               }
           }
-          
-          .project_id = "${CRUSOE_PROJECT_ID:-unknown}"
-          .vm_id = "${VM_ID:-unknown}"
           del(.source_type)
           if exists(.message) {
               ._msg = del(.message)
