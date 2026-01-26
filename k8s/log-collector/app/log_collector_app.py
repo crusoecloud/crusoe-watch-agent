@@ -700,8 +700,27 @@ class NvidiaLogCollector:
                     event_id = task["event_id"]
                     LOG.info(f"Processing collection task for event: {event_id}")
 
-                    # Collect logs with timeout
-                    success, log_path, error_msg = self.collect_logs_with_timeout(event_id)
+                    # TESTING: Create mock log file for testing without GPU nodes
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    log_filename = f"nvidia-bug-report-{self.node_name}-{event_id}-{timestamp}.log.gz"
+                    mock_log_path = self.output_dir / log_filename
+
+                    # Create a mock gzipped log file
+                    import gzip
+                    with gzip.open(mock_log_path, 'wt') as f:
+                        f.write(f"Mock NVIDIA bug report for testing\n")
+                        f.write(f"Event ID: {event_id}\n")
+                        f.write(f"Node: {self.node_name}\n")
+                        f.write(f"VM ID: {self.vm_id}\n")
+                        f.write(f"Timestamp: {timestamp}\n")
+
+                    LOG.info(f"Created mock log file: {mock_log_path}")
+                    success = True
+                    log_path = mock_log_path
+                    error_msg = ""
+
+                    # Collect logs with timeout (COMMENTED OUT FOR TESTING)
+                    # success, log_path, error_msg = self.collect_logs_with_timeout(event_id)
 
                     if success and log_path:
                         # Report success and upload logs in a single call
