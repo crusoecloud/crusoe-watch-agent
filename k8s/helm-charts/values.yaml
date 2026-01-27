@@ -920,7 +920,7 @@ logCollector:
         - -c
         - |
           mkdir -p /logs
-          chown -R 1000:1000 /logs
+          chown -R 0:0 /logs
           chmod -R 755 /logs
       volumeMounts:
         - name: nvidia-logs
@@ -956,7 +956,8 @@ logCollector:
       memory: 128Mi
 
   # Security context
-  # Note: Running as root to read /host/sys/class/dmi/id/product_uuid for VM_ID
+  # Note: Running as root (UID 0) to read /host/sys/class/dmi/id/product_uuid for VM_ID
+  # and to access host paths for NVIDIA log collection
   securityContext:
     runAsUser: 0
     allowPrivilegeEscalation: false
