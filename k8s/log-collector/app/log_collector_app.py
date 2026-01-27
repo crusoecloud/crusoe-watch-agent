@@ -706,7 +706,12 @@ class NvidiaLogCollector:
                     if success and log_path:
                         # Report success and upload logs in a single call
                         LOG.info(f"Reporting success and uploading logs for event {event_id}")
-                        self.report_result(event_id, "success", log_file=log_path)
+                        upload_success = self.report_result(event_id, "success", log_file=log_path)
+                        
+                        if not upload_success:
+                            # Upload failed - try to report failure status without file
+                            LOG.warning(f"Upload failed for event {event_id}, reporting failure status")
+                            self.report_result(event_id, "failed", message="Log collection succeeded but upload failed")
                     else:
                         # Report failure with error message
                         LOG.error(f"Collection failed for event {event_id}: {error_msg}")
