@@ -10,11 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ .
 
 # Create logs directory
-RUN mkdir -p /logs
-
-# Run as non-root user for security
-RUN useradd -m -u 1000 logcollector && \
-    chown -R logcollector:logcollector /app /logs
+RUN mkdir -p /logs && \
+    chmod -R 755 /logs
 
 USER logcollector
 
