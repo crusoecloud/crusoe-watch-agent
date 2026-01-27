@@ -920,7 +920,7 @@ logCollector:
         - -c
         - |
           mkdir -p /logs
-          chown -R 1000:1000 /logs
+          chown -R 0:0 /logs
           chmod -R 755 /logs
       volumeMounts:
         - name: nvidia-logs
@@ -950,10 +950,10 @@ logCollector:
   resources:
     requests:
       cpu: 50m
-      memory: 64Mi
+      memory: 256Mi
     limits:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 200m
+      memory: 512Mi
 
   # Security context
   # Note: Running as root to read /host/sys/class/dmi/id/product_uuid for VM_ID
