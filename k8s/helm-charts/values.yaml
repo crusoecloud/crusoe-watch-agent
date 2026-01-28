@@ -406,6 +406,7 @@ vector:
         source: |
           .agent = "crusoe-watch-agent"
           .host = get_hostname!()
+          .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
           
           if .source_type == "journald" {
               .log_source = "journald"
