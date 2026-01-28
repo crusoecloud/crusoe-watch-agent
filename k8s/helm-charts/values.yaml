@@ -470,6 +470,8 @@ vector:
           token: "${CRUSOE_MONITORING_TOKEN}"
         encoding:
           codec: "json"
+        batch:
+          max_bytes: 100000 # ~100KB
       cms_gateway_node_metrics:
         type: prometheus_remote_write
         inputs:
@@ -569,7 +571,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.0
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.2
       env:
         - name: NODE_NAME
           valueFrom:
