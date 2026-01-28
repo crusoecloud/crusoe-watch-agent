@@ -470,6 +470,8 @@ vector:
           token: "${CRUSOE_MONITORING_TOKEN}"
         encoding:
           codec: "json"
+        batch:
+          max_bytes: 100000 # ~100KB
       cms_gateway_node_metrics:
         type: prometheus_remote_write
         inputs:
