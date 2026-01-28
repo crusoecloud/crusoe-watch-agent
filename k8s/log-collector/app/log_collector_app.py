@@ -20,6 +20,8 @@ import tarfile
 import tempfile
 import base64
 import requests
+import gzip
+import shutil
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -523,6 +525,45 @@ class NvidiaLogCollector:
             LOG.warning(f"Error cleaning up remote log file (non-critical): {e}")
             return False
 
+    def unzip_log_to_nvidia_reports(self, log_gz_path: Path) -> Optional[Path]:
+        """
+        Unzip .log.gz file to /var/log/nvidia-bug-reports with .log extension.
+
+        Args:
+            log_gz_path: Path to the .log.gz file
+
+        Returns:
+            Path to the unzipped .log file, or None on error
+        """
+        try:
+            # Create target directory if it doesn't exist
+            target_dir = Path("/var/log/nvidia-bug-reports")
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate output filename (remove .gz extension)
+            if log_gz_path.name.endswith('.log.gz'):
+                output_filename = log_gz_path.name[:-3]  # Remove .gz
+            else:
+                LOG.warning(f"File {log_gz_path.name} doesn't end with .log.gz")
+                output_filename = log_gz_path.name + '.log'
+
+            output_path = target_dir / output_filename
+
+            LOG.info(f"Unzipping {log_gz_path} to {output_path}")
+
+            # Unzip the file
+            with gzip.open(log_gz_path, 'rb') as f_in:
+                with open(output_path, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+
+            file_size = output_path.stat().st_size
+            LOG.info(f"Successfully unzipped log to {output_path} ({file_size / (1024*1024):.2f} MB)")
+            return output_path
+
+        except Exception as e:
+            LOG.error(f"Failed to unzip log file {log_gz_path}: {e}")
+            return None
+
     def cleanup_old_logs(self) -> None:
         """
         Clean up old log files to prevent disk space issues.
@@ -596,6 +637,13 @@ class NvidiaLogCollector:
 
         # Cleanup remote log file
         self.cleanup_remote_log(driver_pod, remote_log_path)
+
+        # Unzip the log file to /var/log/nvidia-bug-reports
+        unzipped_path = self.unzip_log_to_nvidia_reports(local_log_path)
+        if unzipped_path:
+            LOG.debug(f"Unzipped log saved to: {unzipped_path}")
+        else:
+            LOG.warning("Failed to unzip log file to nvidia-bug-reports directory")
 
         LOG.info(f"Log collection completed successfully: {local_log_path}")
         return local_log_path
