@@ -410,16 +410,15 @@ vector:
           
           if .source_type == "journald" {
               .log_source = "journald"
-              priority = to_int(.priority) ?? -1
-              if priority == 0 || priority == 1 {
+              if .PRIORITY == "0" || .PRIORITY == "1" {
                   .level = "error"
-              } else if priority == 2 || priority == 3 {
+              } else if .PRIORITY == "2" || .PRIORITY== "3" {
                   .level = "critical"
-              } else if priority == 4 || priority == 5 {
+              } else if .PRIORITY == "4" || .PRIORITY == "5" {
                   .level = "warning"
-              } else if priority == 6 {
+              } else if .PRIORITY == "6" {
                   .level = "info"
-              } else if priority == 7 {
+              } else if .PRIORITY == "7" {
                   .level = "debug"
               }
           } else if .source_type == "file" {
@@ -469,7 +468,7 @@ vector:
         type: "http"
         inputs:
           - "enrich_logs"
-        uri: "https://cms-monitoring.crusoecloud.com/logs/ingest"
+        uri: "https://cms-monitoring.crusoecloud.xyz/logs/ingest"
         framing:
           method: newline_delimited
         compression: snappy
