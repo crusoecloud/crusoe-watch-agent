@@ -20,6 +20,8 @@ import tarfile
 import tempfile
 import base64
 import requests
+import gzip
+import shutil
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -523,41 +525,92 @@ class NvidiaLogCollector:
             LOG.warning(f"Error cleaning up remote log file (non-critical): {e}")
             return False
 
+    def unzip_log_to_nvidia_reports(self, log_gz_path: Path) -> Optional[Path]:
+        """
+        Unzip .log.gz file to the same directory with .log extension.
+
+        Args:
+            log_gz_path: Path to the .log.gz file
+
+        Returns:
+            Path to the unzipped .log file, or None on error
+        """
+        try:
+            # Use the same directory as the compressed file
+            target_dir = log_gz_path.parent
+
+            # Generate output filename (remove .gz extension)
+            if log_gz_path.name.endswith('.log.gz'):
+                output_filename = log_gz_path.name[:-3]  # Remove .gz
+            else:
+                LOG.warning(f"File {log_gz_path.name} doesn't end with .log.gz")
+                output_filename = log_gz_path.name + '.log'
+
+            output_path = target_dir / output_filename
+
+            LOG.info(f"Unzipping {log_gz_path} to {output_path}")
+
+            # Unzip the file
+            with gzip.open(log_gz_path, 'rb') as f_in:
+                with open(output_path, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+
+            # Set permissions to allow Vector (non-root) to read and delete the file
+            # 0o666 = rw-rw-rw- (readable and writable by all)
+            output_path.chmod(0o666)
+
+            file_size = output_path.stat().st_size
+            LOG.info(f"Successfully unzipped log to {output_path} ({file_size / (1024*1024):.2f} MB)")
+            return output_path
+
+        except Exception as e:
+            LOG.error(f"Failed to unzip log file {log_gz_path}: {e}")
+            return None
+
+    def _cleanup_logs_by_pattern(self, pattern: str, log_type: str) -> None:
+        """
+        Helper method to clean up log files matching a pattern.
+
+        Args:
+            pattern: Glob pattern to match log files
+            log_type: Description of log type for logging (e.g., "compressed", "unzipped")
+        """
+        log_files = sorted(
+            self.output_dir.glob(pattern),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True  # Newest first
+        )
+
+        if not log_files:
+            LOG.debug(f"No existing {log_type} log files found to clean up")
+            return
+
+        total_files = len(log_files)
+        files_to_keep = log_files[:MAX_LOGS_TO_KEEP]
+        files_to_delete = log_files[MAX_LOGS_TO_KEEP:]
+
+        if files_to_delete:
+            LOG.info(f"Found {total_files} {log_type} log files, keeping {len(files_to_keep)}, removing {len(files_to_delete)} old logs")
+
+            for log_file in files_to_delete:
+                try:
+                    file_size = log_file.stat().st_size
+                    log_file.unlink()
+                    LOG.info(f"Deleted old {log_type} log: {log_file.name} ({file_size / (1024*1024):.2f} MB)")
+                except Exception as e:
+                    LOG.warning(f"Failed to delete {log_file.name}: {e}")
+        else:
+            LOG.debug(f"No {log_type} log cleanup needed, only {total_files} files found (max: {MAX_LOGS_TO_KEEP})")
+
     def cleanup_old_logs(self) -> None:
         """
         Clean up old log files to prevent disk space issues.
         Keeps only the most recent MAX_LOGS_TO_KEEP files.
+        Cleans up both compressed (.log.gz) and unzipped (.log) files in the output directory.
         """
         try:
-            # Find all nvidia-bug-report log files
-            log_pattern = "nvidia-bug-report-*.log.gz"
-            log_files = sorted(
-                self.output_dir.glob(log_pattern),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True  # Newest first
-            )
-
-            if not log_files:
-                LOG.debug("No existing log files found to clean up")
-                return
-
-            total_files = len(log_files)
-            files_to_keep = log_files[:MAX_LOGS_TO_KEEP]
-            files_to_delete = log_files[MAX_LOGS_TO_KEEP:]
-
-            if files_to_delete:
-                LOG.info(f"Found {total_files} log files, keeping {len(files_to_keep)}, removing {len(files_to_delete)} old logs")
-
-                for log_file in files_to_delete:
-                    try:
-                        file_size = log_file.stat().st_size
-                        log_file.unlink()
-                        LOG.info(f"Deleted old log: {log_file.name} ({file_size / (1024*1024):.2f} MB)")
-                    except Exception as e:
-                        LOG.warning(f"Failed to delete {log_file.name}: {e}")
-            else:
-                LOG.debug(f"No cleanup needed, only {total_files} log files found (max: {MAX_LOGS_TO_KEEP})")
-
+            self._cleanup_logs_by_pattern("nvidia-bug-report-*.log.gz", "compressed")
+            self._cleanup_logs_by_pattern("nvidia-bug-report-*.log", "unzipped")
         except Exception as e:
             LOG.warning(f"Error during log cleanup (non-critical): {e}")
 
@@ -596,6 +649,13 @@ class NvidiaLogCollector:
 
         # Cleanup remote log file
         self.cleanup_remote_log(driver_pod, remote_log_path)
+
+        # Unzip the log file to /var/log/nvidia-bug-reports
+        unzipped_path = self.unzip_log_to_nvidia_reports(local_log_path)
+        if unzipped_path:
+            LOG.debug(f"Unzipped log saved to: {unzipped_path}")
+        else:
+            LOG.warning("Failed to unzip log file to nvidia-bug-reports directory")
 
         LOG.info(f"Log collection completed successfully: {local_log_path}")
         return local_log_path

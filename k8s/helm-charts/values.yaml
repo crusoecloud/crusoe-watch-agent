@@ -370,9 +370,11 @@ vector:
       dmesg_logs:
         type: "file"
         include: [ "/var/log/dmesg", "/var/log/kern.log" ]
+        remove_after_secs: 60
       nvidia_bug_reports:
         type: "file"
         include: [ "/var/log/nvidia-bug-reports/**/*.log" ]
+        remove_after_secs: 60
       host_metrics:
         type: host_metrics
         collectors:
