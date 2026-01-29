@@ -555,6 +555,10 @@ class NvidiaLogCollector:
                 with open(output_path, 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
 
+            # Set permissions to allow Vector (non-root) to read and delete the file
+            # 0o666 = rw-rw-rw- (readable and writable by all)
+            output_path.chmod(0o666)
+
             file_size = output_path.stat().st_size
             LOG.info(f"Successfully unzipped log to {output_path} ({file_size / (1024*1024):.2f} MB)")
             return output_path
