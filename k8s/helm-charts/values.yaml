@@ -410,6 +410,18 @@ vector:
           
           if .source_type == "journald" {
               .log_source = "journald"
+              priority = to_int(.priority) ?? -1
+              if priority == 0 || priority == 1 {
+                  .level = "error"
+              } else if priority == 2 || priority == 3 {
+                  .level = "critical"
+              } else if priority == 4 || priority == 5 {
+                  .level = "warning"
+              } else if priority == 6 {
+                  .level = "info"
+              } else if priority == 7 {
+                  .level = "debug"
+              }
           } else if .source_type == "file" {
               if contains(string!(.file), "nvidia-bug-reports") {
                   .log_source = "nvidia_diagnostic"
