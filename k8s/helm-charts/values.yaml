@@ -370,7 +370,6 @@ vector:
       dmesg_logs:
         type: "file"
         include: [ "/var/log/dmesg", "/var/log/kern.log" ]
-        remove_after_secs: 60
       nvidia_bug_reports:
         type: "file"
         include: [ "/var/log/nvidia-bug-reports/**/*.log" ]
@@ -473,7 +472,7 @@ vector:
         encoding:
           codec: "json"
         batch:
-          max_bytes: 100000 # ~100KB
+          max_bytes: 1000000 # ~1MB
       cms_gateway_node_metrics:
         type: prometheus_remote_write
         inputs:
@@ -531,6 +530,9 @@ vector:
     - name: journal-logs
       hostPath:
         path: /var/log/journal
+    - name: nvidia-bug-reports
+      hostPath:
+        path: /var/log/nvidia-bug-reports
     - name: vector-config   # shared writable config
       emptyDir: { }
     - name: base-config     # mount your existing configmap
@@ -545,6 +547,9 @@ vector:
     - name: journal-logs
       mountPath: /var/log/journal
       readOnly: true
+    - name: nvidia-bug-reports
+      mountPath: /var/log/nvidia-bug-reports
+      readOnly: false
     - name: vector-config
       mountPath: /etc/vector
     - name: base-config
