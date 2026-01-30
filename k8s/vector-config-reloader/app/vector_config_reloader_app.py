@@ -104,6 +104,7 @@ class VectorConfigReloader:
             self.instance_type = labels.get("beta.kubernetes.io/instance-type", None)
             self.pod_id = labels.get("crusoe.ai/pod.id", None)
             self.project_id = labels.get("crusoe.ai/project.id", None)
+            self.hostname = labels.get("kubernetes.io/hostname", None)
         except client.exceptions.ApiException as e:
             LOG.error(f"Failed to fetch node labels: {e}. Exiting!")
             sys.exit(1)
@@ -113,6 +114,7 @@ class VectorConfigReloader:
 .tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
 .tags.vm_id = "{self.vm_id}"
 .tags.vm_instance_type = "{self.instance_type}"
+.tags.node = "{self.hostname}"
 if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .tags.crusoe_resource = "vm"
 .tags.metrics_source = "node-metrics"

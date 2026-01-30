@@ -406,9 +406,21 @@ vector:
         source: |
           .agent = "crusoe-watch-agent"
           .host = get_hostname!()
+          .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
           
           if .source_type == "journald" {
               .log_source = "journald"
+              if .PRIORITY == "0" || .PRIORITY == "1" {
+                  .level = "error"
+              } else if .PRIORITY == "2" || .PRIORITY== "3" {
+                  .level = "critical"
+              } else if .PRIORITY == "4" || .PRIORITY == "5" {
+                  .level = "warning"
+              } else if .PRIORITY == "6" {
+                  .level = "info"
+              } else if .PRIORITY == "7" {
+                  .level = "debug"
+              }
           } else if .source_type == "file" {
               if contains(string!(.file), "nvidia-bug-reports") {
                   .log_source = "nvidia_diagnostic"
