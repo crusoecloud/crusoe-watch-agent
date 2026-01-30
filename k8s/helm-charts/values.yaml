@@ -468,7 +468,7 @@ vector:
         type: "http"
         inputs:
           - "enrich_logs"
-        uri: "https://cms-monitoring.crusoecloud.xyz/logs/ingest"
+        uri: "https://cms-monitoring.crusoecloud.com/logs/ingest"
         framing:
           method: newline_delimited
         compression: snappy
