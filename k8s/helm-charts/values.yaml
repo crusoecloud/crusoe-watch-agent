@@ -440,11 +440,7 @@ vector:
           if exists(.message) {
               ._msg = del(.message)
           }
-          if exists(.__REALTIME_TIMESTAMP) {
-              ._time = del(.__REALTIME_TIMESTAMP)
-          } else if exists(.timestamp) {
-              ._time = del(.timestamp)
-          }
+          ._time = .__REALTIME_TIMESTAMP ?? .timestamp
       enrich_node_metrics:
         type: remap
         inputs:
