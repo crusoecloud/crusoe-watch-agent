@@ -408,19 +408,22 @@ vector:
           .agent = "crusoe-watch-agent"
           .host = get_hostname!()
           .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
-          
+
           if .source_type == "journald" {
               .log_source = "journald"
-              if .PRIORITY == "0" || .PRIORITY == "1" {
-                  .level = "error"
-              } else if .PRIORITY == "2" || .PRIORITY== "3" {
-                  .level = "critical"
-              } else if .PRIORITY == "4" || .PRIORITY == "5" {
-                  .level = "warning"
-              } else if .PRIORITY == "6" {
-                  .level = "info"
-              } else if .PRIORITY == "7" {
-                  .level = "debug"
+              # Journald PRIORITY: 0=Emergency, 1=Alert, 2=Critical, 3=Error, 4=Warning, 5=Notice, 6=Info, 7=Debug
+              # Use -1 as sentinel for unparseable priority
+              priority = to_int(.PRIORITY) ?? -1
+              if priority >= 0 && priority <= 2 {
+                  .level = "CRITICAL"
+              } else if priority == 3 {
+                  .level = "ERROR"
+              } else if priority == 4 {
+                  .level = "WARNING"
+              } else if priority >= 5 && priority <= 6 {
+                  .level = "INFO"
+              } else if priority == 7 {
+                  .level = "DEBUG"
               }
           } else if .source_type == "file" {
               if contains(string!(.file), "nvidia-bug-reports") {
@@ -431,9 +434,16 @@ vector:
                   .log_source = "generic_file"
               }
           }
+
           del(.source_type)
+
           if exists(.message) {
               ._msg = del(.message)
+          }
+          if exists(.__REALTIME_TIMESTAMP) {
+              ._time = del(.__REALTIME_TIMESTAMP)
+          } else if exists(.timestamp) {
+              ._time = del(.timestamp)
           }
       enrich_node_metrics:
         type: remap
