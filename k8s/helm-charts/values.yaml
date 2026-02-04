@@ -436,11 +436,16 @@ vector:
           }
 
           del(.source_type)
-
+          
+          if exists(.__REALTIME_TIMESTAMP) {
+            ._time = .__REALTIME_TIMESTAMP
+          } else if exists(.timestamp) {
+            ._time = .timestamp
+          }
+          
           if exists(.message) {
               ._msg = del(.message)
           }
-          ._time = .__REALTIME_TIMESTAMP ?? .timestamp
       enrich_node_metrics:
         type: remap
         inputs:
