@@ -1,4 +1,4 @@
-import os, signal, re, logging, threading, sys
+import os, signal, re, logging, threading, sys, subprocess
 from kubernetes import client, config, watch
 from utils import LiteralStr, YamlUtils
 from amd_exporter import AmdExporterManager
@@ -134,7 +134,18 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 """)
         }
 
-
+    def reload_vector(self):
+        """Send SIGHUP to Vector process to reload config (requires shareProcessNamespace: true)."""
+        try:
+            result = subprocess.run(["pkill", "-HUP", "vector"], capture_output=True, text=True)
+            if result.returncode == 0:
+                LOG.info("Sent SIGHUP to Vector process")
+            elif result.returncode == 1:
+                LOG.warning("No Vector process found to signal (may not be running yet)")
+            else:
+                LOG.error(f"Failed to signal Vector: {result.stderr}")
+        except Exception as e:
+            LOG.error(f"Error signaling Vector: {e}")
 
     @staticmethod
     def sanitize_name(name: str) -> str:
@@ -356,6 +367,7 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
         self.set_custom_metrics_scrape_config(current_cfg, custom_metrics_eps)
 
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, current_cfg)
+        self.reload_vector()
         LOG.info("Custom metrics config refreshed from ConfigMap")
 
     def bootstrap_config(self):
@@ -394,6 +406,7 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
         # always update the node metrics transform source to handle LiteralStr issue
         base_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = self.node_metrics_vector_transform_source
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, base_cfg)
+        self.reload_vector()
         LOG.info(f"Vector config bootstrapped!")
 
     def handle_custom_metrics_config_map_event(self, event):
@@ -451,6 +464,7 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
         # always update the node metrics transform source to handle LiteralStr issue
         current_vector_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = self.node_metrics_vector_transform_source
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, current_vector_cfg)
+        self.reload_vector()
         LOG.info(f"Vector config reloaded!")
 
     def run_pod_event_handler(self):

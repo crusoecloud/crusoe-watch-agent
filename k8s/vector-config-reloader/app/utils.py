@@ -16,6 +16,7 @@ class YamlUtils:
     def load_yaml_config(path: str) -> dict:
         with open(path) as f:
             cfg = dict(yaml.safe_load(f))
+        f.close()
         return cfg
 
     @staticmethod
@@ -29,3 +30,4 @@ class YamlUtils:
             yaml.safe_dump(cfg, f)
             temp_path = f.name
         os.rename(temp_path, path)
+        f.close()

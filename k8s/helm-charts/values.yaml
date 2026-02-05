@@ -203,7 +203,7 @@ vector:
   command: [
     "/bin/sh",
     "-c",
-    "export VM_ID=$(cat /host/sys/class/dmi/id/product_uuid) && /usr/bin/vector --config /etc/vector/vector.yaml --watch-config"
+    "ulimit -n 65536 2>/dev/null || true; export VM_ID=$(cat /host/sys/class/dmi/id/product_uuid) && /usr/bin/vector --config /etc/vector/vector.yaml"
   ]
 
   # args -- Override Vector's default arguments.
@@ -628,7 +628,8 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.2
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:4526f5b
+      command: ["/bin/sh", "-c", "ulimit -n 65536 2>/dev/null || true; python /app/vector_config_reloader_app.py"]
       env:
         - name: NODE_NAME
           valueFrom:
@@ -701,7 +702,7 @@ vector:
 
   # shareProcessNamespace -- Specify the [shareProcessNamespace](https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/)
   # options for Vector Pods.
-  shareProcessNamespace: false
+  shareProcessNamespace: true
 
   # livenessProbe -- Override default liveness probe settings. If customConfig is used, requires customConfig.api.enabled
   # to be set to true.
