@@ -401,7 +401,7 @@ vector:
         inputs:
           - "journald_logs"
           - "dmesg_logs"
-          - "kubernetes_logs"
+          - "filter_log_collector_pods"
         source: |
           .agent = "crusoe-watch-agent"
           .host = get_hostname!()
@@ -470,6 +470,14 @@ vector:
             .tags.crusoe_resource = "vm"
             .tags.chart_name = "${CHART_NAME}"
             .tags.chart_version = "${CHART_VERSION}"
+
+      filter_log_collector_pods:
+        type: filter
+        inputs:
+          - kubernetes_logs
+        condition:
+          type: vrl
+          source: 'starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector")'
 
     sinks:
       crusoe_ingest:
