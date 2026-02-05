@@ -403,7 +403,6 @@ vector:
         inputs:
           - "journald_logs"
           - "dmesg_logs"
-          - "nvidia_bug_reports"
         source: |
           .agent = "crusoe-watch-agent"
           .host = get_hostname!()
@@ -475,27 +474,11 @@ vector:
             .tags.chart_name = "${CHART_NAME}"
             .tags.chart_version = "${CHART_VERSION}"
 
-      filter_nvidia_logs:
-        type: filter
-        inputs:
-          - enrich_logs
-        condition:
-          type: vrl
-          source: '.log_source == "nvidia_diagnostic"'
-
-      filter_other_logs:
-        type: filter
-        inputs:
-          - enrich_logs
-        condition:
-          type: vrl
-          source: '.log_source != "nvidia_diagnostic"'
-
     sinks:
       crusoe_ingest:
         type: "http"
         inputs:
-          - "filter_other_logs"
+          - "enrich_logs"
         uri: "https://cms-monitoring.crusoecloud.com/logs/ingest"
         framing:
           method: newline_delimited
@@ -512,28 +495,6 @@ vector:
           codec: "json"
         batch:
           max_bytes: 100000 # ~100KB
-      crusoe_ingest_nvidia:
-        type: "http"
-        inputs:
-          - "filter_nvidia_logs"
-        uri: "https://cms-monitoring.crusoecloud.com/logs/ingest"
-        framing:
-          method: newline_delimited
-        compression: snappy
-        healthcheck:
-          enabled: false
-        request:
-          headers:
-            X-Crusoe-Vm-Id: "${VM_ID:-unknown}"
-          rate_limit_num: 100
-          rate_limit_duration_secs: 60
-        auth:
-          strategy: "bearer"
-          token: "${CRUSOE_MONITORING_TOKEN}"
-        encoding:
-          codec: "json"
-        batch:
-          max_bytes: 500000 # ~500KB
       cms_gateway_node_metrics:
         type: prometheus_remote_write
         inputs:
