@@ -370,6 +370,8 @@ vector:
       dmesg_logs:
         type: "file"
         include: [ "/var/log/dmesg", "/var/log/kern.log" ]
+      kubernetes_logs:
+        type: "kubernetes_logs"
       host_metrics:
         type: host_metrics
         collectors:
@@ -399,6 +401,7 @@ vector:
         inputs:
           - "journald_logs"
           - "dmesg_logs"
+          - "filter_log_collector_pods"
         source: |
           .agent = "crusoe-watch-agent"
           .host = get_hostname!()
@@ -406,26 +409,26 @@ vector:
 
           if .source_type == "journald" {
               .log_source = "journald"
-              # Journald PRIORITY: 0=Emergency, 1=Alert, 2=Critical, 3=Error, 4=Warning, 5=Notice, 6=Info, 7=Debug
-              # Use -1 as sentinel for unparseable priority
-              priority = to_int(.PRIORITY) ?? -1
-              if priority >= 0 && priority <= 2 {
-                  .level = "CRITICAL"
-              } else if priority == 3 {
-                  .level = "ERROR"
-              } else if priority == 4 {
-                  .level = "WARNING"
-              } else if priority >= 5 && priority <= 6 {
-                  .level = "INFO"
+              priority = to_int(.priority) ?? -1
+              if priority == 0 || priority == 1 {
+                  .level = "error"
+              } else if priority == 2 || priority == 3 {
+                  .level = "critical"
+              } else if priority == 4 || priority == 5 {
+                  .level = "warning"
+              } else if priority == 6 {
+                  .level = "info"
               } else if priority == 7 {
-                  .level = "DEBUG"
-              }
+                  .level = "debug"
+            }
           } else if .source_type == "file" {
               if contains(string!(.file), "dmesg") || contains(string!(.file), "kern.log") {
                   .log_source = "dmesg"
               } else {
                   .log_source = "generic_file"
               }
+          } else if .source_type == "kubernetes_logs" {
+              .log_source = "kubernetes"
           }
 
           del(.source_type)
@@ -467,6 +470,14 @@ vector:
             .tags.crusoe_resource = "vm"
             .tags.chart_name = "${CHART_NAME}"
             .tags.chart_version = "${CHART_VERSION}"
+
+      filter_log_collector_pods:
+        type: filter
+        inputs:
+          - kubernetes_logs
+        condition:
+          type: vrl
+          source: 'starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector")'
 
     sinks:
       crusoe_ingest:
