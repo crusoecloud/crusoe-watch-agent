@@ -370,10 +370,6 @@ vector:
       dmesg_logs:
         type: "file"
         include: [ "/var/log/dmesg", "/var/log/kern.log" ]
-      nvidia_bug_reports:
-        type: "file"
-        include: [ "/var/log/nvidia-bug-reports/**/*.log" ]
-        remove_after_secs: 60
       host_metrics:
         type: host_metrics
         collectors:
@@ -425,9 +421,7 @@ vector:
                   .level = "DEBUG"
               }
           } else if .source_type == "file" {
-              if contains(string!(.file), "nvidia-bug-reports") {
-                  .log_source = "nvidia_diagnostic"
-              } else if contains(string!(.file), "dmesg") || contains(string!(.file), "kern.log") {
+              if contains(string!(.file), "dmesg") || contains(string!(.file), "kern.log") {
                   .log_source = "dmesg"
               } else {
                   .log_source = "generic_file"
