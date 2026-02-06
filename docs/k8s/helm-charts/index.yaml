@@ -2,20 +2,20 @@ apiVersion: v1
 entries:
   crusoe-watch-agent:
   - apiVersion: v2
-    created: "2026-02-06T19:44:22.219568362Z"
+    created: "2026-02-06T22:04:38.96988469Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
       version: 0.45.0
     description: Helm chart to deploy Crusoe Watch Agent and monitoring token job
-    digest: 48481e7c2fbc28c01fb2e57aac184ecd50d6556c6494da9dbdabe02b1118c74f
+    digest: ac0abe38fd8919f72267b595ad567185d29d0ac3ce3a4e6c1995a306a912cd9f
     name: crusoe-watch-agent
     type: application
     urls:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.1.tgz
     version: 0.3.1
   - apiVersion: v2
-    created: "2026-02-06T19:44:22.215737844Z"
+    created: "2026-02-06T22:04:38.966248497Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -28,7 +28,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.0.tgz
     version: 0.3.0
   - apiVersion: v2
-    created: "2026-02-06T19:44:22.21156263Z"
+    created: "2026-02-06T22:04:38.961858939Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -41,7 +41,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.2.8.tgz
     version: 0.2.8
   - apiVersion: v2
-    created: "2026-02-06T19:44:22.208133255Z"
+    created: "2026-02-06T22:04:38.958180638Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -54,7 +54,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.2.7.tgz
     version: 0.2.7
   - apiVersion: v2
-    created: "2026-02-06T19:44:22.204091967Z"
+    created: "2026-02-06T22:04:38.953795483Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -66,4 +66,4 @@ entries:
     urls:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.2.6.tgz
     version: 0.2.6
-generated: "2026-02-06T19:44:22.200489211Z"
+generated: "2026-02-06T22:04:38.95001474Z"
