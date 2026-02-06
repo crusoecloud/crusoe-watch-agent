@@ -449,7 +449,7 @@ vector:
           if exists(.level) {
               .level = downcase(string!(.level))
           } else {
-          # Default to info if level is missing
+              # Default to info if level is missing
               .level = "info"
           }
       enrich_node_metrics:
