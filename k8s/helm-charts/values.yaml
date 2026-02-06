@@ -428,7 +428,9 @@ vector:
                   .log_source = "generic_file"
               }
           } else if .source_type == "kubernetes_logs" {
-              .log_source = "kubernetes"
+              if starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector") {
+                  .log_source = "crusoe-log-collector"
+              }
           }
 
           del(.source_type)
