@@ -448,9 +448,6 @@ vector:
           # Normalize level to lowercase
           if exists(.level) {
               .level = downcase(string!(.level))
-          } else {
-              # Default to info if level is missing
-              .level = "info"
           }
       enrich_node_metrics:
         type: remap
