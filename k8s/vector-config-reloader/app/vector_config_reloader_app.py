@@ -12,10 +12,10 @@ DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
 DCGM_EXPORTER_APP_LABEL = "nvidia-dcgm-exporter"
 
 # Log sources and pipeline constants
-JOURNALD_LOGS_SOURCE_NAME = "journald_logs"
 DMESG_LOGS_SOURCE_NAME = "dmesg_logs"
-ENRICH_LOGS_TRANSFORM_NAME = "enrich_logs"
 CRUSOE_INGEST_SINK_NAME = "crusoe_ingest"
+ENRICH_LOGS_TRANSFORM_NAME = "enrich_logs"
+JOURNALD_LOGS_SOURCE_NAME = "journald_logs"
 KUBE_STATE_METRICS_SOURCE_NAME = "kube_state_metrics_scrape"
 KUBE_STATE_METRICS_TRANSFORM_NAME = "enrich_kube_state_metrics"
 KUBE_STATE_METRICS_SINK_NAME = "kube_state_metrics_sink"
@@ -176,8 +176,22 @@ if .source_type == "journald" {
     }
 }
 del(.source_type)
+
+if exists(.__REALTIME_TIMESTAMP) {
+    ._time = .__REALTIME_TIMESTAMP
+} else if exists(.timestamp) {
+    ._time = .timestamp
+}
+
 if exists(.message) {
     ._msg = del(.message)
+}
+
+# Normalize level to lowercase
+if exists(.level) {
+  .level = downcase(string!(.level))
+} else {
+  .level = "undefined"
 }
 ''')
 
