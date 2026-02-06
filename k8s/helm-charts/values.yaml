@@ -370,10 +370,8 @@ vector:
       dmesg_logs:
         type: "file"
         include: [ "/var/log/dmesg", "/var/log/kern.log" ]
-      nvidia_bug_reports:
-        type: "file"
-        include: [ "/var/log/nvidia-bug-reports/**/*.log" ]
-        remove_after_secs: 60
+      kubernetes_logs:
+        type: "kubernetes_logs"
       host_metrics:
         type: host_metrics
         collectors:
@@ -403,37 +401,56 @@ vector:
         inputs:
           - "journald_logs"
           - "dmesg_logs"
-          - "nvidia_bug_reports"
+          - "filter_log_collector_pods"
         source: |
           .agent = "crusoe-watch-agent"
           .host = get_hostname!()
           .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
-          
+
           if .source_type == "journald" {
               .log_source = "journald"
-              if .PRIORITY == "0" || .PRIORITY == "1" {
+              priority = to_int(.PRIORITY) ?? -1
+              if priority == 0 || priority == 1 {
                   .level = "error"
-              } else if .PRIORITY == "2" || .PRIORITY== "3" {
+              } else if priority == 2 || priority == 3 {
                   .level = "critical"
-              } else if .PRIORITY == "4" || .PRIORITY == "5" {
+              } else if priority == 4 || priority == 5 {
                   .level = "warning"
-              } else if .PRIORITY == "6" {
+              } else if priority == 6 {
                   .level = "info"
-              } else if .PRIORITY == "7" {
+              } else if priority == 7 {
                   .level = "debug"
-              }
+            }
           } else if .source_type == "file" {
-              if contains(string!(.file), "nvidia-bug-reports") {
-                  .log_source = "nvidia_diagnostic"
-              } else if contains(string!(.file), "dmesg") || contains(string!(.file), "kern.log") {
+              if contains(string!(.file), "dmesg") || contains(string!(.file), "kern.log") {
                   .log_source = "dmesg"
               } else {
                   .log_source = "generic_file"
               }
+          } else if .source_type == "kubernetes_logs" {
+              if starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector") {
+                  .log_source = "crusoe-log-collector"
+              }
           }
+
           del(.source_type)
+          
+          if exists(.__REALTIME_TIMESTAMP) {
+            ._time = .__REALTIME_TIMESTAMP
+          } else if exists(.timestamp) {
+            ._time = .timestamp
+          }
+          
           if exists(.message) {
               ._msg = del(.message)
+          }
+          
+          # Normalize level to lowercase
+          if exists(.level) {
+              .level = downcase(string!(.level))
+          } else {
+              # Default to info if level is missing
+              .level = "info"
           }
       enrich_node_metrics:
         type: remap
@@ -464,27 +481,19 @@ vector:
             .tags.chart_name = "${CHART_NAME}"
             .tags.chart_version = "${CHART_VERSION}"
 
-      filter_nvidia_logs:
+      filter_log_collector_pods:
         type: filter
         inputs:
-          - enrich_logs
+          - kubernetes_logs
         condition:
           type: vrl
-          source: '.log_source == "nvidia_diagnostic"'
-
-      filter_other_logs:
-        type: filter
-        inputs:
-          - enrich_logs
-        condition:
-          type: vrl
-          source: '.log_source != "nvidia_diagnostic"'
+          source: 'starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector")'
 
     sinks:
       crusoe_ingest:
         type: "http"
         inputs:
-          - "filter_other_logs"
+          - "enrich_logs"
         uri: "https://cms-monitoring.crusoecloud.com/logs/ingest"
         framing:
           method: newline_delimited
@@ -501,28 +510,6 @@ vector:
           codec: "json"
         batch:
           max_bytes: 100000 # ~100KB
-      crusoe_ingest_nvidia:
-        type: "http"
-        inputs:
-          - "filter_nvidia_logs"
-        uri: "https://cms-monitoring.crusoecloud.com/logs/ingest"
-        framing:
-          method: newline_delimited
-        compression: snappy
-        healthcheck:
-          enabled: false
-        request:
-          headers:
-            X-Crusoe-Vm-Id: "${VM_ID:-unknown}"
-          rate_limit_num: 100
-          rate_limit_duration_secs: 60
-        auth:
-          strategy: "bearer"
-          token: "${CRUSOE_MONITORING_TOKEN}"
-        encoding:
-          codec: "json"
-        batch:
-          max_bytes: 500000 # ~500KB
       cms_gateway_node_metrics:
         type: prometheus_remote_write
         inputs:
