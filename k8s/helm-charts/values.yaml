@@ -10,6 +10,19 @@ proxy:
   url: "internal.cms-monitoring.crusoecloud.com"
   port: 3128
 
+dcgmMetrics:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+customMetrics:
+  enabled: true
+  namespace: crusoe-monitoring
+
+logs:
+  enabled: true
+
 
 job:
   name: crusoe-monitoring-token-job
@@ -30,8 +43,6 @@ metricsExporter:
 
 logLevel: INFO
 
-customMetrics:
-  namespace: crusoe-monitoring
 
 # CPU profile for Vector subchart
 # Adjust according to https://helm.vector.dev

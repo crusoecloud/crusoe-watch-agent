@@ -60,14 +60,18 @@ class VectorConfigReloader:
         self.custom_metrics_config_map_cache = {}
 
         reloader_cfg = YamlUtils.load_yaml_config(RELOADER_CONFIG_PATH)
+        self.dcgm_metrics_enabled = reloader_cfg["dcgm_metrics"].get("enabled", True)
         self.dcgm_exporter_port = reloader_cfg["dcgm_metrics"]["port"]
         self.dcgm_exporter_path = reloader_cfg["dcgm_metrics"]["path"]
         self.dcgm_exporter_scrape_interval = reloader_cfg["dcgm_metrics"]["scrape_interval"]
         ksm_cfg = reloader_cfg.get("kube_state_metrics", {})
+        self.ksm_enabled = ksm_cfg.get("enabled", True)
         self.ksm_port = ksm_cfg.get("port", 8080)
         self.ksm_path = ksm_cfg.get("path", "/metrics")
         self.ksm_scrape_interval = ksm_cfg.get("scrape_interval", 60)
         self.amd_manager = AmdExporterManager(reloader_cfg.get("amd_metrics", {}))
+        self.custom_metrics_enabled = reloader_cfg["custom_metrics"].get("enabled", True)
+        self.logs_enabled = reloader_cfg.get("logs", {}).get("enabled", True)
         self.default_custom_metrics_config = reloader_cfg["custom_metrics"]
         self.infra_sink_endpoint = f'{reloader_cfg["sink"]["endpoint"]}/ingest'
         self.custom_sink_endpoint = f'{reloader_cfg["sink"]["endpoint"]}/custom'
@@ -290,6 +294,9 @@ if exists(.message) {
     def set_dcgm_exporter_scrape_config(self, vector_cfg: dict, dcgm_exporter_scrape_endpoint: str):
         if dcgm_exporter_scrape_endpoint is None:
             return
+        if not self.dcgm_metrics_enabled:
+            LOG.info("DCGM metrics disabled, skipping scrape config")
+            return
         vector_cfg.setdefault("sources", {})[DCGM_EXPORTER_SOURCE_NAME] = {
             "type": "prometheus_scrape",
             "endpoints": [dcgm_exporter_scrape_endpoint],
@@ -309,6 +316,9 @@ if exists(.message) {
     def set_kube_state_metrics_scrape_config(self, vector_cfg: dict, ksm_scrape_endpoint: str):
         if ksm_scrape_endpoint is None:
             return
+        if not self.ksm_enabled:
+            LOG.info("Kube state metrics disabled, skipping scrape config")
+            return
         vector_cfg.setdefault("sources", {})[KUBE_STATE_METRICS_SOURCE_NAME] = {
             "type": "prometheus_scrape",
             "endpoints": [ksm_scrape_endpoint],
@@ -324,6 +334,9 @@ if exists(.message) {
 
     def set_logs_config(self, vector_cfg: dict):
         """Set log sources, transforms, and sink for journald and dmesg logs."""
+        if not self.logs_enabled:
+            LOG.info("Logs disabled, skipping logs config")
+            return
         sources = vector_cfg.setdefault("sources", {})
         transforms = vector_cfg.setdefault("transforms", {})
         sinks = vector_cfg.setdefault("sinks", {})
@@ -375,6 +388,9 @@ if exists(.message) {
 
     def set_custom_metrics_scrape_config(self, vector_cfg: dict, custom_metrics_eps: list):
         if not custom_metrics_eps:
+            return
+        if not self.custom_metrics_enabled:
+            LOG.info("Custom metrics disabled, skipping scrape config")
             return
         sources = vector_cfg.get("sources")
         transforms = vector_cfg.get("transforms")

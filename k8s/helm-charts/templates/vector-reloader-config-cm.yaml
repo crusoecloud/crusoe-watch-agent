@@ -6,17 +6,22 @@ metadata:
 data:
   config.yaml: |
     dcgm_metrics:
+      enabled: {{ .Values.dcgmMetrics.enabled }}
       port: {{ .Values.metricsExporter.defaultDcgmExporterPort }}
       path: {{ .Values.metricsExporter.defaultMetricsPath }}
       scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
     kube_state_metrics:
+      enabled: {{ .Values.kubeStateMetrics.enabled }}
       port: {{ .Values.metricsExporter.defaultKubeStateMetricsPort }}
       path: {{ .Values.metricsExporter.defaultMetricsPath }}
       scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
     custom_metrics:
+      enabled: {{ .Values.customMetrics.enabled }}
       port: {{ .Values.metricsExporter.defaultMetricsPort }}
       path: {{ .Values.metricsExporter.defaultMetricsPath }}
       scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
+    logs:
+      enabled: {{ .Values.logs.enabled }}
     sink:
       endpoint: {{ index .Values.endpoints .Values.environment | quote }}
 {{- if .Values.proxy.enabled }}
