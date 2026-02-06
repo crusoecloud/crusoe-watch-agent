@@ -528,8 +528,8 @@ vector:
         inputs:
           - enrich_node_metrics
           - add_internal_labels
-        endpoint: "https://cms-monitoring.crusoecloud.com/ingest"
-        tenant_id: "vm"
+        endpoint: "https://cms-monitoring.crusoecloud.xyz/ingest"
+        tenant_id: "cri:vm/${VM_ID}"
         auth:
           strategy: bearer
           token: "${CRUSOE_MONITORING_TOKEN}"
@@ -629,7 +629,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.2
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:pr-35
       env:
         - name: NODE_NAME
           valueFrom:
