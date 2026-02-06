@@ -52,6 +52,7 @@ sinks:
             - add_update_labels
             - add_internal_labels
         endpoint: "${TELEMETRY_INGRESS_ENDPOINT}"
+        tenant_id: "cri:vm/${VM_ID}"
         auth:
             strategy: bearer
             token: "${CRUSOE_AUTH_TOKEN}"

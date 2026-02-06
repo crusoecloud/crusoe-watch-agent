@@ -516,6 +516,7 @@ vector:
           - enrich_node_metrics
           - add_internal_labels
         endpoint: "https://cms-monitoring.crusoecloud.com/ingest"
+        tenant_id: "cri:vm/${VM_ID}"
         auth:
           strategy: bearer
           token: "${CRUSOE_MONITORING_TOKEN}"
