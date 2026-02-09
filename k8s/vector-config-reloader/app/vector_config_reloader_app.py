@@ -10,6 +10,14 @@ RELOADER_CONFIG_PATH = "/etc/reloader/config.yaml"
 
 DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
 DCGM_EXPORTER_APP_LABEL = "nvidia-dcgm-exporter"
+
+# Log sources and pipeline constants
+DMESG_LOGS_SOURCE_NAME = "dmesg_logs"
+CRUSOE_INGEST_SINK_NAME = "crusoe_ingest"
+ENRICH_LOGS_TRANSFORM_NAME = "enrich_logs"
+FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME = "filter_crusoe_log_collector_logs"
+JOURNALD_LOGS_SOURCE_NAME = "journald_logs"
+KUBERNETES_LOGS_SOURCE_NAME = "kubernetes_logs"
 KUBE_STATE_METRICS_SOURCE_NAME = "kube_state_metrics_scrape"
 KUBE_STATE_METRICS_TRANSFORM_NAME = "enrich_kube_state_metrics"
 KUBE_STATE_METRICS_SINK_NAME = "kube_state_metrics_sink"
@@ -54,14 +62,18 @@ class VectorConfigReloader:
         self.custom_metrics_config_map_cache = {}
 
         reloader_cfg = YamlUtils.load_yaml_config(RELOADER_CONFIG_PATH)
+        self.dcgm_metrics_enabled = reloader_cfg["dcgm_metrics"].get("enabled", True)
         self.dcgm_exporter_port = reloader_cfg["dcgm_metrics"]["port"]
         self.dcgm_exporter_path = reloader_cfg["dcgm_metrics"]["path"]
         self.dcgm_exporter_scrape_interval = reloader_cfg["dcgm_metrics"]["scrape_interval"]
         ksm_cfg = reloader_cfg.get("kube_state_metrics", {})
+        self.ksm_enabled = ksm_cfg.get("enabled", True)
         self.ksm_port = ksm_cfg.get("port", 8080)
         self.ksm_path = ksm_cfg.get("path", "/metrics")
         self.ksm_scrape_interval = ksm_cfg.get("scrape_interval", 60)
         self.amd_manager = AmdExporterManager(reloader_cfg.get("amd_metrics", {}))
+        self.custom_metrics_enabled = reloader_cfg["custom_metrics"].get("enabled", True)
+        self.logs_enabled = reloader_cfg.get("logs", {}).get("enabled", True)
         self.default_custom_metrics_config = reloader_cfg["custom_metrics"]
         self.infra_sink_endpoint = f'{reloader_cfg["sink"]["endpoint"]}/ingest'
         self.custom_sink_endpoint = f'{reloader_cfg["sink"]["endpoint"]}/custom'
@@ -97,6 +109,8 @@ class VectorConfigReloader:
             "batch": {"max_bytes": 500000},
             "tls": {"verify_certificate": True, "verify_hostname": True},
         }
+
+        self.logs_ingest_endpoint = f'{reloader_cfg["sink"]["endpoint"]}/logs/ingest'
 
         try:
             node = self.k8s_api_client.read_node(self.node_name)
@@ -136,6 +150,56 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 """)
         }
 
+        self.filter_log_collector_logs_transform_source = LiteralStr('''
+.kubernetes.pod_namespace == "crusoe-system" && starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector")
+''')
+
+        self.enrich_logs_transform_source = LiteralStr('''
+.agent = "crusoe-watch-agent"
+.host = get_hostname!()
+.crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
+
+if .source_type == "journald" {
+    .log_source = "journald"
+    if .PRIORITY == "0" || .PRIORITY == "1" {
+        .level = "error"
+    } else if .PRIORITY == "2" || .PRIORITY== "3" {
+        .level = "critical"
+    } else if .PRIORITY == "4" || .PRIORITY == "5" {
+        .level = "warning"
+    } else if .PRIORITY == "6" {
+        .level = "info"
+    } else if .PRIORITY == "7" {
+        .level = "debug"
+    } else {
+        .level = "undefined"
+    }
+} else if .source_type == "file" {
+    if contains(string!(.file), "dmesg") || contains(string!(.file), "kern.log") {
+        .log_source = "dmesg"
+    } else {
+        .log_source = "generic_file"
+    }
+}
+del(.source_type)
+
+if exists(.__REALTIME_TIMESTAMP) {
+    ._time = .__REALTIME_TIMESTAMP
+} else if exists(.timestamp) {
+    ._time = .timestamp
+}
+
+if exists(.message) {
+    ._msg = del(.message)
+}
+
+# Normalize level to lowercase
+if exists(.level) {
+  .level = downcase(string!(.level))
+} else {
+  .level = "undefined"
+}
+''')
 
 
     @staticmethod
@@ -248,6 +312,9 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
     def set_dcgm_exporter_scrape_config(self, vector_cfg: dict, dcgm_exporter_scrape_endpoint: str):
         if dcgm_exporter_scrape_endpoint is None:
             return
+        if not self.dcgm_metrics_enabled:
+            LOG.info("DCGM metrics disabled, skipping scrape config")
+            return
         vector_cfg.setdefault("sources", {})[DCGM_EXPORTER_SOURCE_NAME] = {
             "type": "prometheus_scrape",
             "endpoints": [dcgm_exporter_scrape_endpoint],
@@ -267,6 +334,9 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
     def set_kube_state_metrics_scrape_config(self, vector_cfg: dict, ksm_scrape_endpoint: str):
         if ksm_scrape_endpoint is None:
             return
+        if not self.ksm_enabled:
+            LOG.info("Kube state metrics disabled, skipping scrape config")
+            return
         vector_cfg.setdefault("sources", {})[KUBE_STATE_METRICS_SOURCE_NAME] = {
             "type": "prometheus_scrape",
             "endpoints": [ksm_scrape_endpoint],
@@ -280,6 +350,70 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
         }
         vector_cfg.setdefault("sinks", {})[KUBE_STATE_METRICS_SINK_NAME] = self.kube_state_metrics_sink_config
 
+    def set_logs_config(self, vector_cfg: dict):
+        """Set log sources, transforms, and sink for journald and dmesg logs."""
+        if not self.logs_enabled:
+            LOG.info("Logs disabled, skipping logs config")
+            return
+        sources = vector_cfg.setdefault("sources", {})
+        transforms = vector_cfg.setdefault("transforms", {})
+        sinks = vector_cfg.setdefault("sinks", {})
+
+        # Add journald_logs source
+        sources[JOURNALD_LOGS_SOURCE_NAME] = {
+            "type": "journald",
+            "journal_directory": "/var/log/journal"
+        }
+
+        # Add dmesg_logs source
+        sources[DMESG_LOGS_SOURCE_NAME] = {
+            "type": "file",
+            "include": ["/var/log/dmesg", "/var/log/kern.log"]
+        }
+
+        # Add kubernetes logs source
+        sources[KUBERNETES_LOGS_SOURCE_NAME] = {
+            "type": "kubernetes_logs"
+        }
+
+        # Add crusoe log collector log filter
+        transforms[FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME] = {
+            "type": "filter",
+            "inputs": [KUBERNETES_LOGS_SOURCE_NAME],
+            "condition": {
+                "type": "vrl",
+                "source": self.filter_log_collector_logs_transform_source
+            }
+        }
+
+        # Add enrich_logs transform
+        transforms[ENRICH_LOGS_TRANSFORM_NAME] = {
+            "type": "remap",
+            "inputs": [JOURNALD_LOGS_SOURCE_NAME, DMESG_LOGS_SOURCE_NAME, FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME],
+            "source": self.enrich_logs_transform_source
+        }
+
+        # Add crusoe_ingest sink
+        sink_config = {
+            "type": "http",
+            "inputs": [ENRICH_LOGS_TRANSFORM_NAME],
+            "uri": self.logs_ingest_endpoint,
+            "framing": {"method": "newline_delimited"},
+            "compression": "snappy",
+            "healthcheck": {"enabled": False},
+            "request": {
+                "headers": {"X-Crusoe-Vm-Id": "${VM_ID:-unknown}"}
+            },
+            "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
+            "encoding": {"codec": "json"},
+            "batch": {"max_bytes": 100000}
+        }
+        if self.sink_proxy_cfg.get("enabled"):
+            sink_config["proxy"] = self.sink_proxy_cfg
+        sinks[CRUSOE_INGEST_SINK_NAME] = sink_config
+
+        LOG.info("Logs config set for journald and dmesg sources")
+
     def remove_kube_state_metrics_scrape_config(self, vector_cfg: dict):
         vector_cfg.get("sources", {}).pop(KUBE_STATE_METRICS_SOURCE_NAME, None)
         vector_cfg.get("transforms", {}).pop(KUBE_STATE_METRICS_TRANSFORM_NAME, None)
@@ -287,6 +421,9 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 
     def set_custom_metrics_scrape_config(self, vector_cfg: dict, custom_metrics_eps: list):
         if not custom_metrics_eps:
+            return
+        if not self.custom_metrics_enabled:
+            LOG.info("Custom metrics disabled, skipping scrape config")
             return
         sources = vector_cfg.get("sources")
         transforms = vector_cfg.get("transforms")
@@ -382,6 +519,7 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
         self.set_custom_metrics_scrape_config(base_cfg, custom_metrics_eps)
         self.set_dcgm_exporter_scrape_config(base_cfg, dcgm_exporter_ep)
         self.set_kube_state_metrics_scrape_config(base_cfg, ksm_ep)
+        self.set_logs_config(base_cfg)
         if self.amd_manager.enabled and amd_exporter_ep:
             self.amd_manager.set_scrape(base_cfg, amd_exporter_ep, NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
 

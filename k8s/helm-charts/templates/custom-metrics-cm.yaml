@@ -1,4 +1,5 @@
 {{- $customMetricsNs := .Values.customMetrics.namespace | default "crusoe-monitoring" }}
+{{- if not (lookup "v1" "ConfigMap" $customMetricsNs "crusoe-custom-metrics-config") }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,3 +12,4 @@ data:
     fake-metrics-app:
       allowlist:
         - my_app_requests_total
+{{- end }}
