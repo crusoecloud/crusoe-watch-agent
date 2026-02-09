@@ -535,7 +535,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:7bfbaf9
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.4
       env:
         - name: NODE_NAME
           valueFrom:
