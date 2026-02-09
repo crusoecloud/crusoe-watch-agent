@@ -15,7 +15,9 @@ DCGM_EXPORTER_APP_LABEL = "nvidia-dcgm-exporter"
 DMESG_LOGS_SOURCE_NAME = "dmesg_logs"
 CRUSOE_INGEST_SINK_NAME = "crusoe_ingest"
 ENRICH_LOGS_TRANSFORM_NAME = "enrich_logs"
+FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME = "filter_crusoe_log_collector_logs"
 JOURNALD_LOGS_SOURCE_NAME = "journald_logs"
+KUBERNETES_LOGS_SOURCE_NAME = "kubernetes_logs"
 KUBE_STATE_METRICS_SOURCE_NAME = "kube_state_metrics_scrape"
 KUBE_STATE_METRICS_TRANSFORM_NAME = "enrich_kube_state_metrics"
 KUBE_STATE_METRICS_SINK_NAME = "kube_state_metrics_sink"
@@ -148,6 +150,10 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 """)
         }
 
+        self.filter_log_collector_logs_transform_source = LiteralStr('''
+.kubernetes.pod_namespace == "crusoe-system" && starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector")
+''')
+
         self.enrich_logs_transform_source = LiteralStr('''
 .agent = "crusoe-watch-agent"
 .host = get_hostname!()
@@ -194,8 +200,6 @@ if exists(.level) {
   .level = "undefined"
 }
 ''')
-
-
 
 
     @staticmethod
@@ -367,10 +371,25 @@ if exists(.level) {
             "include": ["/var/log/dmesg", "/var/log/kern.log"]
         }
 
+        # Add kubernetes logs source
+        sources[KUBERNETES_LOGS_SOURCE_NAME] = {
+            "type": "kubernetes_logs"
+        }
+
+        # Add crusoe log collector log filter
+        transforms[FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME] = {
+            "type": "filter",
+            "inputs": [KUBERNETES_LOGS_SOURCE_NAME],
+            "condition": {
+                "type": "vrl",
+                "source": self.filter_log_collector_logs_transform_source
+            }
+        }
+
         # Add enrich_logs transform
         transforms[ENRICH_LOGS_TRANSFORM_NAME] = {
             "type": "remap",
-            "inputs": [JOURNALD_LOGS_SOURCE_NAME, DMESG_LOGS_SOURCE_NAME],
+            "inputs": [JOURNALD_LOGS_SOURCE_NAME, DMESG_LOGS_SOURCE_NAME, FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME],
             "source": self.enrich_logs_transform_source
         }
 
