@@ -207,7 +207,8 @@ vector:
   workloadResourceAnnotations: { }
 
   # securityContext -- Specify securityContext on Vector containers.
-  securityContext: { }
+  securityContext:
+    privileged: true
 
   # command -- Override Vector's default command.
   command: [
@@ -465,9 +466,10 @@ vector:
     - name: sysfs
       hostPath:
         path: "/sys"
-    - name: dev
+    - name: dev-kmsg
       hostPath:
-        path: "/dev"
+        path: "/dev/kmsg"
+        type: CharDevice
 
   # defaultVolumeMounts -- Default volume mounts. Corresponds to `volumes`.
   # @default -- See `values.yaml`
@@ -484,8 +486,8 @@ vector:
     - name: sysfs
       mountPath: "/host/sys"
       readOnly: true
-    - name: dev
-      mountPath: "/dev"
+    - name: dev-kmsg
+      mountPath: "/dev/kmsg"
       readOnly: true
 
   # extraVolumes -- Additional Volumes to use with Vector Pods.
@@ -541,7 +543,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.4
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:e007a7d
       env:
         - name: NODE_NAME
           valueFrom:
