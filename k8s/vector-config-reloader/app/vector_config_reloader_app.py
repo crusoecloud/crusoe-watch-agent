@@ -178,6 +178,29 @@ if .source_type == "journald" {
     } else {
         .level = "undefined"
     }
+} else if .source_type == "kmsg" {
+    .log_source = "dmesg"
+    # Map kernel log levels (0-7) to standard levels
+    # Vector's kmsg source provides .level as an integer
+    if .level == 0 {
+        .level = "emergency"
+    } else if .level == 1 {
+        .level = "alert"
+    } else if .level == 2 {
+        .level = "critical"
+    } else if .level == 3 {
+        .level = "error"
+    } else if .level == 4 {
+        .level = "warning"
+    } else if .level == 5 {
+        .level = "notice"
+    } else if .level == 6 {
+        .level = "info"
+    } else if .level == 7 {
+        .level = "debug"
+    } else {
+        .level = "undefined"
+    }
 } else if .source_type == "file" {
     if contains(string!(.file), "dmesg") || contains(string!(.file), "kern.log") {
         .log_source = "dmesg"
@@ -371,7 +394,7 @@ if exists(.level) {
 
         # Add dmesg_logs source
         sources[DMESG_LOGS_SOURCE_NAME] = {
-            "type": "file",
+            "type": "kmsg",
             "include": ["/var/log/dmesg", "/var/log/kern.log"]
         }
 
