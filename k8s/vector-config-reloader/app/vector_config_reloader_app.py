@@ -398,9 +398,11 @@ if exists(.level) {
         }
 
         # Add dmesg_logs source
+        # /dev/kmsg is a character device, so we use exec source instead of file
         sources[DMESG_LOGS_SOURCE_NAME] = {
-            "type": "file",
-            "include": ["/dev/kmsg"]
+            "type": "exec",
+            "mode": "streaming",
+            "command": ["cat", "/dev/kmsg"]
         }
 
         # Add kubernetes logs source
