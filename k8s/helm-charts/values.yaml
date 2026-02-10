@@ -465,6 +465,9 @@ vector:
     - name: sysfs
       hostPath:
         path: "/sys"
+    - name: dev
+      hostPath:
+        path: "/dev"
 
   # defaultVolumeMounts -- Default volume mounts. Corresponds to `volumes`.
   # @default -- See `values.yaml`
@@ -480,6 +483,9 @@ vector:
       readOnly: true
     - name: sysfs
       mountPath: "/host/sys"
+      readOnly: true
+    - name: dev
+      mountPath: "/dev"
       readOnly: true
 
   # extraVolumes -- Additional Volumes to use with Vector Pods.
