@@ -179,8 +179,36 @@ if .source_type == "journald" {
         .level = "undefined"
     }
 } else if .source_type == "file" {
-    if contains(string!(.file), "dmesg") || contains(string!(.file), "kern.log") {
+    if contains(string!(.file), "kmsg") {
         .log_source = "dmesg"
+        # Parse kernel log level from /dev/kmsg format: <priority>,timestamp,sequence...;message
+        # Example: "6,339,5140900,-;NET: Registered protocol family 10"
+        msg_str = string!(.message)
+
+        # Extract priority using simple string split (faster than regex)
+        metadata_parts = split(msg_str, ",", limit: 2)
+        priority = to_int(get(metadata_parts, [0]) ?? "-1") ?? -1
+
+        # Map kernel log levels using same logic as journald for consistency
+        if priority == 0 || priority == 1 {
+            .level = "error"
+        } else if priority == 2 || priority == 3 {
+            .level = "critical"
+        } else if priority == 4 || priority == 5 {
+            .level = "warning"
+        } else if priority == 6 {
+            .level = "info"
+        } else if priority == 7 {
+            .level = "debug"
+        } else {
+            .level = "undefined"
+        }
+
+        # Extract the actual message after the semicolon
+        msg_parts = split(msg_str, ";", limit: 2)
+        if length(msg_parts) > 1 {
+            .message = get(msg_parts, [1]) ?? msg_str
+        }
     } else {
         .log_source = "generic_file"
     }
@@ -372,7 +400,7 @@ if exists(.level) {
         # Add dmesg_logs source
         sources[DMESG_LOGS_SOURCE_NAME] = {
             "type": "file",
-            "include": ["/var/log/dmesg", "/var/log/kern.log"]
+            "include": ["/dev/kmsg"]
         }
 
         # Add kubernetes logs source
