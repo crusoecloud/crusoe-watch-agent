@@ -159,6 +159,10 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .host = get_hostname!()
 .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
 
+if .kubernetes.pod_labels.app == "crusoe-log-collector" { 
+    .log_source = "crusoe-log-collector"
+}
+
 if .source_type == "journald" {
     .log_source = "journald"
     if .PRIORITY == "0" || .PRIORITY == "1" {
