@@ -207,7 +207,8 @@ vector:
   workloadResourceAnnotations: { }
 
   # securityContext -- Specify securityContext on Vector containers.
-  securityContext: { }
+  securityContext:
+    privileged: true
 
   # command -- Override Vector's default command.
   command: [
@@ -465,6 +466,10 @@ vector:
     - name: sysfs
       hostPath:
         path: "/sys"
+    - name: dev-kmsg
+      hostPath:
+        path: "/dev/kmsg"
+        type: CharDevice
 
   # defaultVolumeMounts -- Default volume mounts. Corresponds to `volumes`.
   # @default -- See `values.yaml`
@@ -480,6 +485,9 @@ vector:
       readOnly: true
     - name: sysfs
       mountPath: "/host/sys"
+      readOnly: true
+    - name: dev-kmsg
+      mountPath: "/dev/kmsg"
       readOnly: true
 
   # extraVolumes -- Additional Volumes to use with Vector Pods.
@@ -535,7 +543,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.4
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.5
       env:
         - name: NODE_NAME
           valueFrom:
@@ -861,7 +869,7 @@ logCollector:
     RUN_ONCE: "false"
     LOG_LEVEL: "INFO"
     MAX_LOGS_TO_KEEP: "1"
-    API_ENABLED: "false"
+    API_ENABLED: "true"
     API_BASE_URL: "https://cms-monitoring.crusoecloud.com"
     API_POLL_INTERVAL: "60"
     COLLECTION_TIMEOUT: "300"
