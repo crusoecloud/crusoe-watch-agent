@@ -22,6 +22,7 @@ import base64
 import requests
 import gzip
 import shutil
+import json
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -48,11 +49,29 @@ API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
 COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))  # 5 minutes timeout
 CRUSOE_MONITORING_TOKEN = os.environ.get("CRUSOE_MONITORING_TOKEN")  # Auth token for API calls
 
+
+class JSONFormatter(logging.Formatter):
+    """JSON formatter for structured logging - efficient and no parsing needed."""
+    
+    def format(self, record):
+        log_data = {
+            "timestamp": datetime.utcfromtimestamp(record.created).isoformat() + "Z",
+            "level": record.levelname.lower(),
+            "message": record.getMessage(),
+        }
+        
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        
+        return json.dumps(log_data)
+
+
 # Logging setup
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(JSONFormatter())
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
-    format="%(asctime)s %(levelname)s: %(message)s",
-    stream=sys.stdout,
+    handlers=[handler]
 )
 LOG = logging.getLogger(__name__)
 
