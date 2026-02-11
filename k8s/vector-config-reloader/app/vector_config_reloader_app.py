@@ -214,6 +214,23 @@ if .source_type == "journald" {
 }
 del(.source_type)
 
+# Parse JSON logs from crusoe-log-collector (efficient, no regex needed)
+# The log collector now outputs JSON: {"timestamp": "...", "level": "info", "message": "..."}
+if .log_source == "crusoe-log-collector" && exists(.message) {
+    parsed, err = parse_json(string!(.message))
+    
+    if err == null {
+        # Extract fields from JSON
+        if exists(parsed.level) {
+            .level = string!(parsed.level)
+        }
+        if exists(parsed.message) {
+            .message = string!(parsed.message)
+        }
+        # Note: parsed.timestamp is already in the log, we use kubernetes timestamp
+    }
+}
+
 if exists(.__REALTIME_TIMESTAMP) {
     ._time = .__REALTIME_TIMESTAMP
 } else if exists(.timestamp) {
