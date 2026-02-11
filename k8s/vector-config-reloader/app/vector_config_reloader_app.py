@@ -161,6 +161,22 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 
 if .kubernetes.pod_labels.app == "crusoe-log-collector" { 
     .log_source = "crusoe-log-collector"
+
+    # Parse JSON log format (efficient, no regex needed)
+    if exists(.message) {
+        parsed, err = parse_json(string!(.message))
+
+        if err == null {
+            # Extract level and message from JSON
+            if exists(parsed.level) {
+                .level = string!(parsed.level)
+            }
+            if exists(parsed.message) {
+                .message = string!(parsed.message)
+            }
+            # Note: parsed.timestamp exists but we use kubernetes timestamp
+        }
+    }
 }
 
 if .source_type == "journald" {

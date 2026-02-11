@@ -543,7 +543,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.5
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.6
       env:
         - name: NODE_NAME
           valueFrom:
@@ -857,7 +857,7 @@ logCollector:
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
-    tag: v0.2.3
+    tag: v0.2.6
     pullPolicy: IfNotPresent
 
   # Environment variables for log collector
