@@ -322,7 +322,7 @@ class NvidiaLogCollector:
             exec_command = [
                 "/bin/bash",
                 "-c",
-                f"nvidia-bug-report.sh --output-file{shlex.quote(log_path_base)} && echo {shlex.quote(actual_log_path)}"
+                f"nvidia-bug-report.sh --output-file {shlex.quote(log_path_base)} && echo {shlex.quote(actual_log_path)}"
             ]
 
             LOG.info(f"Running command: {' '.join(exec_command)}")
