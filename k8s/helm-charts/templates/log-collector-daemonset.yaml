@@ -52,7 +52,6 @@ spec:
             secretKeyRef:
               name: crusoe-monitoring-token
               key: CRUSOE_MONITORING_TOKEN
-              optional: true
         {{- range $key, $value := .Values.logCollector.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
