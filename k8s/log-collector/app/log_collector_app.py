@@ -23,6 +23,7 @@ import requests
 import gzip
 import shutil
 import json
+import shlex
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -321,7 +322,7 @@ class NvidiaLogCollector:
             exec_command = [
                 "/bin/bash",
                 "-c",
-                f"nvidia-bug-report.sh --output-file {log_path_base} && echo {actual_log_path}"
+                f"nvidia-bug-report.sh --output-file{shlex.quote(log_path_base)} && echo {shlex.quote(actual_log_path)}"
             ]
 
             LOG.info(f"Running command: {' '.join(exec_command)}")
