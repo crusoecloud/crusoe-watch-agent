@@ -61,7 +61,7 @@ spec:
         envFrom:
         - secretRef:
             name: crusoe-secrets
-            optional: true
+            optional: false
 
         volumeMounts:
         {{- if .Values.logCollector.volumeMounts }}
