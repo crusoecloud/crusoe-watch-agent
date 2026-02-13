@@ -857,7 +857,7 @@ logCollector:
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
-    tag: v0.2.6
+    tag: v0.2.7
     pullPolicy: IfNotPresent
 
   # Environment variables for log collector
