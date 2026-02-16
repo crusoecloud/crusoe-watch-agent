@@ -37,6 +37,43 @@ CUSTOM_METRICS_PORT_ANNOTATION = "crusoe.ai/port"
 CUSTOM_METRICS_PATH_ANNOTATION = "crusoe.ai/path"
 CUSTOM_METRICS_DEFAULT_SCRAPE_INTERVAL = 30
 
+DATA_API_GATEWAY_METRICS_FILTER_TRANSFORM = {
+    "type": "filter",
+    "inputs": ["pt_metrics_scrape"],
+    "condition": {
+        "type": "vrl",
+        "source": LiteralStr("""
+metrics_allowlist = [
+          "inference_counter_chat_request",
+          "inference_counter_output_token",
+          "inference_counter_prompt_token",
+          # Histogram base names (no _bucket/_sum/_count)
+          "inference_histogram_first_token_latency",
+          "inference_histogram_output_token_latency",
+          "inference_histogram_output_token_throughput",
+        ]
+        includes(metrics_allowlist, .name)
+""")
+    }
+}
+
+DATA_API_GATEWAY_METRICS_VECTOR_TRANSFORM = {
+    "type": "remap",
+    "inputs": ["filter_pt_metrics"],
+    "source": LiteralStr("""
+del(.tags.backend_name)
+del(.tags.error_code)
+del(.tags.gateway_name)
+del(.tags.is_shadow)
+del(.tags.is_streaming)
+del(.tags.method)
+del(.tags.provider)
+del(.tags.worker_id)
+.tags.pt_project_id = "${CRUSOE_PROJECT_ID}"
+.tags.crusoe_resource = "cri:inference:provisioned_throughput"
+""")
+}
+
 SCRAPE_INTERVAL_MIN_THRESHOLD = 5
 SCRAPE_TIMEOUT_PERCENTAGE = 0.7
 MAX_EVENT_WATCHER_RETRIES = 5
@@ -108,6 +145,18 @@ class VectorConfigReloader:
             "request": {"concurrency": "adaptive"},
             "batch": {"max_bytes": 500000},
             "tls": {"verify_certificate": True, "verify_hostname": True},
+        }
+
+        self.pt_metrics_sink_config = {
+            "type": "prometheus_remote_write",
+            "inputs": ["enrich_pt_metrics"],
+            "endpoint": self.infra_sink_endpoint,
+            "tenant_id": "cri:pt_metrics/${CRUSOE_CLUSTER_ID}",
+            "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
+            "healthcheck": {"enabled": False},
+            "compression": "snappy",
+            "tls": {"verify_certificate": True, "verify_hostname": True},
+            "batch": {"max_bytes": 50000},
         }
 
         self.logs_ingest_endpoint = f'{reloader_cfg["sink"]["endpoint"]}/logs/ingest'
@@ -277,6 +326,11 @@ if exists(.level) {
         labels = pod.metadata.labels or {}
         return labels.get("app.kubernetes.io/name") == KUBE_STATE_METRICS_APP_LABEL
 
+    @staticmethod
+    def is_data_api_gateway_pod(pod):
+        labels = pod.metadata.labels or {}
+        return labels and "app.kubernetes.io/name" in labels and labels["app.kubernetes.io/name"] == "data-api-gateway"
+
     def handle_sigterm(self, sig, frame):
         self.running = False
 
@@ -285,6 +339,9 @@ if exists(.level) {
 
     def get_kube_state_metrics_scrape_endpoint(self, pod_ip) -> str:
         return f"http://{pod_ip}:{self.ksm_port}{self.ksm_path}"
+
+    def get_data_api_gateway_scrape_endpoint(self, pod_ip) -> str:
+        return f"http://{pod_ip}:9091/metrics"
 
     def get_deployment_metrics_config(self, deployment_name: str) -> dict:
         if not deployment_name:
@@ -546,6 +603,31 @@ if exists(.level) {
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, current_cfg)
         LOG.info("Custom metrics config refreshed from ConfigMap")
 
+    def set_data_api_gateway_scrape_config(self, vector_cfg: dict, data_api_gateway_ep: str):
+        if data_api_gateway_ep is None:
+            return
+        sources = vector_cfg.setdefault("sources", {})
+        transforms = vector_cfg.setdefault("transforms", {})
+        sinks = vector_cfg.setdefault("sinks", {})
+
+        transforms.setdefault("filter_pt_metrics", DATA_API_GATEWAY_METRICS_FILTER_TRANSFORM)
+        transforms.setdefault("enrich_pt_metrics", DATA_API_GATEWAY_METRICS_VECTOR_TRANSFORM)
+
+        sources["pt_metrics_scrape"] = {
+            "type": "prometheus_scrape",
+            "endpoints": [data_api_gateway_ep],
+            "scrape_interval_secs": 60,
+            "scrape_timeout_secs": 50
+        }
+
+        sinks["cms_gateway_pt_metrics"] = self.pt_metrics_sink_config
+
+    def remove_data_api_gateway_scrape_config(self, vector_cfg: dict):
+        vector_cfg.get("sources", {}).pop("pt_metrics_scrape", None)
+        vector_cfg.get("transforms", {}).pop("enrich_pt_metrics", None)
+        vector_cfg.get("transforms", {}).pop("filter_pt_metrics:", None)
+        vector_cfg.get("sinks", {}).pop("cms_gateway_pt_metrics", None)
+
     def bootstrap_config(self):
         base_cfg = YamlUtils.load_yaml_config(VECTOR_BASE_CONFIG_PATH)
 
@@ -562,6 +644,9 @@ if exists(.level) {
                 ksm_ep = self.get_kube_state_metrics_scrape_endpoint(pod.status.pod_ip)
             elif self.amd_manager.is_exporter_pod(pod):
                 amd_exporter_ep = self.amd_manager.build_endpoint(pod.status.pod_ip)
+            elif VectorConfigReloader.is_data_api_gateway_pod(pod):
+                LOG.info(f"Found DAG Pod {pod.metadata.name} is a relevant metrics exporter.")
+                data_api_gateway_ep = self.get_data_api_gateway_scrape_endpoint(pod.status.pod_ip)
             else:
                 LOG.info(f"Pod {pod.metadata.name} is not a relevant metrics exporter.")
 
@@ -620,6 +705,9 @@ if exists(.level) {
             elif self.amd_manager.is_exporter_pod(pod):
                 if self.amd_manager.enabled:
                     self.amd_manager.set_scrape(current_vector_cfg, self.amd_manager.build_endpoint(pod.status.pod_ip), NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
+            elif VectorConfigReloader.is_data_api_gateway_pod(pod):
+                LOG.info(f"Adding DAG Pod {pod.metadata.name} is a relevant metrics exporter.")
+                self.set_data_api_gateway_scrape_config(current_vector_cfg, self.get_data_api_gateway_scrape_endpoint(pod.status.pod_ip))
             else:
                 LOG.info(f"Pod {pod.metadata.name} is not a relevant metrics exporter.")
                 return
@@ -632,6 +720,9 @@ if exists(.level) {
                 self.remove_kube_state_metrics_scrape_config(current_vector_cfg)
             elif self.amd_manager.is_exporter_pod(pod):
                 self.amd_manager.remove_scrape(current_vector_cfg, NODE_METRICS_VECTOR_TRANSFORM_NAME)
+            elif VectorConfigReloader.is_data_api_gateway_pod(pod):
+                LOG.info(f"Removing DAG Pod {pod.metadata.name} is a relevant metrics exporter.")
+                self.remove_data_api_gateway_scrape_config(current_vector_cfg)
             else:
                 LOG.info(f"Pod {pod.metadata.name} is not a relevant metrics exporter.")
                 return
