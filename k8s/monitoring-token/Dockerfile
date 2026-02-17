@@ -6,9 +6,10 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install kubectl
+# Download and install kubectl (architecture-aware for multi-arch builds)
 RUN KUBE_LATEST=$(curl -L -s https://dl.k8s.io/release/stable.txt) && \
-    curl -LO "https://dl.k8s.io/release/${KUBE_LATEST}/bin/linux/amd64/kubectl" && \
+    ARCH=$(dpkg --print-architecture) && \
+    curl -LO "https://dl.k8s.io/release/${KUBE_LATEST}/bin/linux/${ARCH}/kubectl" && \
     install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl && \
     rm kubectl
 
