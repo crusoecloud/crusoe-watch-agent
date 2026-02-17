@@ -202,6 +202,7 @@ class NvidiaLogCollector:
         Returns:
             True if report successful, False otherwise
         """
+        upload_start = time.monotonic()
         try:
             url = f"{API_BASE_URL}/agent/upload-logs"
             headers = self._get_auth_headers()
@@ -234,21 +235,25 @@ class NvidiaLogCollector:
 
                 response = requests.post(url, json=data, headers=headers, timeout=10)
 
+            upload_duration = time.monotonic() - upload_start
             if response.status_code == 200:
-                LOG.info(f"Successfully reported {status} result for event {event_id}")
+                LOG.info(f"Successfully reported {status} result for event {event_id} with duration {round(upload_duration, 2)}s")
                 return True
             else:
-                LOG.error(f"Failed to report result: {response.status_code} - {response.text}")
+                LOG.error(f"Failed to report result: {response.status_code} - {response.text} with duration {round(upload_duration, 2)}s")
                 return False
 
         except requests.exceptions.Timeout:
-            LOG.error("Report request timed out")
+            upload_duration = time.monotonic() - upload_start
+            LOG.error(f"Report request timed out with duration {round(upload_duration, 2)}s")
             return False
         except requests.exceptions.RequestException as e:
-            LOG.error(f"Report request failed: {e}")
+            upload_duration = time.monotonic() - upload_start
+            LOG.error(f"Report request failed: {e} with duration {round(upload_duration, 2)}s")
             return False
         except Exception as e:
-            LOG.error(f"Unexpected error during report: {e}")
+            upload_duration = time.monotonic() - upload_start
+            LOG.error(f"Unexpected error during report: {e} with duration {round(upload_duration, 2)}s")
             return False
 
     def find_nvidia_driver_pod(self) -> Optional[client.V1Pod]:
@@ -305,6 +310,7 @@ class NvidiaLogCollector:
 
         LOG.info(f"Executing nvidia-bug-report.sh in pod {pod_name}, container {container_name}")
 
+        bug_report_start = time.monotonic()
         try:
             # Generate unique filename with timestamp and optional event_id
             # Note: nvidia-bug-report.sh automatically adds .gz extension
@@ -352,18 +358,21 @@ class NvidiaLogCollector:
 
             resp.close()
 
+            bug_report_duration = time.monotonic() - bug_report_start
             if actual_log_path in output or "Bug report generated" in output:
-                LOG.info(f"nvidia-bug-report.sh completed successfully, log file: {actual_log_path}")
+                LOG.info(f"nvidia-bug-report.sh completed successfully, log file: {actual_log_path} with duration {round(bug_report_duration, 2)}s")
                 return actual_log_path
             else:
-                LOG.error(f"nvidia-bug-report.sh execution may have failed. Output: {output}")
+                LOG.error(f"nvidia-bug-report.sh execution may have failed. Output: {output} with duration {round(bug_report_duration, 2)}s")
                 return None
 
         except ApiException as e:
-            LOG.error(f"Error executing nvidia-bug-report.sh: {e}")
+            bug_report_duration = time.monotonic() - bug_report_start
+            LOG.error(f"Error executing nvidia-bug-report.sh: {e} with duration {round(bug_report_duration, 2)}s")
             return None
         except Exception as e:
-            LOG.error(f"Unexpected error during nvidia-bug-report execution: {e}")
+            bug_report_duration = time.monotonic() - bug_report_start
+            LOG.error(f"Unexpected error during nvidia-bug-report execution: {e} with duration {round(bug_report_duration, 2)}s")
             return None
 
     def download_log_file(self, pod: client.V1Pod, remote_path: str) -> Optional[Path]:
@@ -386,6 +395,7 @@ class NvidiaLogCollector:
 
         LOG.info(f"Downloading {remote_path} from pod {pod_name}")
 
+        download_start = time.monotonic()
         try:
             # First verify the file exists
             LOG.debug(f"Verifying file exists: {remote_path}")
@@ -473,23 +483,29 @@ class NvidiaLogCollector:
                     tar.extract(member, path=self.output_dir)
 
                 output_file = self.output_dir / remote_file
-                LOG.info(f"Successfully downloaded log to {output_file}")
+                download_duration = time.monotonic() - download_start
+                file_size = output_file.stat().st_size
+                LOG.info(f"Successfully downloaded log to {output_file} ({file_size / (1024*1024):.2f} MB) with duration {round(download_duration, 2)}s")
                 return output_file
 
             finally:
                 os.unlink(tmp_tar_path)
 
         except ApiException as e:
-            LOG.error(f"Kubernetes API error downloading log file: {e}")
+            download_duration = time.monotonic() - download_start
+            LOG.error(f"Kubernetes API error downloading log file: {e} with duration {round(download_duration, 2)}s")
             return None
         except tarfile.TarError as e:
-            LOG.error(f"Error extracting tar file: {e}")
+            download_duration = time.monotonic() - download_start
+            LOG.error(f"Error extracting tar file: {e} with duration {round(download_duration, 2)}s")
             return None
         except KeyError as e:
-            LOG.error(f"File not found in tar archive: {e}")
+            download_duration = time.monotonic() - download_start
+            LOG.error(f"File not found in tar archive: {e} with duration {round(download_duration, 2)}s")
             return None
         except Exception as e:
-            LOG.error(f"Unexpected error downloading log file: {e}")
+            download_duration = time.monotonic() - download_start
+            LOG.error(f"Unexpected error downloading log file: {e} with duration {round(download_duration, 2)}s")
             return None
 
     def cleanup_remote_log(self, pod: client.V1Pod, remote_path: str) -> bool:
@@ -644,6 +660,7 @@ class NvidiaLogCollector:
             Path to collected log file if successful, None otherwise
         """
         LOG.info(f"Starting log collection cycle{f' for event {event_id}' if event_id else ''}")
+        collection_start = time.monotonic()
 
         # Clean up old logs to prevent disk space issues
         self.cleanup_old_logs()
@@ -651,19 +668,22 @@ class NvidiaLogCollector:
         # Find the NVIDIA driver pod
         driver_pod = self.find_nvidia_driver_pod()
         if not driver_pod:
-            LOG.error("Cannot collect logs: NVIDIA driver pod not found")
+            collection_duration = time.monotonic() - collection_start
+            LOG.error(f"Cannot collect logs: NVIDIA driver pod not found with duration {round(collection_duration, 2)}s")
             return None
 
         # Execute nvidia-bug-report.sh
         remote_log_path = self.execute_nvidia_bug_report(driver_pod, event_id)
         if not remote_log_path:
-            LOG.error("Failed to generate nvidia-bug-report")
+            collection_duration = time.monotonic() - collection_start
+            LOG.error(f"Failed to generate nvidia-bug-report with duration {round(collection_duration, 2)}s")
             return None
 
         # Download the log file
         local_log_path = self.download_log_file(driver_pod, remote_log_path)
         if not local_log_path:
-            LOG.error("Failed to download nvidia-bug-report")
+            collection_duration = time.monotonic() - collection_start
+            LOG.error(f"Failed to download nvidia-bug-report with duration {round(collection_duration, 2)}s")
             return None
 
         # Cleanup remote log file
@@ -676,7 +696,9 @@ class NvidiaLogCollector:
         else:
             LOG.warning("Failed to unzip log file to nvidia-bug-reports directory")
 
-        LOG.info(f"Log collection completed successfully: {local_log_path}")
+        collection_duration = time.monotonic() - collection_start
+        file_size = local_log_path.stat().st_size if local_log_path.exists() else 0
+        LOG.info(f"Log collection completed successfully: {local_log_path} ({file_size / (1024*1024):.2f} MB) with duration {round(collection_duration, 2)}s")
         return local_log_path
 
     def collect_logs_with_timeout(self, event_id: str) -> tuple[bool, Optional[Path], str]:
