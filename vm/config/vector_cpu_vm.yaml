@@ -25,6 +25,7 @@ sources:
 
     journald_logs:
         type: journald
+        current_boot_only: false
 
 transforms:
     enrich_logs:
