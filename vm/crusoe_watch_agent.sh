@@ -52,10 +52,7 @@ declare -A -r TELEMETRY_INGRESS_MAP=(
   ["prod"]="https://cms-monitoring.crusoecloud.com/ingest"
 )
 
-declare -A -r LOGS_INGRESS_MAP=(
-  ["dev"]="https://cms-monitoring.crusoecloud.xyz/logs/ingest"
-  ["prod"]="https://cms-monitoring.crusoecloud.com/logs/ingest"
-)
+LOGS_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.com/logs/ingest"
 
 # CLI args parsing
 usage() {
@@ -65,6 +62,7 @@ usage() {
   echo "  --dcgm-exporter-service-name NAME         Specify custom DCGM exporter service name"
   echo "  --dcgm-exporter-service-port PORT         Specify custom DCGM exporter port"
   echo "  --replace-dcgm-exporter [SERVICE_NAME]    Replace pre-installed dcgm-exporter systemd service with Crusoe version for full metrics collection."
+  echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "                                            Optional SERVICE_NAME defaults to dcgm-exporter"
   echo "Defaults: NAME=crusoe-dcgm-exporter, PORT=9400"
   echo "Examples:"
@@ -109,6 +107,13 @@ parse_args() {
       --env|-e)
         if [[ -n "$2" ]]; then
           ENVIRONMENT="$2"; shift 2
+        else
+          error_exit "Missing value for $1"
+        fi
+        ;;
+      --logs-endpoint)
+        if [[ -n "$2" ]]; then
+          LOGS_INGRESS_ENDPOINT="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -348,7 +353,7 @@ VM_ID='${CRUSOE_VM_ID}'
 DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
 DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'
 TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
-LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_MAP[$ENVIRONMENT]}'
+LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 AGENT_VERSION='${AGENT_VERSION}'
 EOF
   echo ".env file created at $ENV_FILE"
