@@ -44,7 +44,6 @@ transforms:
         source: |
             .agent = "crusoe-watch-agent"
             .host = get_hostname!()
-            .vm_id = "${VM_ID}"
             if .source_type == "journald" {
                 .log_source = "journald"
                 if .PRIORITY == "0" || .PRIORITY == "1" {
