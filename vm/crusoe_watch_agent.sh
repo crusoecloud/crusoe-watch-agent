@@ -52,6 +52,8 @@ declare -A -r TELEMETRY_INGRESS_MAP=(
   ["prod"]="https://cms-monitoring.crusoecloud.com/ingest"
 )
 
+LOGS_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.com/logs/ingest"
+
 # CLI args parsing
 usage() {
   echo "Usage: $0 <command> [options]"
@@ -343,6 +345,7 @@ VM_ID='${CRUSOE_VM_ID}'
 DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
 DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'
 TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
+LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 AGENT_VERSION='${AGENT_VERSION}'
 EOF
   echo ".env file created at $ENV_FILE"
