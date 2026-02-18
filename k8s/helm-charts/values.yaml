@@ -25,7 +25,7 @@ logs:
 
 job:
   name: crusoe-monitoring-token-job
-  image: registry.us-east2-a.ccr.crusoecloudcompute.com/crusoe-watch-agent.9799943d/token-job:v0.1.9
+  image: registry.us-east2-a.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/token-job:v0.1.9
   ttlSecondsAfterFinished: 300
 secrets:
   crusoeMonitoringToken: crusoe-monitoring-token
