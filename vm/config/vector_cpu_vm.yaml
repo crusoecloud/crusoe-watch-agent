@@ -25,6 +25,7 @@ sources:
 
     journald_logs:
         type: journald
+        journal_directory: /var/log/journal
         current_boot_only: false
 
     dmesg_logs:
