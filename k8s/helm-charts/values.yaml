@@ -418,10 +418,47 @@ vector:
           .tags.vm_id = "${VM_ID}"
           .tags.crusoe_resource = "vm"
 
+      filter_internal_metrics:
+        type: filter
+        inputs:
+            - internal_metrics
+        condition: |
+            includes(
+                [
+                    "vector_buffer_byte_size",
+                    "vector_buffer_discarded_events_total",
+                    "vector_buffer_events",
+                    "vector_buffer_received_events_total",
+                    "vector_buffer_send_duration_seconds",
+                    "vector_buffer_sent_events_total",
+                    "vector_build_info",
+                    "vector_collect_completed_total",
+                    "vector_collect_duration_seconds",
+                    "vector_component_discarded_events_total",
+                    "vector_component_errors_total",
+                    "vector_component_received_events_total",
+                    "vector_component_sent_events_total",
+                    "vector_config_reload_rejected",
+                    "vector_config_reloaded",
+                    "vector_connection_established_total",
+                    "vector_connection_send_errors_total",
+                    "vector_http_client_requests_sent_total",
+                    "vector_http_client_response_rtt_seconds",
+                    "vector_http_client_responses_total",
+                    "vector_http_client_rtt_seconds",
+                    "vector_internal_metrics_cardinality",
+                    "vector_open_connections",
+                    "vector_open_files",
+                    "vector_source_lag_time_seconds",
+                    "vector_uptime_seconds",
+                ],
+                .name,
+            )
+
       add_internal_labels:
         type: remap
         inputs:
-            - internal_metrics
+            - filter_internal_metrics
         source: |
             .tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
             .tags.vm_id = "${VM_ID}"
