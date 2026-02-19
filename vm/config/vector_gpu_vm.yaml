@@ -136,6 +136,7 @@ sinks:
         request:
             headers:
                 X-Crusoe-Vm-Id: "${VM_ID}"
+                User-Agent: "Crusoe Watch Agent/${AGENT_VERSION}"
         auth:
             strategy: bearer
             token: "${CRUSOE_AUTH_TOKEN}"

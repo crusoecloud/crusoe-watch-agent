@@ -451,7 +451,10 @@ if exists(.level) {
             "compression": "snappy",
             "healthcheck": {"enabled": False},
             "request": {
-                "headers": {"X-Crusoe-Vm-Id": "${VM_ID:-unknown}"}
+                "headers": {
+                    "X-Crusoe-Vm-Id": "${VM_ID:-unknown}",
+                    "User-Agent": "Crusoe Watch Agent/${AGENT_VERSION:-unknown}"
+                }
             },
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "encoding": {"codec": "json"},
