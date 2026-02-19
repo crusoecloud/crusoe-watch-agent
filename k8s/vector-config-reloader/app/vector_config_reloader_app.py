@@ -453,7 +453,7 @@ if exists(.level) {
             "request": {
                 "headers": {
                     "X-Crusoe-Vm-Id": "${VM_ID:-unknown}",
-                    "User-Agent": "Crusoe Watch Agent/${AGENT_VERSION:-unknown}"
+                    "User-Agent": "CrusoeWatchAgent/${AGENT_VERSION:-unknown}"
                 }
             },
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
