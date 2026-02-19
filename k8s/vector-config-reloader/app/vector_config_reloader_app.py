@@ -86,7 +86,7 @@ class VectorConfigReloader:
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "healthcheck": {"enabled": False},
             "compression": "snappy",
-            "request": {"concurrency": "adaptive"},
+            "request": {"concurrency": "adaptive", "headers": {"User-Agent": "CrusoeWatchAgent/${AGENT_VERSION:-unknown}"}},
             "batch": {"max_bytes": 500000},
             "tls": {"verify_certificate": True, "verify_hostname": True},
         }
@@ -105,7 +105,7 @@ class VectorConfigReloader:
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "healthcheck": {"enabled": False},
             "compression": "snappy",
-            "request": {"concurrency": "adaptive"},
+            "request": {"concurrency": "adaptive", "headers": {"User-Agent": "CrusoeWatchAgent/${AGENT_VERSION:-unknown}"}},
             "batch": {"max_bytes": 500000},
             "tls": {"verify_certificate": True, "verify_hostname": True},
         }

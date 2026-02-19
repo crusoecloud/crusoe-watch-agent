@@ -159,6 +159,8 @@ sinks:
             enabled: false
         request:
             concurrency: adaptive
+            headers:
+                User-Agent: "CrusoeWatchAgent/${AGENT_VERSION}"
         batch:
             max_bytes: 500000 # ~500KB
         compression: snappy
