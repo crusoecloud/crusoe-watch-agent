@@ -32,6 +32,11 @@ spec:
         {{- toYaml .Values.logCollector.tolerations | nindent 8 }}
       {{- end }}
 
+      {{- if .Values.logCollector.affinity }}
+      affinity:
+        {{- toYaml .Values.logCollector.affinity | nindent 8 }}
+      {{- end }}
+
       {{- if .Values.logCollector.initContainers }}
       initContainers:
         {{- toYaml .Values.logCollector.initContainers | nindent 8 }}
