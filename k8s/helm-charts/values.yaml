@@ -290,7 +290,8 @@ vector:
 
   # tolerations -- Configure Vector Pods to be scheduled on [tainted](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)
   # nodes.
-  tolerations: [ ]
+  tolerations:
+    - operator: Exists
 
   # affinity -- Configure [affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#affinity-and-anti-affinity)
   # rules for Vector Pods.
