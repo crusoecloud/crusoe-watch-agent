@@ -41,6 +41,8 @@ declare -A -r TELEMETRY_INGRESS_MAP=(
   ["prod"]="https://cms-monitoring.crusoecloud.com/ingest"
 )
 
+LOGS_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.com/logs/ingest"
+
 # CLI args parsing
 usage() {
   echo "Usage: $0 <command> [options]"
@@ -50,6 +52,7 @@ usage() {
   echo "  --env|-e ENVIRONMENT                      Specify environment: dev|staging|prod (default: prod)"
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
+  echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "Examples:"
   echo "  $0 install --branch main"
   echo "  $0 uninstall"
@@ -88,6 +91,13 @@ parse_args() {
       --env|-e)
         if [[ -n "$2" ]]; then
           ENVIRONMENT="$2"; shift 2
+        else
+          error_exit "Missing value for $1"
+        fi
+        ;;
+      --logs-endpoint)
+        if [[ -n "$2" ]]; then
+          LOGS_INGRESS_ENDPOINT="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -360,6 +370,7 @@ do_install() {
 VM_ID='${CRUSOE_VM_ID}'
 AMD_EXPORTER_PORT='${AMD_EXPORTER_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
+LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 AGENT_VERSION='${AGENT_VERSION}'
 EOF
   echo ".env file created at $ENV_FILE"
