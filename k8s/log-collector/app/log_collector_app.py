@@ -24,6 +24,7 @@ import gzip
 import shutil
 import json
 import shlex
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -251,6 +252,24 @@ class NvidiaLogCollector:
             LOG.error(f"Unexpected error during report: {e}")
             return False
 
+    def _check_host_nvidia_tools_available(self) -> bool:
+        """
+        Check if NVIDIA tools are accessible on the host filesystem.
+
+        This is used to detect GB200 nodes where the NVIDIA driver runs on the host
+        rather than in a kubernetes pod.
+
+        Returns:
+            True if nvidia-bug-report.sh is accessible on host, False otherwise
+        """
+        host_nvidia_bug_report = Path("/host/usr/bin/nvidia-bug-report.sh")
+        host_nvidia_smi = Path("/host/usr/bin/nvidia-smi")
+
+        available = host_nvidia_bug_report.exists() and host_nvidia_smi.exists()
+        if available:
+            LOG.info("Host-based NVIDIA tools detected - using direct host execution")
+        return available
+
     def find_nvidia_driver_pod(self) -> Optional[client.V1Pod]:
         """
         Find the NVIDIA GPU driver pod running on this node.
@@ -364,6 +383,66 @@ class NvidiaLogCollector:
             return None
         except Exception as e:
             LOG.error(f"Unexpected error during nvidia-bug-report execution: {e}")
+            return None
+
+    def execute_nvidia_bug_report_on_host(self, event_id: Optional[str] = None) -> Optional[Path]:
+        """
+        Execute nvidia-bug-report.sh directly on host filesystem.
+
+        This is used on GB200 nodes where the NVIDIA driver runs on the host
+        rather than in a kubernetes pod.
+
+        Args:
+            event_id: Optional event ID to include in filename
+
+        Returns:
+            Path to generated log file, or None on error
+        """
+        LOG.info("Executing nvidia-bug-report.sh on host (GB200 mode)")
+
+        try:
+            # Generate unique filename with timestamp and optional event_id
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if event_id:
+                log_filename_base = f"nvidia-bug-report-{self.node_name}-{event_id}-{timestamp}.log"
+            else:
+                log_filename_base = f"nvidia-bug-report-{self.node_name}-{timestamp}.log"
+
+            # Output directly to /logs (mounted from host /var/log/nvidia-bug-reports)
+            log_path_base = Path(self.log_output_dir) / log_filename_base
+            actual_log_path = Path(f"{log_path_base}.gz")
+
+            # Execute nvidia-bug-report.sh from host mount
+            # Environment already set via helm chart (PATH, LD_LIBRARY_PATH)
+            cmd = [
+                "/host/usr/bin/nvidia-bug-report.sh",
+                "--output-file",
+                str(log_path_base)
+            ]
+
+            LOG.info(f"Running command: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.collection_timeout
+            )
+
+            if result.returncode == 0 and actual_log_path.exists():
+                LOG.info(f"nvidia-bug-report.sh completed successfully: {actual_log_path}")
+                return actual_log_path
+            else:
+                LOG.error(f"nvidia-bug-report.sh failed with return code {result.returncode}")
+                LOG.error(f"stdout: {result.stdout}")
+                LOG.error(f"stderr: {result.stderr}")
+                return None
+
+        except subprocess.TimeoutExpired:
+            LOG.error(f"nvidia-bug-report.sh timed out after {self.collection_timeout}s")
+            return None
+        except Exception as e:
+            LOG.error(f"Error executing nvidia-bug-report.sh on host: {e}")
             return None
 
     def download_log_file(self, pod: client.V1Pod, remote_path: str) -> Optional[Path]:
@@ -643,38 +722,52 @@ class NvidiaLogCollector:
         Returns:
             Path to collected log file if successful, None otherwise
         """
-        LOG.info(f"Starting log collection cycle{f' for event {event_id}' if event_id else ''}")
+        LOG.info(f"Starting log collection cycle ({self.node_name}) {f' for event {event_id}' if event_id else ''}")
 
         # Clean up old logs to prevent disk space issues
         self.cleanup_old_logs()
 
         # Find the NVIDIA driver pod
         driver_pod = self.find_nvidia_driver_pod()
-        if not driver_pod:
-            LOG.error("Cannot collect logs: NVIDIA driver pod not found")
-            return None
 
-        # Execute nvidia-bug-report.sh
-        remote_log_path = self.execute_nvidia_bug_report(driver_pod, event_id)
-        if not remote_log_path:
-            LOG.error("Failed to generate nvidia-bug-report")
-            return None
+        local_log_path = None
 
-        # Download the log file
-        local_log_path = self.download_log_file(driver_pod, remote_log_path)
-        if not local_log_path:
-            LOG.error("Failed to download nvidia-bug-report")
-            return None
+        if driver_pod:
+            # Pod-based execution (existing path)
+            LOG.info("Using pod-based execution (nvidia-driver pod found)")
+            remote_log_path = self.execute_nvidia_bug_report(driver_pod, event_id)
+            if not remote_log_path:
+                LOG.error("Failed to execute nvidia-bug-report.sh in driver pod")
+                return None
 
-        # Cleanup remote log file
-        self.cleanup_remote_log(driver_pod, remote_log_path)
+            # Download the log file
+            local_log_path = self.download_log_file(driver_pod, remote_log_path)
+            if not local_log_path:
+                LOG.error("Failed to download nvidia-bug-report from driver pod")
+                return None
 
-        # Unzip the log file to /var/log/nvidia-bug-reports
-        unzipped_path = self.unzip_log_to_nvidia_reports(local_log_path)
-        if unzipped_path:
-            LOG.debug(f"Unzipped log saved to: {unzipped_path}")
+            # Clean up remote log file
+            self.cleanup_remote_log(driver_pod, remote_log_path)
+
+        elif self._check_host_nvidia_tools_available():
+            # Host-based execution (GB200 path)
+            LOG.info("Using host-based execution (no driver pod, GB200 detected)")
+            local_log_path = self.execute_nvidia_bug_report_on_host(event_id)
+
+            if not local_log_path:
+                LOG.error("Failed to execute nvidia-bug-report.sh on host")
+                return None
         else:
-            LOG.warning("Failed to unzip log file to nvidia-bug-reports directory")
+            LOG.error("Cannot collect logs: NVIDIA driver pod not found and host-based NVIDIA tools not available.")
+            return None
+
+        # Common post-processing: unzip log file
+        if local_log_path:
+            unzipped_path = self.unzip_log_to_nvidia_reports(local_log_path)
+            if unzipped_path:
+                LOG.debug(f"Unzipped log saved to: {unzipped_path}")
+            else:
+                LOG.warning("Failed to unzip log file to nvidia-bug-reports directory")
 
         LOG.info(f"Log collection completed successfully: {local_log_path}")
         return local_log_path

@@ -938,3 +938,17 @@ logCollector:
     capabilities:
       drop:
         - ALL
+
+  # Host paths to mount for direct NVIDIA tool access on GB200 nodes
+  # Each path is mounted at /host<path> - /dev is writable, all others read-only
+  hostMountPaths:
+    - /usr/bin
+    - /usr/sbin
+    - /usr/lib/aarch64-linux-gnu
+    - /usr/lib/x86_64-linux-gnu
+    - /dev
+
+  # Environment variables for host tool discovery
+  hostEnv:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/host/usr/bin:/host/usr/sbin"
+    LD_LIBRARY_PATH: "/host/usr/lib/aarch64-linux-gnu:/host/usr/lib/x86_64-linux-gnu"
