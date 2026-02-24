@@ -56,10 +56,6 @@ spec:
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
-        {{- range $key, $value := .Values.logCollector.hostEnv }}
-        - name: {{ $key }}
-          value: {{ $value | quote }}
-        {{- end }}
 
         envFrom:
         - secretRef:
@@ -69,11 +65,6 @@ spec:
         volumeMounts:
         {{- if .Values.logCollector.volumeMounts }}
           {{- toYaml .Values.logCollector.volumeMounts | nindent 8 }}
-        {{- end }}
-        {{- range .Values.logCollector.hostMountPaths }}
-        - name: host{{ . | replace "/" "-" | trimSuffix "-" }}
-          mountPath: /host{{ . }}
-          readOnly: {{ ne . "/dev" }}
         {{- end }}
 
         {{- if .Values.logCollector.resources }}
@@ -89,11 +80,5 @@ spec:
       volumes:
       {{- if .Values.logCollector.volumes }}
         {{- toYaml .Values.logCollector.volumes | nindent 6 }}
-      {{- end }}
-      {{- range .Values.logCollector.hostMountPaths }}
-      - name: host{{ . | replace "/" "-" | trimSuffix "-" }}
-        hostPath:
-          path: {{ . }}
-          type: Directory
       {{- end }}
 {{- end }}
