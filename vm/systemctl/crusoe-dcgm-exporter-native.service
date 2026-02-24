@@ -1,0 +1,17 @@
+[Unit]
+Description=NVIDIA DCGM Exporter for GPU metrics
+After=nvidia-dcgm.service
+Wants=nvidia-dcgm.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/crusoe/crusoe_watch_agent/.env
+ExecStart=/usr/bin/dcgm-exporter \
+    -f /etc/crusoe/crusoe_watch_agent/dcp-metrics-included.csv \
+    -r localhost:5555 \
+    -a :${DCGM_EXPORTER_PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
