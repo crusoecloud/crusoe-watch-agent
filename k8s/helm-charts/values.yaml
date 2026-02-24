@@ -934,7 +934,4 @@ logCollector:
   # and to access host paths for NVIDIA log collection
   securityContext:
     runAsUser: 0
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
+    privileged: true

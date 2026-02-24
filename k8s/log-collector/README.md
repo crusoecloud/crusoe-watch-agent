@@ -33,16 +33,8 @@ The collector automatically detects GB200 nodes via the `node.kubernetes.io/inst
 
 **Implementation:**
 - Base image: `nvcr.io/nvidia/cuda:12.8.0-base-ubuntu24.04` (forward compatible with driver 580.95.05)
-- Dockerfile installs `nvidia-utils` from NVIDIA CUDA repositories included in base image
-- Tries multiple versions in order: 580 (GB200 driver match), 550, 545, 535, or unversioned package
-- Container size: ~1.4-1.8 GB (vs ~200 MB without bundled tools)
-- Only requires `/dev` volume mount for GPU device access
+- Dockerfile installs `nvidia-utils` (550) from NVIDIA CUDA repositories included in base image
 - RBAC: Added `nodes.get` permission to read instance-type labels
-
-**Backwards Compatible:**
-- Same Helm deployment for all GPU types
-- Zero changes required for A100/L40S/H100 nodes
-- Falls back to GPU Operator mode if instance-type label missing
 
 ## Execution Modes
 
