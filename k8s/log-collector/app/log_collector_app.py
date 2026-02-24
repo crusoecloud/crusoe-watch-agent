@@ -630,48 +630,6 @@ class NvidiaLogCollector:
             LOG.warning(f"Error cleaning up remote log file (non-critical): {e}")
             return False
 
-    def unzip_log_to_nvidia_reports(self, log_gz_path: Path) -> Optional[Path]:
-        """
-        Unzip .log.gz file to the same directory with .log extension.
-
-        Args:
-            log_gz_path: Path to the .log.gz file
-
-        Returns:
-            Path to the unzipped .log file, or None on error
-        """
-        try:
-            # Use the same directory as the compressed file
-            target_dir = log_gz_path.parent
-
-            # Generate output filename (remove .gz extension)
-            if log_gz_path.name.endswith('.log.gz'):
-                output_filename = log_gz_path.name[:-3]  # Remove .gz
-            else:
-                LOG.warning(f"File {log_gz_path.name} doesn't end with .log.gz")
-                output_filename = log_gz_path.name + '.log'
-
-            output_path = target_dir / output_filename
-
-            LOG.info(f"Unzipping {log_gz_path} to {output_path}")
-
-            # Unzip the file
-            with gzip.open(log_gz_path, 'rb') as f_in:
-                with open(output_path, 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-
-            # Set permissions to allow Vector (non-root) to read and delete the file
-            # 0o666 = rw-rw-rw- (readable and writable by all)
-            output_path.chmod(0o666)
-
-            file_size = output_path.stat().st_size
-            LOG.info(f"Successfully unzipped log to {output_path} ({file_size / (1024*1024):.2f} MB)")
-            return output_path
-
-        except Exception as e:
-            LOG.error(f"Failed to unzip log file {log_gz_path}: {e}")
-            return None
-
     def _cleanup_logs_by_pattern(self, pattern: str, log_type: str) -> None:
         """
         Helper method to clean up log files matching a pattern.
@@ -764,14 +722,6 @@ class NvidiaLogCollector:
 
             # Clean up remote log file
             self.cleanup_remote_log(driver_pod, remote_log_path)
-
-        # Common post-processing: unzip for Vector consumption
-        if local_log_path:
-            unzipped_path = self.unzip_log_to_nvidia_reports(local_log_path)
-            if unzipped_path:
-                LOG.debug(f"Unzipped log saved to: {unzipped_path}")
-            else:
-                LOG.warning("Failed to unzip log file to nvidia-bug-reports directory")
 
         LOG.info(f"Log collection completed successfully: {local_log_path}")
         return local_log_path
