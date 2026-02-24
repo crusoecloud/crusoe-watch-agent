@@ -465,6 +465,9 @@ do_install() {
       stop_and_disable_service "$EXISTING_DCGM_EXPORTER_SERVICE"
     fi
 
+    # Unmask the DCGM exporter service if it was previously masked
+    systemctl unmask "$DCGM_EXPORTER_SERVICE_NAME" 2>/dev/null || true
+
     # Download DCGM Exporter artifacts if service does not exist or replace flag is set
     if ! service_exists "$DCGM_EXPORTER_SERVICE_NAME" || $REPLACE_DCGM_EXPORTER; then
       if [[ "$INSTALL_MODE" == "docker" ]]; then
