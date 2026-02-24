@@ -32,8 +32,9 @@ The collector automatically detects GB200 nodes via the `node.kubernetes.io/inst
 - Other GPUs: Execute via `kubectl exec` into GPU Operator driver pod (existing behavior)
 
 **Implementation:**
+- Base image: `nvcr.io/nvidia/cuda:12.8.0-base-ubuntu24.04` (forward compatible with driver 580.95.05)
 - Dockerfile installs `nvidia-utils` from NVIDIA CUDA repositories included in base image
-- Tries multiple versions in order: 550, 545, 535, or unversioned package
+- Tries multiple versions in order: 580 (GB200 driver match), 550, 545, 535, or unversioned package
 - Container size: ~1.4-1.8 GB (vs ~200 MB without bundled tools)
 - Only requires `/dev` volume mount for GPU device access
 - RBAC: Added `nodes.get` permission to read instance-type labels

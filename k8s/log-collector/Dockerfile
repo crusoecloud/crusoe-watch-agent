@@ -18,10 +18,12 @@ RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
     ca-certificates \
+    acpica-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install nvidia-utils from NVIDIA repository
 # This provides nvidia-bug-report.sh, nvidia-smi, and nvidia-debugdump
+# Try to match GB200 driver version (580.95.05) first, then fall back
 RUN apt-get update \
     && echo "Searching for available nvidia-utils packages:" \
     && apt-cache search nvidia-utils \
