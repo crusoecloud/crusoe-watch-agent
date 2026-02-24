@@ -272,6 +272,23 @@ uninstall_native() {
   fi
 }
 
+setup_nvidia_cuda_repo() {
+  status "Setting up NVIDIA CUDA apt repository."
+
+  local UBUNTU_VERSION
+  UBUNTU_VERSION=$(echo "$UBUNTU_OS_VERSION" | sed 's/\.//')
+
+  local KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VERSION}/x86_64/cuda-keyring_1.1-1_all.deb"
+  local KEYRING_DEB="/tmp/cuda-keyring.deb"
+
+  wget -q -O "$KEYRING_DEB" "$KEYRING_URL" || error_exit "Failed to download cuda-keyring from $KEYRING_URL"
+  dpkg -i "$KEYRING_DEB" || error_exit "Failed to install cuda-keyring."
+  rm -f "$KEYRING_DEB"
+
+  apt-get update || error_exit "Failed to update package lists after adding NVIDIA repo."
+  status "NVIDIA CUDA apt repository configured."
+}
+
 install_dcgm() {
   status "Installing DCGM (Data Center GPU Manager)."
 
@@ -280,14 +297,20 @@ install_dcgm() {
   fi
 
   local CUDA_VERSION
-  CUDA_VERSION=$(nvidia-smi -q | sed -E -n 's/CUDA Version[ :]+([0-9]+)[.].*/\1/p')
+  CUDA_VERSION=$(nvidia-smi | sed -E -n 's/.*CUDA Version: ([0-9]+)\..*/\1/p')
 
   if [[ -z "$CUDA_VERSION" ]]; then
     error_exit "Could not determine CUDA version. DCGM installation aborted."
   fi
   echo "Found CUDA Version: $CUDA_VERSION"
 
-  apt-get update || error_exit "Failed to update package lists."
+  # Remove any previous DCGM installations to avoid conflicts
+  dpkg --list datacenter-gpu-manager &> /dev/null && apt purge --yes datacenter-gpu-manager
+  dpkg --list datacenter-gpu-manager-config &> /dev/null && apt purge --yes datacenter-gpu-manager-config
+
+  # Ensure the NVIDIA CUDA apt repository is configured
+  setup_nvidia_cuda_repo
+
   apt-get install --yes --install-recommends "datacenter-gpu-manager-4-cuda${CUDA_VERSION}" || error_exit "Failed to install datacenter-gpu-manager-4-cuda${CUDA_VERSION}."
 
   systemctl --now enable nvidia-dcgm || error_exit "Failed to enable and start nvidia-dcgm service."
