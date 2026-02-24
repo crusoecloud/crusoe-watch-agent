@@ -723,7 +723,7 @@ class NvidiaLogCollector:
             # Clean up remote log file
             self.cleanup_remote_log(driver_pod, remote_log_path)
 
-        LOG.info(f"Log collection completed successfully: {local_log_path}")
+        LOG.info(f"Log collection completed successfully: {local_log_path} ({local_log_path.stat().st_size / (1024*1024):.2f} MB)")
         return local_log_path
 
     def collect_logs_with_timeout(self, event_id: str) -> tuple[bool, Optional[Path], str]:

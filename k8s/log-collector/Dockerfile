@@ -1,12 +1,23 @@
+# --- Build stage: install Python dependencies ---
+FROM nvcr.io/nvidia/cuda:12.8.0-base-ubuntu24.04 AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
+
+# --- Runtime stage ---
 FROM nvcr.io/nvidia/cuda:12.8.0-base-ubuntu24.04
 
 WORKDIR /app
 
-# Install Python and system dependencies
-RUN apt-get update && apt-get install -y \
+# Install Python, system tools needed by nvidia-bug-report.sh, and nvidia-utils
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    python3-pip \
-    python3-venv \
     pciutils \
     usbutils \
     dmidecode \
@@ -15,18 +26,8 @@ RUN apt-get update && apt-get install -y \
     procps \
     iproute2 \
     gzip \
-    wget \
-    gnupg \
     ca-certificates \
     acpica-tools \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install nvidia-utils from NVIDIA repository
-# This provides nvidia-bug-report.sh, nvidia-smi, and nvidia-debugdump
-# Try to match GB200 driver version (580.95.05) first, then fall back
-RUN apt-get update \
-    && echo "Searching for available nvidia-utils packages:" \
-    && apt-cache search nvidia-utils \
     && echo "Installing nvidia-utils..." \
     && (apt-get install -y --no-install-recommends nvidia-utils-550 || \
         apt-get install -y --no-install-recommends nvidia-utils-545 || \
@@ -34,9 +35,9 @@ RUN apt-get update \
         apt-get install -y --no-install-recommends nvidia-utils) \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
+# Copy installed Python packages from builder
+COPY --from=builder /usr/lib/python3 /usr/lib/python3
+COPY --from=builder /usr/local/lib/python3.12/dist-packages /usr/local/lib/python3.12/dist-packages
 
 # Copy application code
 COPY app/ .
