@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         apt-get install -y --no-install-recommends nvidia-utils-545 || \
         apt-get install -y --no-install-recommends nvidia-utils-535 || \
         apt-get install -y --no-install-recommends nvidia-utils) \
+    && dpkg --force-depends -r libnvidia-compute-550 cuda-compat-12-8 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python packages from builder
