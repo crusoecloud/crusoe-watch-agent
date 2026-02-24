@@ -272,6 +272,29 @@ uninstall_native() {
   fi
 }
 
+install_dcgm() {
+  status "Installing DCGM (Data Center GPU Manager)."
+
+  if ! command_exists nvidia-smi; then
+    error_exit "nvidia-smi not found. Cannot determine CUDA version for DCGM installation."
+  fi
+
+  local CUDA_VERSION
+  CUDA_VERSION=$(nvidia-smi -q | sed -E -n 's/CUDA Version[ :]+([0-9]+)[.].*/\1/p')
+
+  if [[ -z "$CUDA_VERSION" ]]; then
+    error_exit "Could not determine CUDA version. DCGM installation aborted."
+  fi
+  echo "Found CUDA Version: $CUDA_VERSION"
+
+  apt-get update || error_exit "Failed to update package lists."
+  apt-get install --yes --install-recommends "datacenter-gpu-manager-4-cuda${CUDA_VERSION}" || error_exit "Failed to install datacenter-gpu-manager-4-cuda${CUDA_VERSION}."
+
+  systemctl --now enable nvidia-dcgm || error_exit "Failed to enable and start nvidia-dcgm service."
+
+  status "DCGM installed and started successfully."
+}
+
 # --- Token & Version/Lifecycle Helpers ---
 
 write_token_to_secrets() {
@@ -359,20 +382,26 @@ do_install() {
   fi
 
   if $HAS_NVIDIA_GPUS; then
-    status "Ensure NVIDIA dependencies exist."
-    if command_exists dcgmi && command_exists nvidia-ctk; then
-      echo "Required NVIDIA dependencies are already installed."
-      # Check and upgrade DCGM here
-      upgrade_dcgm
-    else
-      error_exit "Please make sure NVIDIA dependencies (dcgm & nvidia-ctk) are installed and try again."
-    fi
-
     if [[ "$INSTALL_MODE" == "docker" ]]; then
+      # Docker mode: require both dcgmi and nvidia-ctk pre-installed
+      status "Ensure NVIDIA dependencies exist."
+      if command_exists dcgmi && command_exists nvidia-ctk; then
+        echo "Required NVIDIA dependencies are already installed."
+        upgrade_dcgm
+      else
+        error_exit "Please make sure NVIDIA dependencies (dcgm & nvidia-ctk) are installed and try again."
+      fi
       # OS version check only applies to Docker mode (selects image tag)
       check_os_support
     else
-      # Native mode: build dcgm-exporter from source
+      # Native mode: install DCGM if missing, nvidia-ctk not needed
+      if command_exists dcgmi; then
+        echo "DCGM is already installed."
+        upgrade_dcgm
+      else
+        install_dcgm
+      fi
+      # Build dcgm-exporter from source
       install_dcgm_exporter_native
     fi
 
