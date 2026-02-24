@@ -36,8 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && dpkg --force-depends -r libnvidia-compute-550 cuda-compat-12-8 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed Python packages from builder
-COPY --from=builder /usr/lib/python3 /usr/lib/python3
+# Copy pip-installed packages from builder
 COPY --from=builder /usr/local/lib/python3.12/dist-packages /usr/local/lib/python3.12/dist-packages
 
 # Copy application code

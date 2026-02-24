@@ -412,6 +412,10 @@ class NvidiaLogCollector:
         """
         LOG.info("Executing nvidia-bug-report.sh locally (bundled driver mode)")
 
+        if not Path("/usr/bin/nvidia-bug-report.sh").exists():
+            LOG.error("nvidia-bug-report.sh not found at /usr/bin/nvidia-bug-report.sh")
+            return None
+
         try:
             # Generate unique filename with timestamp and optional event_id
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
