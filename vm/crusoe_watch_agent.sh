@@ -286,6 +286,13 @@ uninstall_native() {
   if command_exists dcgm-exporter; then
     rm -f /usr/bin/dcgm-exporter || true
   fi
+  # Remove DCGM if it was installed by this script
+  if dpkg --list datacenter-gpu-manager-4 &> /dev/null; then
+    status "Removing DCGM (datacenter-gpu-manager-4)."
+    systemctl stop nvidia-dcgm || true
+    systemctl disable nvidia-dcgm || true
+    apt-get remove -y 'datacenter-gpu-manager-4*' || true
+  fi
 }
 
 setup_nvidia_cuda_repo() {
