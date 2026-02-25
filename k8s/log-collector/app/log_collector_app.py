@@ -48,6 +48,7 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://cms-monitoring.crusoeclou
 API_POLL_INTERVAL = int(os.environ.get("API_POLL_INTERVAL", "60"))  # Poll every 60 seconds
 API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
 COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))  # 5 minutes timeout
+FORCE_FAILURE = os.environ.get("FORCE_FAILURE", "false").lower() == "true"
 CRUSOE_MONITORING_TOKEN = os.environ.get("CRUSOE_MONITORING_TOKEN")  # Auth token for API calls
 
 class JSONFormatter(logging.Formatter):
@@ -643,6 +644,10 @@ class NvidiaLogCollector:
         Returns:
             Path to collected log file if successful, None otherwise
         """
+        if FORCE_FAILURE:
+            LOG.warning("FORCE_FAILURE is enabled, returning failure")
+            return None
+
         LOG.info(f"Starting log collection cycle{f' for event {event_id}' if event_id else ''}")
 
         # Clean up old logs to prevent disk space issues
