@@ -29,10 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     acpica-tools \
     && echo "Installing nvidia-utils..." \
-    && (apt-get install -y --no-install-recommends nvidia-utils-550 || \
-        apt-get install -y --no-install-recommends nvidia-utils-545 || \
-        apt-get install -y --no-install-recommends nvidia-utils-535 || \
-        apt-get install -y --no-install-recommends nvidia-utils) \
+    && apt-get install -y --no-install-recommends nvidia-utils-550 \
     && dpkg --force-depends -r libnvidia-compute-550 cuda-compat-12-8 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
 

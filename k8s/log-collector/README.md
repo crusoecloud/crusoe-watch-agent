@@ -26,8 +26,6 @@ This application runs as a separate DaemonSet (`crusoe-log-collector`) in your K
 ## GB200 Support
 
 The collector automatically detects GB200 nodes via the `node.kubernetes.io/instance-type` label and uses bundled NVIDIA tools instead of GPU Operator driver pods.
-
-**Detection:**
 - GB200 nodes: Execute `/usr/bin/nvidia-bug-report.sh` locally (bundled in container)
 - Other GPUs: Execute via `kubectl exec` into GPU Operator driver pod (existing behavior)
 
