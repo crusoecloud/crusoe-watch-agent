@@ -254,21 +254,21 @@ install_dcgm_exporter_native() {
     apt-get update && apt-get install -y build-essential || error_exit "Failed to install build-essential."
   fi
 
-  # Ensure Go >= 1.24 is installed (Ubuntu apt packages are too old)
+  # Ensure Go >= 1.26 is installed (Ubuntu apt packages are too old)
   local NEED_GO=false
   if ! command_exists go; then
     NEED_GO=true
   else
     local GO_VER
     GO_VER=$(go version | sed -E 's/.*go([0-9]+\.[0-9]+).*/\1/')
-    if awk "BEGIN{exit !($GO_VER < 1.24)}"; then
+    if awk "BEGIN{exit !($GO_VER < 1.26)}"; then
       echo "Installed Go version ($GO_VER) is too old. Upgrading."
       NEED_GO=true
     fi
   fi
   if $NEED_GO; then
-    status "Installing Go 1.24 from official tarball."
-    local GO_TAR="go1.24.0.linux-amd64.tar.gz"
+    status "Installing Go 1.26 from official tarball."
+    local GO_TAR="go1.26.0.linux-amd64.tar.gz"
     wget -q -O "/tmp/$GO_TAR" "https://go.dev/dl/$GO_TAR" || error_exit "Failed to download Go."
     rm -rf /usr/local/go
     tar -C /usr/local -xzf "/tmp/$GO_TAR" || error_exit "Failed to extract Go."
