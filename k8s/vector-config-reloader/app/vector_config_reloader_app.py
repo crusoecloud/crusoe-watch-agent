@@ -12,7 +12,6 @@ DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
 DCGM_EXPORTER_APP_LABEL = "nvidia-dcgm-exporter"
 
 # Log sources and pipeline constants
-DMESG_LOGS_SOURCE_NAME = "dmesg_logs"
 CRUSOE_INGEST_SINK_NAME = "crusoe_ingest"
 ENRICH_LOGS_TRANSFORM_NAME = "enrich_logs"
 FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME = "filter_crusoe_log_collector_logs"
@@ -223,6 +222,17 @@ if .source_type == "journald" {
     } else {
         .level = "undefined"
     }
+
+    parsed, err = parse_key_value(string!(.message))
+    if err == null {
+        .log = parsed
+        if exists(parsed.msg) {
+            ._msg = string!(parsed.msg)
+            del(.message)
+        } else {
+            ._msg = del(.message)
+        }
+    }
 } else if .source_type == "file" {
     .log_source = "generic_file"
 }
@@ -234,8 +244,10 @@ if exists(.__REALTIME_TIMESTAMP) {
     ._time = .timestamp
 }
 
-if exists(.message) {
-    ._msg = del(.message)
+if !exists(._msg) {
+    if exists(.message) {
+        ._msg = del(.message)
+    }
 }
 
 # Normalize level to lowercase
@@ -245,7 +257,6 @@ if exists(.level) {
   .level = "undefined"
 }
 ''')
-
 
     @staticmethod
     def sanitize_name(name: str) -> str:
@@ -459,7 +470,7 @@ if exists(.level) {
             sink_config["proxy"] = self.sink_proxy_cfg
         sinks[CRUSOE_INGEST_SINK_NAME] = sink_config
 
-        LOG.info("Logs config set for journald and dmesg sources")
+        LOG.info("Logs config set for journald and kubernetes log sources")
 
     def remove_kube_state_metrics_scrape_config(self, vector_cfg: dict):
         vector_cfg.get("sources", {}).pop(KUBE_STATE_METRICS_SOURCE_NAME, None)
