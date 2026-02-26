@@ -179,7 +179,7 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
         }
 
         self.filter_log_collector_logs_transform_source = LiteralStr('''
-(.kubernetes.pod_namespace == "crusoe-system" && starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector")) || starts_with(string!(.kubernetes.pod_name), "test-log-collector")
+.kubernetes.pod_namespace == "crusoe-system" && starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector")
 ''')
 
         self.enrich_logs_transform_source = LiteralStr('''
@@ -187,7 +187,7 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .host = get_hostname!()
 .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
 
-if .kubernetes.pod_labels.app == "crusoe-log-collector" || .kubernetes.pod_labels.app == "test-log-collector" { 
+if .kubernetes.pod_labels.app == "crusoe-log-collector" { 
     .log_source = "crusoe-log-collector"
 
     # Parse JSON log format (efficient, no regex needed)
