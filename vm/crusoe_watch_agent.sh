@@ -10,6 +10,9 @@ GITHUB_BRANCH="main"
 # Crusoe environment (optional override via CLI, defaults to main)
 ENVIRONMENT="prod"
 
+# Installation mode: "docker" (default) or "native" (--no-docker)
+INSTALL_MODE="docker"
+
 # Define paths for config files within the GitHub repository (vm subdir)
 REMOTE_VECTOR_CONFIG_GPU_VM="vm/config/vector_gpu_vm.yaml"
 REMOTE_VECTOR_CONFIG_CPU_VM="vm/config/vector_cpu_vm.yaml"
@@ -19,6 +22,8 @@ REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER="vm/docker/docker-compose-dcgm-exporter.yaml
 REMOTE_DOCKER_COMPOSE_VECTOR="vm/docker/docker-compose-vector.yaml"
 REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE="vm/systemctl/crusoe-dcgm-exporter.service"
+REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE="vm/systemctl/crusoe-watch-agent-native.service"
+REMOTE_CRUSOE_DCGM_EXPORTER_NATIVE_SERVICE="vm/systemctl/crusoe-dcgm-exporter-native.service"
 SYSTEMCTL_DIR="/etc/systemd/system"
 CRUSOE_WATCH_AGENT_DIR="/etc/crusoe/crusoe_watch_agent"
 CRUSOE_AUTH_TOKEN_LENGTH=82
@@ -37,6 +42,7 @@ EXISTING_DCGM_EXPORTER_SERVICE="dcgm-exporter"
 # Versioning and upgrade helpers (use vm/VERSION)
 REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
+INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
 
 # dcgm-exporter docker image version map
 declare -A -r DCGM_EXPORTER_VERSION_MAP=(
@@ -59,14 +65,16 @@ usage() {
   echo "Usage: $0 <command> [options]"
   echo "Commands: install | uninstall | refresh-token | upgrade | help"
   echo "Options:"
+  echo "  --no-docker                               Install using native binaries instead of Docker (default: Docker)"
   echo "  --dcgm-exporter-service-name NAME         Specify custom DCGM exporter service name"
   echo "  --dcgm-exporter-service-port PORT         Specify custom DCGM exporter port"
   echo "  --replace-dcgm-exporter [SERVICE_NAME]    Replace pre-installed dcgm-exporter systemd service with Crusoe version for full metrics collection."
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "                                            Optional SERVICE_NAME defaults to dcgm-exporter"
-  echo "Defaults: NAME=crusoe-dcgm-exporter, PORT=9400"
+  echo "Defaults: NAME=crusoe-dcgm-exporter, PORT=9400, MODE=docker"
   echo "Examples:"
   echo "  $0 install --branch main"
+  echo "  $0 install --no-docker"
   echo "  $0 install --replace-dcgm-exporter"
   echo "  $0 install --replace-dcgm-exporter my-dcgm-exporter"
   echo "  $0 uninstall"
@@ -111,6 +119,8 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
+      --no-docker)
+        INSTALL_MODE="native"; shift ;;
       --logs-endpoint)
         if [[ -n "$2" ]]; then
           LOGS_INGRESS_ENDPOINT="$2"; shift 2
@@ -195,14 +205,160 @@ check_root() {
   fi
 }
 
+# --- Install Mode Persistence ---
+
+write_install_mode() {
+  echo "$INSTALL_MODE" > "$INSTALL_MODE_FILE"
+}
+
+read_install_mode() {
+  if [[ -f "$INSTALL_MODE_FILE" ]]; then
+    INSTALL_MODE=$(cat "$INSTALL_MODE_FILE")
+  else
+    echo "Warning: No install mode file found at $INSTALL_MODE_FILE. Defaulting to '$INSTALL_MODE'."
+  fi
+}
+
+# --- Native Installation Functions ---
+
+install_vector_native() {
+  if command_exists vector; then
+    echo "Vector is already installed."
+  else
+    status "Installing Vector via APT."
+    bash -c "$(curl -L https://setup.vector.dev)" || error_exit "Failed to add Vector APT repository."
+    apt-get install -y vector || error_exit "Failed to install Vector."
+  fi
+  # Disable the default vector.service; we use our own custom unit
+  systemctl disable vector.service 2>/dev/null || true
+  systemctl stop vector.service 2>/dev/null || true
+}
+
+install_dcgm_exporter_native() {
+  if command_exists dcgm-exporter; then
+    echo "dcgm-exporter is already installed."
+    return
+  fi
+
+  status "Building dcgm-exporter from source."
+  local BUILD_DIR
+  BUILD_DIR=$(mktemp -d)
+
+  # Ensure Git is installed
+  if ! command_exists git; then
+    apt-get update && apt-get install -y git || error_exit "Failed to install git."
+  fi
+
+  # Ensure build tools are installed (make + gcc for CGo)
+  if ! command_exists make || ! command_exists gcc; then
+    apt-get update && apt-get install -y build-essential || error_exit "Failed to install build-essential."
+  fi
+
+  # Ensure Go >= 1.26 is installed (Ubuntu apt packages are too old)
+  local NEED_GO=false
+  if ! command_exists go; then
+    NEED_GO=true
+  else
+    local GO_VER
+    GO_VER=$(go version | sed -E 's/.*go([0-9]+\.[0-9]+).*/\1/')
+    if awk "BEGIN{exit !($GO_VER < 1.26)}"; then
+      echo "Installed Go version ($GO_VER) is too old. Upgrading."
+      NEED_GO=true
+    fi
+  fi
+  if $NEED_GO; then
+    status "Installing Go 1.26 from official tarball."
+    local GO_TAR="go1.26.0.linux-amd64.tar.gz"
+    wget -q -O "/tmp/$GO_TAR" "https://go.dev/dl/$GO_TAR" || error_exit "Failed to download Go."
+    rm -rf /usr/local/go
+    tar -C /usr/local -xzf "/tmp/$GO_TAR" || error_exit "Failed to extract Go."
+    rm -f "/tmp/$GO_TAR"
+    export PATH="/usr/local/go/bin:$PATH"
+  fi
+
+  git clone https://github.com/NVIDIA/dcgm-exporter.git "$BUILD_DIR" || error_exit "Failed to clone dcgm-exporter."
+  make -C "$BUILD_DIR" binary || error_exit "Failed to build dcgm-exporter."
+  make -C "$BUILD_DIR" install || error_exit "Failed to install dcgm-exporter."
+  rm -rf "$BUILD_DIR"
+  status "dcgm-exporter installed successfully."
+}
+
+uninstall_native() {
+  status "Removing native packages."
+  if command_exists vector; then
+    apt-get remove -y vector || true
+  fi
+  if command_exists dcgm-exporter; then
+    rm -f /usr/bin/dcgm-exporter || true
+  fi
+  # Remove DCGM if it was installed by this script
+  if dpkg -l 'datacenter-gpu-manager-4-cuda*' 2>/dev/null | grep -q '^ii'; then
+    status "Removing DCGM (datacenter-gpu-manager-4)."
+    systemctl stop nvidia-dcgm || true
+    systemctl disable nvidia-dcgm || true
+    apt-get remove -y 'datacenter-gpu-manager-4-cuda*' || true
+  fi
+}
+
+setup_nvidia_cuda_repo() {
+  status "Setting up NVIDIA CUDA apt repository."
+
+  local UBUNTU_VERSION
+  UBUNTU_VERSION=$(echo "$UBUNTU_OS_VERSION" | sed 's/\.//')
+
+  local KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VERSION}/x86_64/cuda-keyring_1.1-1_all.deb"
+  local KEYRING_DEB="/tmp/cuda-keyring.deb"
+
+  wget -q -O "$KEYRING_DEB" "$KEYRING_URL" || error_exit "Failed to download cuda-keyring from $KEYRING_URL"
+  dpkg -i "$KEYRING_DEB" || error_exit "Failed to install cuda-keyring."
+  rm -f "$KEYRING_DEB"
+
+  apt-get update || error_exit "Failed to update package lists after adding NVIDIA repo."
+  status "NVIDIA CUDA apt repository configured."
+}
+
+install_dcgm() {
+  status "Installing DCGM (Data Center GPU Manager)."
+
+  if ! command_exists nvidia-smi; then
+    error_exit "nvidia-smi not found. Cannot determine CUDA version for DCGM installation."
+  fi
+
+  local CUDA_VERSION
+  CUDA_VERSION=$(nvidia-smi | sed -E -n 's/.*CUDA Version: ([0-9]+)\..*/\1/p')
+
+  if [[ -z "$CUDA_VERSION" ]]; then
+    error_exit "Could not determine CUDA version. DCGM installation aborted."
+  fi
+  echo "Found CUDA Version: $CUDA_VERSION"
+
+  # Remove any previous DCGM installations to avoid conflicts
+  dpkg --list datacenter-gpu-manager &> /dev/null && apt purge --yes datacenter-gpu-manager
+  dpkg --list datacenter-gpu-manager-config &> /dev/null && apt purge --yes datacenter-gpu-manager-config
+
+  # Ensure the NVIDIA CUDA apt repository is configured
+  setup_nvidia_cuda_repo
+
+  apt-get install --yes --install-recommends "datacenter-gpu-manager-4-cuda${CUDA_VERSION}" || error_exit "Failed to install datacenter-gpu-manager-4-cuda${CUDA_VERSION}."
+
+  systemctl --now enable nvidia-dcgm || error_exit "Failed to enable and start nvidia-dcgm service."
+
+  status "DCGM installed and started successfully."
+}
+
 # --- Token & Version/Lifecycle Helpers ---
 
 write_token_to_secrets() {
   local token="$1"
   mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  # Escape dollar signs to prevent variable expansion in docker-compose/vector
-  local escaped_token="${token//\$/\$\$}"
-  echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
+  if [[ "$INSTALL_MODE" == "docker" ]]; then
+    # Escape dollar signs to prevent variable expansion in docker-compose
+    local escaped_token="${token//\$/\$\$}"
+    echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
+  else
+    # Native mode: systemd EnvironmentFile reads raw values
+    echo "CRUSOE_AUTH_TOKEN=${token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
+  fi
   chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
 }
 
@@ -245,12 +401,18 @@ do_install() {
   # Ensure the script is run as root.
   check_root
 
-  status "Ensure docker installation."
-  if command_exists docker; then
-    echo "Docker is already installed."
+  # Install runtime dependencies based on mode
+  if [[ "$INSTALL_MODE" == "docker" ]]; then
+    status "Ensure docker installation."
+    if command_exists docker; then
+      echo "Docker is already installed."
+    else
+      echo "Installing Docker."
+      install_docker
+    fi
   else
-    echo "Installing Docker."
-    install_docker
+    status "Installing Vector natively via APT."
+    install_vector_native
   fi
 
   # Ensure wget is installed
@@ -268,19 +430,34 @@ do_install() {
   local HAS_NVIDIA_GPUS=false
   if command_exists nvidia-smi && nvidia-smi -L >/dev/null 2>&1; then
     HAS_NVIDIA_GPUS=true
+  elif lspci 2>/dev/null | grep -qi 'NVIDIA'; then
+    # GPU hardware detected but nvidia-smi not available — drivers not installed
+    error_exit "NVIDIA GPU detected but GPU drivers are not installed. Please install NVIDIA drivers and try again."
   fi
 
   if $HAS_NVIDIA_GPUS; then
-    status "Ensure NVIDIA dependencies exist."
-    if command_exists dcgmi && command_exists nvidia-ctk; then
-      echo "Required NVIDIA dependencies are already installed."
-      # Check and upgrade DCGM here
-      upgrade_dcgm
+    if [[ "$INSTALL_MODE" == "docker" ]]; then
+      # Docker mode: require both dcgmi and nvidia-ctk pre-installed
+      status "Ensure NVIDIA dependencies exist."
+      if command_exists dcgmi && command_exists nvidia-ctk; then
+        echo "Required NVIDIA dependencies are already installed."
+        upgrade_dcgm
+      else
+        error_exit "Please make sure NVIDIA dependencies (dcgm & nvidia-ctk) are installed and try again."
+      fi
+      # OS version check only applies to Docker mode (selects image tag)
+      check_os_support
     else
-      error_exit "Please make sure NVIDIA dependencies (dcgm & nvidia-ctk) are installed and try again."
+      # Native mode: install DCGM if missing, nvidia-ctk not needed
+      if command_exists dcgmi; then
+        echo "DCGM is already installed."
+        upgrade_dcgm
+      else
+        install_dcgm
+      fi
+      # Build dcgm-exporter from source
+      install_dcgm_exporter_native
     fi
-
-    check_os_support
 
     status "Checking NVLink status."
     local METRICS_CONFIG_URL="$GITHUB_RAW_BASE_URL/$REMOTE_DCGM_EXPORTER_METRICS_CONFIG"  # default to standard config
@@ -303,21 +480,32 @@ do_install() {
       stop_and_disable_service "$EXISTING_DCGM_EXPORTER_SERVICE"
     fi
 
+    # Unmask the DCGM exporter service if it was previously masked
+    systemctl unmask "$DCGM_EXPORTER_SERVICE_NAME" 2>/dev/null || true
+
     # Download DCGM Exporter artifacts if service does not exist or replace flag is set
     if ! service_exists "$DCGM_EXPORTER_SERVICE_NAME" || $REPLACE_DCGM_EXPORTER; then
-      status "Download DCGM Exporter docker-compose file."
-      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-dcgm-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER"
+      if [[ "$INSTALL_MODE" == "docker" ]]; then
+        status "Download DCGM Exporter docker-compose file."
+        wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-dcgm-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER"
 
-      status "Download $DCGM_EXPORTER_SERVICE_NAME systemd unit."
-      wget -q -O "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE"
+        status "Download $DCGM_EXPORTER_SERVICE_NAME systemd unit."
+        wget -q -O "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE"
+      else
+        status "Download $DCGM_EXPORTER_SERVICE_NAME native systemd unit."
+        wget -q -O "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_DCGM_EXPORTER_NATIVE_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_DCGM_EXPORTER_NATIVE_SERVICE"
+      fi
     fi
   else
      status "Copy CPU Vector config."
      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CPU_VM"
   fi
 
-  status "Download Vector docker-compose file."
-  wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
+  # Download Vector docker-compose file (Docker mode only)
+  if [[ "$INSTALL_MODE" == "docker" ]]; then
+    status "Download Vector docker-compose file."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
+  fi
 
   status "Ensuring Crusoe auth token in secrets."
   if [[ -n "$CRUSOE_AUTH_TOKEN" ]] && validate_token "$CRUSOE_AUTH_TOKEN"; then
@@ -348,7 +536,8 @@ do_install() {
 
   # Create .env file
   status "Creating .env file with VM_ID and DCGM_EXPORTER_PORT."
-  cat <<EOF > "$ENV_FILE"
+  if [[ "$INSTALL_MODE" == "docker" ]]; then
+    cat <<EOF > "$ENV_FILE"
 VM_ID='${CRUSOE_VM_ID}'
 DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
 DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'
@@ -356,6 +545,15 @@ TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 AGENT_VERSION='${AGENT_VERSION}'
 EOF
+  else
+    cat <<EOF > "$ENV_FILE"
+VM_ID='${CRUSOE_VM_ID}'
+DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
+TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
+LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
+AGENT_VERSION='${AGENT_VERSION}'
+EOF
+  fi
   echo ".env file created at $ENV_FILE"
 
   # Start DCGM exporter after .env is ready
@@ -369,8 +567,14 @@ EOF
     systemctl start "$DCGM_EXPORTER_SERVICE_NAME"
   fi
 
-  status "Download crusoe-watch-agent.service."
-  wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_SERVICE"
+  # Download the appropriate crusoe-watch-agent systemd unit
+  if [[ "$INSTALL_MODE" == "docker" ]]; then
+    status "Download crusoe-watch-agent.service."
+    wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_SERVICE"
+  else
+    status "Download crusoe-watch-agent.service (native)."
+    wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE"
+  fi
 
   status "Enable and start systemd services for crusoe-watch-agent."
   echo "systemctl daemon-reload"
@@ -380,7 +584,10 @@ EOF
   echo "systemctl start crusoe-watch-agent.service"
   systemctl start crusoe-watch-agent.service
 
-  status "Setup Complete!"
+  # Persist the install mode for upgrade/uninstall
+  write_install_mode
+
+  status "Setup Complete! (mode: $INSTALL_MODE)"
   if $HAS_NVIDIA_GPUS; then
     echo "Check status of $DCGM_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DCGM_EXPORTER_SERVICE_NAME'"
   fi
@@ -390,6 +597,10 @@ EOF
 
 do_uninstall() {
   check_root
+
+  # Read persisted install mode so we clean up correctly
+  read_install_mode
+
   status "Stopping and disabling crusoe-watch-agent service."
   if service_exists "crusoe-watch-agent.service"; then
     systemctl stop crusoe-watch-agent.service || true
@@ -407,14 +618,24 @@ do_uninstall() {
   rm -f "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" || true
   systemctl daemon-reload || true
 
+  # Remove native packages if installed in native mode
+  if [[ "$INSTALL_MODE" == "native" ]]; then
+    uninstall_native
+  fi
+
   status "Removing crusoe_watch_agent directory."
   rm -rf "$CRUSOE_WATCH_AGENT_DIR" || true
+  rm -f "$INSTALL_MODE_FILE" || true
 
   status "Uninstall complete."
 }
 
 do_refresh_token() {
   check_root
+
+  # Read persisted install mode for correct token escaping
+  read_install_mode
+
   status "Refreshing Crusoe Auth Token."
   echo "Command: crusoe monitoring tokens create"
   echo "Please enter the new Crusoe monitoring token:"
@@ -427,11 +648,7 @@ do_refresh_token() {
     error_exit "NEW_CRUSOE_AUTH_TOKEN is invalid. Please provide a valid token."
   fi
   status "Writing token to secrets store at $CRUSOE_MONITORING_TOKEN_FILE..."
-  mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  # Escape dollar signs to prevent variable expansion in docker-compose/vector
-  local escaped_token="${NEW_CRUSOE_AUTH_TOKEN//\$/\$\$}"
-  echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
-  chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
+  write_token_to_secrets "$NEW_CRUSOE_AUTH_TOKEN"
   status "Token refresh complete."
   echo "CRUSOE_AUTH_TOKEN has been updated in $CRUSOE_MONITORING_TOKEN_FILE."
   echo "For the changes to take effect, you may need to restart the crusoe-watch-agent service:"
@@ -440,7 +657,11 @@ do_refresh_token() {
 
 do_upgrade() {
   check_root
-  status "Checking for available upgrade."
+
+  # Read persisted install mode so upgrade preserves the mode
+  read_install_mode
+
+  status "Checking for available upgrade (mode: $INSTALL_MODE)."
   local remote_ver installed_ver
   remote_ver=$(get_remote_version)
   if [[ -z "$remote_ver" ]]; then
