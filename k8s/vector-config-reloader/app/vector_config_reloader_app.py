@@ -111,7 +111,7 @@ class VectorConfigReloader:
         self.kube_state_metrics_sink_config = {
             "type": "prometheus_remote_write",
             "inputs": [KUBE_STATE_METRICS_TRANSFORM_NAME],
-            "endpoint": self.infra_sink_endpoint,
+            "endpoint": self.cluster_sink_endpoint,
             "tenant_id": "cri:cmk/${CRUSOE_CLUSTER_ID}",
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "healthcheck": {"enabled": False},
