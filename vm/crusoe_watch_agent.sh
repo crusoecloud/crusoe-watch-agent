@@ -249,6 +249,11 @@ install_dcgm_exporter_native() {
     apt-get update && apt-get install -y git || error_exit "Failed to install git."
   fi
 
+  # Ensure make is installed (needed for building dcgm-exporter)
+  if ! command_exists make; then
+    apt-get update && apt-get install -y make || error_exit "Failed to install make."
+  fi
+
   # Ensure Go >= 1.24 is installed (Ubuntu apt packages are too old)
   local NEED_GO=false
   if ! command_exists go; then
