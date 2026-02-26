@@ -20,6 +20,15 @@ dcgmMetrics:
 kubeStateMetrics:
   enabled: true
 
+slurmMetrics:
+  enabled: false
+  paths:
+    - /metrics/jobs
+    - /metrics/jobs-users-accts
+    - /metrics/nodes
+    - /metrics/partitions
+    - /metrics/scheduler
+
 logs:
   enabled: true
 
@@ -38,6 +47,7 @@ metricsExporter:
   defaultMetricsPort: 9100
   defaultDcgmExporterPort: 9400
   defaultKubeStateMetricsPort: 8080
+  defaultSlurmMetricsPort: 6817
   defaultScrapeInterval: 60
 
 logLevel: INFO
@@ -976,7 +986,4 @@ logCollector:
   # and to access host paths for NVIDIA log collection
   securityContext:
     runAsUser: 0
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
+    privileged: true
