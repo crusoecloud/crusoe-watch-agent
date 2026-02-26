@@ -425,6 +425,9 @@ do_install() {
   local HAS_NVIDIA_GPUS=false
   if command_exists nvidia-smi && nvidia-smi -L >/dev/null 2>&1; then
     HAS_NVIDIA_GPUS=true
+  elif lspci 2>/dev/null | grep -qi 'NVIDIA'; then
+    # GPU hardware detected but nvidia-smi not available — drivers not installed
+    error_exit "NVIDIA GPU detected but GPU drivers are not installed. Please install NVIDIA drivers and try again."
   fi
 
   if $HAS_NVIDIA_GPUS; then
