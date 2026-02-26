@@ -203,8 +203,6 @@ if .source_type == "journald" {
         } else {
             ._msg = del(.message)
         }
-    } else {
-        ._msg = del(.message)
     }
 } else if .source_type == "file" {
     .log_source = "generic_file"
