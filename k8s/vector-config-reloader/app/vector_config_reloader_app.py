@@ -199,6 +199,7 @@ if .source_type == "journald" {
         .log = parsed
         if exists(parsed.msg) {
             ._msg = string!(parsed.msg)
+            del(.message)
         } else {
             ._msg = del(.message)
         }
