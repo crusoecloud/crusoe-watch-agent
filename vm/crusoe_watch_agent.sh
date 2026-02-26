@@ -249,9 +249,9 @@ install_dcgm_exporter_native() {
     apt-get update && apt-get install -y git || error_exit "Failed to install git."
   fi
 
-  # Ensure make is installed (needed for building dcgm-exporter)
-  if ! command_exists make; then
-    apt-get update && apt-get install -y make || error_exit "Failed to install make."
+  # Ensure build tools are installed (make + gcc for CGo)
+  if ! command_exists make || ! command_exists gcc; then
+    apt-get update && apt-get install -y build-essential || error_exit "Failed to install build-essential."
   fi
 
   # Ensure Go >= 1.24 is installed (Ubuntu apt packages are too old)
