@@ -12,7 +12,6 @@ DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
 DCGM_EXPORTER_APP_LABEL = "nvidia-dcgm-exporter"
 
 # Log sources and pipeline constants
-DMESG_LOGS_SOURCE_NAME = "dmesg_logs"
 CRUSOE_INGEST_SINK_NAME = "crusoe_ingest"
 ENRICH_LOGS_TRANSFORM_NAME = "enrich_logs"
 FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME = "filter_crusoe_log_collector_logs"
@@ -223,36 +222,16 @@ if .source_type == "journald" {
     } else {
         .level = "undefined"
     }
-} else if .source_type == "exec" {
-    # Handle dmesg logs from exec source (cat /dev/kmsg)
-    .log_source = "dmesg"
-    # Parse kernel log level from /dev/kmsg format: <priority>,timestamp,sequence...;message
-    # Example: "6,339,5140900,-;NET: Registered protocol family 10"
-    msg_str = string!(.message)
 
-    # Extract priority using simple string split (faster than regex)
-    metadata_parts = split(msg_str, ",", limit: 2)
-    priority = to_int(get(metadata_parts, [0]) ?? "-1") ?? -1
-
-    # Map kernel log levels using same logic as journald for consistency
-    if priority == 0 || priority == 1 {
-        .level = "error"
-    } else if priority == 2 || priority == 3 {
-        .level = "critical"
-    } else if priority == 4 || priority == 5 {
-        .level = "warning"
-    } else if priority == 6 {
-        .level = "info"
-    } else if priority == 7 {
-        .level = "debug"
-    } else {
-        .level = "undefined"
-    }
-
-    # Extract the actual message after the semicolon
-    msg_parts = split(msg_str, ";", limit: 2)
-    if length(msg_parts) > 1 {
-        .message = get(msg_parts, [1]) ?? msg_str
+    parsed, err = parse_key_value(string!(.message))
+    if err == null {
+        .log = parsed
+        if exists(parsed.msg) {
+            ._msg = string!(parsed.msg)
+            del(.message)
+        } else {
+            ._msg = del(.message)
+        }
     }
 } else if .source_type == "file" {
     .log_source = "generic_file"
@@ -265,8 +244,10 @@ if exists(.__REALTIME_TIMESTAMP) {
     ._time = .timestamp
 }
 
-if exists(.message) {
-    ._msg = del(.message)
+if !exists(._msg) {
+    if exists(.message) {
+        ._msg = del(.message)
+    }
 }
 
 # Normalize level to lowercase
@@ -276,7 +257,6 @@ if exists(.level) {
   .level = "undefined"
 }
 ''')
-
 
     @staticmethod
     def sanitize_name(name: str) -> str:
@@ -449,14 +429,6 @@ if exists(.level) {
             "journal_directory": "/var/log/journal"
         }
 
-        # Add dmesg_logs source
-        # /dev/kmsg is a character device, so we use exec source instead of file
-        sources[DMESG_LOGS_SOURCE_NAME] = {
-            "type": "exec",
-            "mode": "streaming",
-            "command": ["cat", "/dev/kmsg"]
-        }
-
         # Add kubernetes logs source
         sources[KUBERNETES_LOGS_SOURCE_NAME] = {
             "type": "kubernetes_logs"
@@ -475,7 +447,7 @@ if exists(.level) {
         # Add enrich_logs transform
         transforms[ENRICH_LOGS_TRANSFORM_NAME] = {
             "type": "remap",
-            "inputs": [JOURNALD_LOGS_SOURCE_NAME, DMESG_LOGS_SOURCE_NAME, FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME],
+            "inputs": [JOURNALD_LOGS_SOURCE_NAME, FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME],
             "source": self.enrich_logs_transform_source
         }
 
@@ -498,7 +470,7 @@ if exists(.level) {
             sink_config["proxy"] = self.sink_proxy_cfg
         sinks[CRUSOE_INGEST_SINK_NAME] = sink_config
 
-        LOG.info("Logs config set for journald and dmesg sources")
+        LOG.info("Logs config set for journald and kubernetes log sources")
 
     def remove_kube_state_metrics_scrape_config(self, vector_cfg: dict):
         vector_cfg.get("sources", {}).pop(KUBE_STATE_METRICS_SOURCE_NAME, None)
