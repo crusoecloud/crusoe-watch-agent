@@ -507,10 +507,6 @@ vector:
     - name: sysfs
       hostPath:
         path: "/sys"
-    - name: dev-kmsg
-      hostPath:
-        path: "/dev/kmsg"
-        type: CharDevice
 
   # defaultVolumeMounts -- Default volume mounts. Corresponds to `volumes`.
   # @default -- See `values.yaml`
@@ -526,9 +522,6 @@ vector:
       readOnly: true
     - name: sysfs
       mountPath: "/host/sys"
-      readOnly: true
-    - name: dev-kmsg
-      mountPath: "/dev/kmsg"
       readOnly: true
 
   # extraVolumes -- Additional Volumes to use with Vector Pods.
