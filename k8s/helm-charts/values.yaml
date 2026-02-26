@@ -6,31 +6,31 @@ endpoints:
   dev: "https://cms-monitoring.crusoecloud.xyz"
 
 proxy:
-  enabled: false
+  enabled: true
   url: "internal.cms-monitoring.crusoecloud.com"
   port: 3128
 
 customMetrics:
-  enabled: true
+  enabled: false
   namespace: crusoe-monitoring
 
 dcgmMetrics:
-  enabled: true
+  enabled: false
 
 kubeStateMetrics:
-  enabled: true
+  enabled: false
 
 logs:
-  enabled: true
+  enabled: false
 
 job:
   name: crusoe-monitoring-token-job
-  image: ghcr.io/crusoecloud/crusoe-watch-agent/token-job:v0.1.9
+  image: internal.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/token-job:v0.1.9
   ttlSecondsAfterFinished: 300
 secrets:
   crusoeMonitoringToken: crusoe-monitoring-token
   existingSecret: crusoe-secrets
-  useProvidedMonitoringToken: false
+  useProvidedMonitoringToken: true
   monitoringToken: ""
 
 metricsExporter:
@@ -82,7 +82,7 @@ vector:
   # Define the Vector image to use.
   image:
     # image.repository -- Override default registry and name for Vector's image.
-    repository: timberio/vector
+    repository: internal.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/vector
     # image.pullPolicy -- The [pullPolicy](https://kubernetes.io/docs/concepts/containers/images/#image-pull-policy) for
     # Vector's image.
     pullPolicy: IfNotPresent
@@ -574,7 +574,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.6
+      image: internal.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/vector-config-reloader:v0.2.6
       env:
         - name: NODE_NAME
           valueFrom:
@@ -704,7 +704,7 @@ vector:
     # Define the HAProxy image to use.
     image:
       # haproxy.image.repository -- Override default registry and name for HAProxy.
-      repository: haproxytech/haproxy-alpine
+      repository: internal.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/haproxy-alpine
       # haproxy.image.pullPolicy -- HAProxy image pullPolicy.
       pullPolicy: IfNotPresent
       # haproxy.image.pullSecrets -- The [imagePullSecrets](https://kubernetes.io/docs/concepts/containers/images/#specifying-imagepullsecrets-on-a-pod)
@@ -883,11 +883,11 @@ vector:
 
 # NVIDIA Log Collector configuration
 logCollector:
-  enabled: true
+  enabled: false
   name: crusoe-log-collector
 
   image:
-    repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
+    repository: internal.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/log-collector
     tag: v0.2.7
     pullPolicy: IfNotPresent
 
