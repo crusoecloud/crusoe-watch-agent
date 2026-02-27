@@ -224,7 +224,7 @@ vector:
   command: [
     "/bin/sh",
     "-c",
-    "export VM_ID=$(cat /host/sys/class/dmi/id/product_uuid) && /usr/bin/vector --config /etc/vector/vector.yaml --watch-config --watch-config-method poll --watch-config-poll-interval-seconds 30"
+    "export VM_ID=$(cat /host/sys/class/dmi/id/product_uuid) && /usr/bin/vector --config /etc/vector/vector.yaml --watch-config"
   ]
 
   # args -- Override Vector's default arguments.
@@ -560,18 +560,15 @@ vector:
 
   # initContainers -- Init Containers to be added to the Vector Pods.
   # This also supports template content, which will eventually be converted to yaml.
-  initContainers: [ ]
-  # initContainers:
-  #   - name: test
-  #     image: busybox:latest
-  #     command:
-  #       - cp
-  #     args:
-  #       - /bin/sleep
-  #       - /test/sleep
-  #     volumeMounts:
-  #       - name: test
-  #         mountPath: /test
+  initContainers:
+    - name: sysctl-tuning
+      image: busybox:latest
+      command:
+        - sh
+        - -c
+        - sysctl -w fs.inotify.max_user_instances=1024 && sysctl -w fs.inotify.max_user_watches=524288
+      securityContext:
+        privileged: true
 
   # extraContainers -- Extra Containers to be added to the Vector Pods.
   # This also supports template content, which will eventually be converted to yaml.
