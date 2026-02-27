@@ -58,6 +58,17 @@ transforms:
                 } else {
                     .level = "undefined"
                 }
+
+                parsed, err = parse_key_value(string!(.message))
+                if err == null {
+                    .log = parsed
+                    if exists(parsed.msg) {
+                        ._msg = string!(parsed.msg)
+                        del(.message)
+                    } else {
+                        ._msg = del(.message)
+                    }
+                }
             }
             del(.source_type)
             if exists(.__REALTIME_TIMESTAMP) {
@@ -65,8 +76,10 @@ transforms:
             } else if exists(.timestamp) {
                 ._time = .timestamp
             }
-            if exists(.message) {
-                ._msg = del(.message)
+            if !exists(._msg) {
+                if exists(.message) {
+                    ._msg = del(.message)
+                }
             }
             if exists(.level) {
                 .level = downcase(string!(.level))
