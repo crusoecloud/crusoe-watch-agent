@@ -21,7 +21,7 @@ kubeStateMetrics:
   enabled: true
 
 slurmMetrics:
-  enabled: false
+  enabled: true
   paths:
     - /metrics/jobs
     - /metrics/jobs-users-accts
@@ -34,7 +34,7 @@ logs:
 
 job:
   name: crusoe-monitoring-token-job
-  image: ghcr.io/crusoecloud/crusoe-watch-agent/token-job:v0.1.9
+  image: ghcr.io/crusoecloud/crusoe-watch-agent/token-job:v0.2.8
   ttlSecondsAfterFinished: 300
 secrets:
   crusoeMonitoringToken: crusoe-monitoring-token
@@ -577,7 +577,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.6
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.9
       env:
         - name: NODE_NAME
           valueFrom:
@@ -891,7 +891,7 @@ logCollector:
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
-    tag: v0.2.7
+    tag: v0.2.8
     pullPolicy: IfNotPresent
 
   # Environment variables for log collector
