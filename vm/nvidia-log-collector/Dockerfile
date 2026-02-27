@@ -42,4 +42,4 @@ COPY app/ .
 # Create logs directory
 RUN mkdir -p /logs && chmod 755 /logs
 
-CMD ["python3", "log_collector_app.py"]
+CMD ["python3", "vm_log_collector_app.py"]

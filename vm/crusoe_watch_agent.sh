@@ -17,8 +17,10 @@ REMOTE_DCGM_EXPORTER_METRICS_CONFIG="vm/config/dcp-metrics-included.csv"
 REMOTE_DCGM_EXPORTER_METRICS_CONFIG_NO_NVLINK="vm/config/dcp-metrics-included-no-nvlink.csv"
 REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER="vm/docker/docker-compose-dcgm-exporter.yaml"
 REMOTE_DOCKER_COMPOSE_VECTOR="vm/docker/docker-compose-vector.yaml"
+REMOTE_DOCKER_COMPOSE_NVIDIA_LOG_COLLECTOR="vm/docker/docker-compose-nvidia-log-collector.yaml"
 REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE="vm/systemctl/crusoe-dcgm-exporter.service"
+REMOTE_CRUSOE_NVIDIA_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-nvidia-log-collector.service"
 SYSTEMCTL_DIR="/etc/systemd/system"
 CRUSOE_WATCH_AGENT_DIR="/etc/crusoe/crusoe_watch_agent"
 CRUSOE_AUTH_TOKEN_LENGTH=82
@@ -33,6 +35,7 @@ DCGM_EXPORTER_SERVICE_NAME=$DEFAULT_DCGM_EXPORTER_SERVICE_NAME
 DCGM_EXPORTER_SERVICE_PORT="9400"
 REPLACE_DCGM_EXPORTER=false
 EXISTING_DCGM_EXPORTER_SERVICE="dcgm-exporter"
+DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME="crusoe-nvidia-log-collector.service"
 
 # Versioning and upgrade helpers (use vm/VERSION)
 REMOTE_VERSION_FILE="vm/VERSION"
@@ -311,6 +314,18 @@ do_install() {
       status "Download $DCGM_EXPORTER_SERVICE_NAME systemd unit."
       wget -q -O "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE"
     fi
+
+    # Download NVIDIA Log Collector artifacts
+    status "Download NVIDIA Log Collector docker-compose file."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-nvidia-log-collector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_NVIDIA_LOG_COLLECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_NVIDIA_LOG_COLLECTOR"
+
+    status "Download $DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME systemd unit."
+    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_NVIDIA_LOG_COLLECTOR_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_NVIDIA_LOG_COLLECTOR_SERVICE"
+
+    # Create log directory for NVIDIA log collector
+    status "Creating NVIDIA log collection directory."
+    mkdir -p /var/log/nvidia-bug-reports
+    chmod 755 /var/log/nvidia-bug-reports
   else
      status "Copy CPU Vector config."
      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CPU_VM"
@@ -367,6 +382,12 @@ EOF
     systemctl enable "$DCGM_EXPORTER_SERVICE_NAME"
     echo "systemctl start $DCGM_EXPORTER_SERVICE_NAME"
     systemctl start "$DCGM_EXPORTER_SERVICE_NAME"
+
+    status "Enable and start systemd services for $DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME."
+    echo "systemctl enable $DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl enable "$DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME"
+    echo "systemctl start $DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl start "$DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME"
   fi
 
   status "Download crusoe-watch-agent.service."
@@ -383,6 +404,7 @@ EOF
   status "Setup Complete!"
   if $HAS_NVIDIA_GPUS; then
     echo "Check status of $DCGM_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DCGM_EXPORTER_SERVICE_NAME'"
+    echo "Check status of $DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME'"
   fi
   echo "Check status of crusoe-watch-agent service: 'sudo systemctl status crusoe-watch-agent.service'"
   echo "Setup finished successfully!"
@@ -402,9 +424,16 @@ do_uninstall() {
     systemctl disable "$DEFAULT_DCGM_EXPORTER_SERVICE_NAME" || true
   fi
 
+  status "Stopping and disabling NVIDIA Log Collector service if installed by this script."
+  if service_exists "$DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME"; then
+    systemctl stop "$DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME" || true
+    systemctl disable "$DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME" || true
+  fi
+
   status "Removing systemd unit files."
   rm -f "$SYSTEMCTL_DIR/crusoe-watch-agent.service" || true
   rm -f "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" || true
+  rm -f "$SYSTEMCTL_DIR/$DEFAULT_NVIDIA_LOG_COLLECTOR_SERVICE_NAME" || true
   systemctl daemon-reload || true
 
   status "Removing crusoe_watch_agent directory."
