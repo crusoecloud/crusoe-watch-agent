@@ -34,7 +34,7 @@ logs:
 
 job:
   name: crusoe-monitoring-token-job
-  image: ghcr.io/crusoecloud/crusoe-watch-agent/token-job:v0.1.9
+  image: ghcr.io/crusoecloud/crusoe-watch-agent/token-job:v0.2.8
   ttlSecondsAfterFinished: 300
 secrets:
   crusoeMonitoringToken: crusoe-monitoring-token
