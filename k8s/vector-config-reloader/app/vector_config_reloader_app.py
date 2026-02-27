@@ -34,6 +34,7 @@ SLURM_METRICS_SINK_NAME = "slurm_metrics_sink"
 SLURM_METRICS_APP_LABEL = "slurmctld"
 SLURM_METRICS_TRANSFORM_SOURCE = LiteralStr("""
 .tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
+.tags.project_id = "${CRUSOE_PROJECT_ID}"
 .tags.crusoe_resource = "cmk"
 .tags.metrics_source = "slurm-metrics"
 """)
@@ -44,6 +45,7 @@ CUSTOM_METRICS_CONFIG_MAP_KEY = "custom-metrics-config.yaml"
 CUSTOM_METRICS_SCRAPE_ANNOTATION = "crusoe.ai/scrape"
 CUSTOM_METRICS_PORT_ANNOTATION = "crusoe.ai/port"
 CUSTOM_METRICS_PATH_ANNOTATION = "crusoe.ai/path"
+CUSTOM_METRICS_APP_ID_ANNOTATION = "crusoe.ai/app_id"
 CUSTOM_METRICS_DEFAULT_SCRAPE_INTERVAL = 30
 
 SCRAPE_INTERVAL_MIN_THRESHOLD = 5
@@ -383,6 +385,7 @@ if exists(.level) {
         annotations = pod.metadata.annotations
         port = int(annotations.get(CUSTOM_METRICS_PORT_ANNOTATION, self.default_custom_metrics_config["port"]))
         path = annotations.get(CUSTOM_METRICS_PATH_ANNOTATION, self.default_custom_metrics_config["path"])
+        app_id = annotations.get(CUSTOM_METRICS_APP_ID_ANNOTATION, "")
 
         parts = pod_name.rsplit("-", 2)
         deployment_name = parts[0] if len(parts) == 3 else ""
@@ -391,6 +394,7 @@ if exists(.level) {
             "pod_ip": pod_ip,
             "pod_name": pod_name,
             "deployment_name": deployment_name,
+            "app_id": app_id
         }
 
     def set_dcgm_exporter_scrape_config(self, vector_cfg: dict, dcgm_exporter_scrape_endpoint: str):
@@ -570,6 +574,10 @@ if exists(.level) {
             sink_name = f"{pod_name_sanitized}_sink"
             sink_config = self.custom_metrics_sink_config.copy()
             sink_config["inputs"] = [transform_name]
+            # If app_id is present, add it to the endpoint path
+            if endpoint.get("app_id"):
+                LOG.info(f"Managed custom metrics pod detected: '{endpoint['pod_name']}'")
+                sink_config["endpoint"] = f"{self.custom_sink_endpoint}/{endpoint['app_id']}"
             sinks[sink_name] = sink_config
             LOG.info(f"Created custom metrics pipeline for pod '{endpoint['pod_name']}'")
 
