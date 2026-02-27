@@ -1,0 +1,44 @@
+services:
+  crusoe-nvidia-log-collector:
+    image: ghcr.io/crusoecloud/crusoe-watch-agent/nvidia-log-collector-vm:${AGENT_VERSION:-latest}
+    container_name: crusoe-nvidia-log-collector
+    hostname: crusoe-nvidia-log-collector
+
+    # Privileged for dmidecode and GPU access
+    privileged: true
+    pid: host
+
+    # GPU runtime for nvidia-bug-report.sh to access GPUs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    volumes:
+      # Persistent log storage on host
+      - /var/log/nvidia-bug-reports:/logs
+      # DMI information for VM ID detection
+      - /sys:/host/sys:ro
+
+    env_file:
+      # VM_ID and AGENT_VERSION
+      - ./.env
+      # CRUSOE_MONITORING_TOKEN (renamed to CRUSOE_AUTH_TOKEN in file)
+      - /etc/crusoe/secrets/.monitoring-token
+
+    environment:
+      - LOG_OUTPUT_DIR=/logs
+      - API_ENABLED=true
+      - API_BASE_URL=https://cms-monitoring.crusoecloud.com
+      - API_POLL_INTERVAL=60
+      - COLLECTION_TIMEOUT=300
+      - MAX_LOGS_TO_KEEP=1
+      - LOG_LEVEL=INFO
+      # Map CRUSOE_AUTH_TOKEN from .monitoring-token to CRUSOE_MONITORING_TOKEN
+      - CRUSOE_MONITORING_TOKEN=${CRUSOE_AUTH_TOKEN}
+
+    network_mode: host
+    restart: always
