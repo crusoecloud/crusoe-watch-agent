@@ -21,7 +21,7 @@ kubeStateMetrics:
   enabled: true
 
 slurmMetrics:
-  enabled: false
+  enabled: true
   paths:
     - /metrics/jobs
     - /metrics/jobs-users-accts
@@ -898,7 +898,7 @@ logCollector:
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
-    tag: v0.2.7
+    tag: v0.2.8
     pullPolicy: IfNotPresent
 
   # Environment variables for log collector

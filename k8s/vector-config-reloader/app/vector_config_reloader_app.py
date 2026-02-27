@@ -367,15 +367,19 @@ if exists(.level) {
                 for key, value in label_entry.items():
                     vrl_lines.append(f'.tags.{key} = "{value}"')
 
-        vrl_lines.append(f'.tags.nodepool = "{self.nodepool_id}"')
-        vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
-        vrl_lines.append(f'.tags.vm_id = "{self.vm_id}"')
-        vrl_lines.append(f'.tags.vm_instance_type = "{self.instance_type}"')
-        vrl_lines.append(f'if "{self.pod_id or ""}" != "" {{ .tags.pod_id = "{self.pod_id or ""}" }}')
-        vrl_lines.append('.tags.crusoe_resource = "custom_metrics"')
-        vrl_lines.append('.tags.metrics_source = "custom-metrics"')
-        vrl_lines.append(f'.tags.pod_ip = "{endpoint_config["pod_ip"]}"')
-        vrl_lines.append(f'.tags.pod_name = "{endpoint_config["pod_name"]}"')
+        # add only crusoe_resource tag if app_id is present
+        if endpoint_config.get("app_id"):
+            vrl_lines.append(f'.tags.crusoe_resource = "custom_internal_metrics"')
+        else:
+            vrl_lines.append(f'.tags.nodepool = "{self.nodepool_id}"')
+            vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
+            vrl_lines.append(f'.tags.vm_id = "{self.vm_id}"')
+            vrl_lines.append(f'.tags.vm_instance_type = "{self.instance_type}"')
+            vrl_lines.append(f'if "{self.pod_id or ""}" != "" {{ .tags.pod_id = "{self.pod_id or ""}" }}')
+            vrl_lines.append('.tags.crusoe_resource = "custom_metrics"')
+            vrl_lines.append('.tags.metrics_source = "custom-metrics"')
+            vrl_lines.append(f'.tags.pod_ip = "{endpoint_config["pod_ip"]}"')
+            vrl_lines.append(f'.tags.pod_name = "{endpoint_config["pod_name"]}"')
 
         return "\n".join(vrl_lines)
 
