@@ -107,6 +107,13 @@ def test_pod_identification_helpers():
     pod_non_dcgm = DummyPod("nodcgm", "ns", ip="10.0.0.4", labels={"app": "other"})
     assert not VectorConfigReloader.is_dcgm_exporter_pod(pod_non_dcgm)
 
+    # slurm metrics pod: label app.kubernetes.io/name=slurmctld
+    pod_slurm = DummyPod("slurm", "ns", ip="10.0.0.5", labels={"app.kubernetes.io/name": "slurmctld"})
+    assert VectorConfigReloader.is_slurm_metrics_pod(pod_slurm)
+
+    pod_non_slurm = DummyPod("noslurm", "ns", ip="10.0.0.6", labels={"app.kubernetes.io/name": "other"})
+    assert not VectorConfigReloader.is_slurm_metrics_pod(pod_non_slurm)
+
 
 def _new_reloader_with_pods(monkeypatch, pods):
     """Helper to create a VectorConfigReloader with injected pod list."""
@@ -186,3 +193,42 @@ def test_set_and_remove_custom_metrics_scrape_config(monkeypatch):
     assert "svc_y_2_scrape" not in vector_cfg["sources"]
     assert "svc_y_2_transform" not in vector_cfg["transforms"]
     assert "svc_y_2_sink" not in vector_cfg["sinks"]
+
+
+def test_set_and_remove_slurm_metrics_scrape_config(monkeypatch):
+    r = _new_reloader_with_pods(monkeypatch, [])
+    r.slurm_enabled = True
+
+    vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
+
+    endpoints = [
+        "http://10.3.0.1:6817/metrics/jobs",
+        "http://10.3.0.1:6817/metrics/jobs-users-accts",
+        "http://10.3.0.1:6817/metrics/nodes",
+        "http://10.3.0.1:6817/metrics/partitions",
+        "http://10.3.0.1:6817/metrics/scheduler",
+    ]
+    r.set_slurm_metrics_scrape_config(vector_cfg, endpoints)
+
+    assert "slurm_metrics_scrape" in vector_cfg["sources"]
+    assert vector_cfg["sources"]["slurm_metrics_scrape"]["endpoints"] == endpoints
+    assert "enrich_slurm_metrics" in vector_cfg["transforms"]
+    assert vector_cfg["transforms"]["enrich_slurm_metrics"]["inputs"] == ["slurm_metrics_scrape"]
+    assert "slurm_metrics_sink" in vector_cfg["sinks"]
+
+    r.remove_slurm_metrics_scrape_config(vector_cfg)
+    assert "slurm_metrics_scrape" not in vector_cfg["sources"]
+    assert "enrich_slurm_metrics" not in vector_cfg["transforms"]
+    assert "slurm_metrics_sink" not in vector_cfg["sinks"]
+
+
+def test_slurm_metrics_disabled_skips_config(monkeypatch):
+    r = _new_reloader_with_pods(monkeypatch, [])
+    r.slurm_enabled = False
+
+    vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
+    r.set_slurm_metrics_scrape_config(vector_cfg, ["http://10.3.0.1:6817/metrics/jobs"])
+
+    assert "slurm_metrics_scrape" not in vector_cfg["sources"]
+    assert "enrich_slurm_metrics" not in vector_cfg["transforms"]
+    assert "slurm_metrics_sink" not in vector_cfg["sinks"]

@@ -20,6 +20,14 @@ data:
       port: {{ .Values.metricsExporter.defaultMetricsPort }}
       path: {{ .Values.metricsExporter.defaultMetricsPath }}
       scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
+    slurm_metrics:
+      enabled: {{ .Values.slurmMetrics.enabled }}
+      port: {{ .Values.metricsExporter.defaultSlurmMetricsPort }}
+      paths:
+{{- range .Values.slurmMetrics.paths }}
+        - {{ . }}
+{{- end }}
+      scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
     logs:
       enabled: {{ .Values.logs.enabled }}
     sink:

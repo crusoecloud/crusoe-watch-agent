@@ -21,6 +21,18 @@ This application runs as a separate DaemonSet (`crusoe-log-collector`) in your K
 - **Multi-Node Support**: Deploys as DaemonSet for cluster-wide coverage
 - **Timeout Handling**: Automatic timeout protection (5 minutes default)
 - **Automatic Cleanup**: Keeps only the most recent logs to prevent disk exhaustion
+- **GB200 Support**: Bundled nvidia-bug-report.sh for nodes without GPU Operator
+
+## GB200 Support
+
+The collector automatically detects GB200 nodes via the `node.kubernetes.io/instance-type` label and uses bundled NVIDIA tools instead of GPU Operator driver pods.
+- GB200 nodes: Execute `/usr/bin/nvidia-bug-report.sh` locally (bundled in container)
+- Other GPUs: Execute via `kubectl exec` into GPU Operator driver pod (existing behavior)
+
+**Implementation:**
+- Base image: `nvcr.io/nvidia/cuda:12.8.0-base-ubuntu24.04` (forward compatible with driver 580.95.05)
+- Dockerfile installs `nvidia-utils` (550) from NVIDIA CUDA repositories included in base image
+- RBAC: Added `nodes.get` permission to read instance-type labels
 
 ## Execution Modes
 
