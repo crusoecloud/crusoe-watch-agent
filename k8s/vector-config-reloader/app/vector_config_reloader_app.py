@@ -684,7 +684,7 @@ if exists(.level) {
     def handle_pod_event(self, event):
         pod = event["object"]
         if not (VectorConfigReloader.is_pod_active(pod) or VectorConfigReloader.is_pod_terminating(pod)):
-            LOG.info(f"Pod {pod.metadata.name} state is neither running nor terminating.")
+            LOG.info(f"Pod {pod.metadata.name} state:({pod.status.phase}) is neither running nor terminating. ")
             return
         
         current_vector_cfg = YamlUtils.load_yaml_config(VECTOR_CONFIG_PATH)
