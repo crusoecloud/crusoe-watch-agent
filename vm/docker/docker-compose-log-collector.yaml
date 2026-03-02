@@ -31,7 +31,7 @@ services:
     environment:
       - LOG_OUTPUT_DIR=/logs
       - API_ENABLED=true
-      - API_BASE_URL=https://cms-monitoring.crusoecloud.com
+      - API_BASE_URL=${LOG_COLLECTOR_API_BASE_URL}
       - API_POLL_INTERVAL=60
       - COLLECTION_INTERVAL=3600
       - COLLECTION_TIMEOUT=300
