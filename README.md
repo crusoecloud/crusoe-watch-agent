@@ -44,6 +44,23 @@ sudo chmod +x /etc/crusoe/crusoe_watch_agent/crusoe_watch_agent_amd.sh
 sudo ln -sf "/etc/crusoe/crusoe_watch_agent/crusoe_watch_agent_amd.sh" "/usr/bin/crusoe-watch-agent"
 ```
 
+### Installation Modes
+
+By default, the agent uses **Docker** to run Vector and DCGM Exporter as containers. If you prefer to install them as native binaries (no Docker dependency), pass the `--no-docker` flag:
+
+```
+sudo ./crusoe_watch_agent.sh install --no-docker
+```
+
+In native mode:
+- **Vector** is installed via APT (`apt-get install vector`)
+- **DCGM Exporter** is built from source (requires Go, installed automatically if missing)
+- Services run as native systemd units instead of Docker containers
+
+The chosen mode is persisted so that `upgrade`, `uninstall`, and `refresh-token` automatically use the same mode without needing to re-specify the flag.
+
+> **Note:** The `--no-docker` flag is currently supported for the NVIDIA/CPU script (`crusoe_watch_agent.sh`) only.
+
 ## Configuration and Startup
 Regardless of the installation method chosen above, follow these steps to authenticate and start the agent.
 
@@ -75,24 +92,40 @@ sudo crusoe-watch-agent install
 > ```
 
 ### Verification
-Once the service starts, it will download and launch two Docker containers: `crusoe-dcgm-exporter` and `crusoe-vector`.  Check the Docker logs to verify there are no errors:
+
+**Docker mode (default):**
+
+Once the service starts, it will download and launch two Docker containers: `crusoe-dcgm-exporter` and `crusoe-vector`. Check the Docker logs to verify there are no errors:
 ```
 docker container logs crusoe-vector
 ```
-TA-DA!! crusoe-watch-agent is now successfully pushing metrics.
+
+**Native mode (`--no-docker`):**
+
+Check the systemd service status and logs:
+```
+sudo systemctl status crusoe-watch-agent.service
+sudo journalctl -u crusoe-watch-agent.service -f
+```
+
+For GPU VMs, also verify the DCGM exporter:
+```
+sudo systemctl status crusoe-dcgm-exporter.service
+curl localhost:9400/metrics
+```
 
 
 ## Maintenance
 ```
-# Upgrade to latest version
-sudo ./crusoe-watch-agent.sh upgrade
+# Upgrade to latest version (automatically uses the same mode as the original install)
+sudo ./crusoe_watch_agent.sh upgrade
 
 # Refresh auth token
-sudo ./crusoe-watch-agent.sh refresh-token
+sudo ./crusoe_watch_agent.sh refresh-token
 
-# Uninstall
-sudo ./crusoe-watch-agent.sh uninstall
+# Uninstall (automatically cleans up based on the original install mode)
+sudo ./crusoe_watch_agent.sh uninstall
 
 # View help
-sudo ./crusoe-watch-agent.sh help
+sudo ./crusoe_watch_agent.sh help
 ```

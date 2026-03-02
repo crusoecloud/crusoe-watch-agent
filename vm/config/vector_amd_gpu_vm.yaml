@@ -29,19 +29,12 @@ sources:
         type: journald
         journal_directory: /var/log/journal
 
-    dmesg_logs:
-        type: exec
-        mode: streaming
-        command:
-            - cat
-            - /dev/kmsg
 
 transforms:
     enrich_logs:
         type: remap
         inputs:
             - journald_logs
-            - dmesg_logs
         source: |
             .agent = "crusoe-watch-agent"
             .host = get_hostname!()
@@ -60,27 +53,16 @@ transforms:
                 } else {
                     .level = "undefined"
                 }
-            } else if .source_type == "exec" {
-                .log_source = "dmesg"
-                msg_str = string!(.message)
-                metadata_parts = split(msg_str, ",", limit: 2)
-                priority = to_int(get(metadata_parts, [0]) ?? "-1") ?? -1
-                if priority == 0 || priority == 1 {
-                    .level = "error"
-                } else if priority == 2 || priority == 3 {
-                    .level = "critical"
-                } else if priority == 4 || priority == 5 {
-                    .level = "warning"
-                } else if priority == 6 {
-                    .level = "info"
-                } else if priority == 7 {
-                    .level = "debug"
-                } else {
-                    .level = "undefined"
-                }
-                msg_parts = split(msg_str, ";", limit: 2)
-                if length(msg_parts) > 1 {
-                    .message = get(msg_parts, [1]) ?? msg_str
+
+                parsed, err = parse_key_value(string!(.message))
+                if err == null {
+                    .log = parsed
+                    if exists(parsed.msg) {
+                        ._msg = string!(parsed.msg)
+                        del(.message)
+                    } else {
+                        ._msg = del(.message)
+                    }
                 }
             }
             del(.source_type)
@@ -89,8 +71,10 @@ transforms:
             } else if exists(.timestamp) {
                 ._time = .timestamp
             }
-            if exists(.message) {
-                ._msg = del(.message)
+            if !exists(._msg) {
+                if exists(.message) {
+                    ._msg = del(.message)
+                }
             }
             if exists(.level) {
                 .level = downcase(string!(.level))
