@@ -37,7 +37,7 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://cms-monitoring.crusoeclou
 API_POLL_INTERVAL = int(os.environ.get("API_POLL_INTERVAL", "60"))
 API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
 COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))
-CRUSOE_MONITORING_TOKEN = os.environ.get("CRUSOE_MONITORING_TOKEN")
+CRUSOE_AUTH_TOKEN = os.environ.get("CRUSOE_AUTH_TOKEN")
 
 
 class JSONFormatter(logging.Formatter):
@@ -96,8 +96,8 @@ class VmNvidiaLogCollector:
             LOG.info(f"VM ID: {self.vm_id}")
 
         # Warn if API mode is enabled but token is missing
-        if API_ENABLED and not CRUSOE_MONITORING_TOKEN:
-            LOG.warning("API_ENABLED is true but CRUSOE_MONITORING_TOKEN is not set. API calls may fail authentication.")
+        if API_ENABLED and not CRUSOE_AUTH_TOKEN:
+            LOG.warning("API_ENABLED is true but CRUSOE_AUTH_TOKEN is not set. API calls may fail authentication.")
 
     def _read_vm_id_from_dmi(self) -> Optional[str]:
         """
@@ -127,8 +127,8 @@ class VmNvidiaLogCollector:
             Dictionary with Authorization header if token is available
         """
         headers = {}
-        if CRUSOE_MONITORING_TOKEN:
-            headers['Authorization'] = f'Bearer {CRUSOE_MONITORING_TOKEN}'
+        if CRUSOE_AUTH_TOKEN:
+            headers['Authorization'] = f'Bearer {CRUSOE_AUTH_TOKEN}'
         return headers
 
     def check_for_tasks(self) -> Optional[Dict[str, Any]]:

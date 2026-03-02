@@ -25,7 +25,7 @@ services:
     env_file:
       # VM_ID and AGENT_VERSION
       - ./.env
-      # CRUSOE_MONITORING_TOKEN (renamed to CRUSOE_AUTH_TOKEN in file)
+      # CRUSOE_AUTH_TOKEN (used by log collector)
       - /etc/crusoe/secrets/.monitoring-token
 
     environment:
@@ -36,8 +36,6 @@ services:
       - COLLECTION_TIMEOUT=300
       - MAX_LOGS_TO_KEEP=1
       - LOG_LEVEL=INFO
-      # Map CRUSOE_AUTH_TOKEN from .monitoring-token to CRUSOE_MONITORING_TOKEN
-      - CRUSOE_MONITORING_TOKEN=${CRUSOE_AUTH_TOKEN}
 
     network_mode: host
     restart: always
