@@ -1,0 +1,32 @@
+[Unit]
+Description=Crusoe NVIDIA Log Collector for VMs (Native)
+Documentation=https://github.com/crusoecloud/crusoe-watch-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+WorkingDirectory=/opt/crusoe-log-collector
+EnvironmentFile=/etc/crusoe/crusoe_watch_agent/.env
+EnvironmentFile=/etc/crusoe/secrets/.monitoring-token
+
+# Environment variables for log collector
+Environment="LOG_OUTPUT_DIR=/var/log/nvidia-bug-reports"
+Environment="API_ENABLED=true"
+Environment="API_BASE_URL=${LOG_COLLECTOR_API_BASE_URL}"
+Environment="API_POLL_INTERVAL=60"
+Environment="COLLECTION_INTERVAL=3600"
+Environment="COLLECTION_TIMEOUT=300"
+Environment="MAX_LOGS_TO_KEEP=1"
+Environment="LOG_LEVEL=INFO"
+
+ExecStart=/usr/bin/python3 /opt/crusoe-log-collector/vm_log_collector_app.py
+
+# Security settings
+NoNewPrivileges=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
