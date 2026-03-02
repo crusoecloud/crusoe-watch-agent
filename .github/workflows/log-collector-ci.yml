@@ -9,12 +9,12 @@ on:
     # Run if changes occur under K8s or VM log-collector paths
     paths:
       - 'k8s/log-collector/**'
-      - 'vm/nvidia-log-collector/**'
+      - 'vm/log-collector/**'
   pull_request:
     branches: ["main"]
     paths:
       - 'k8s/log-collector/**'
-      - 'vm/nvidia-log-collector/**'
+      - 'vm/log-collector/**'
 
 jobs:
   test:
@@ -118,7 +118,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/nvidia-log-collector-vm
+          images: ghcr.io/${{ github.repository }}/log-collector-vm
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -130,8 +130,8 @@ jobs:
       - name: Build and push VM image
         uses: docker/build-push-action@v5
         with:
-          context: ./vm/nvidia-log-collector
-          file: ./vm/nvidia-log-collector/Dockerfile
+          context: ./vm/log-collector
+          file: ./vm/log-collector/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
