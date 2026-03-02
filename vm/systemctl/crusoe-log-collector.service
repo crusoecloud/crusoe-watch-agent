@@ -13,13 +13,13 @@ RestartSec=10
 WorkingDirectory=/etc/crusoe/crusoe_watch_agent
 
 # Pull latest image before starting
-ExecStartPre=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-nvidia-log-collector.yaml pull
+ExecStartPre=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-log-collector.yaml pull
 
 # Start the container
-ExecStart=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-nvidia-log-collector.yaml up
+ExecStart=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-log-collector.yaml up
 
 # Stop the container
-ExecStop=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-nvidia-log-collector.yaml down
+ExecStop=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-log-collector.yaml down
 
 [Install]
 WantedBy=multi-user.target
