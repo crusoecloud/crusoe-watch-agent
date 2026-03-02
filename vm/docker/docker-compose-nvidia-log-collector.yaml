@@ -6,7 +6,6 @@ services:
 
     # Privileged for dmidecode and GPU access
     privileged: true
-    pid: host
 
     # GPU runtime for nvidia-bug-report.sh to access GPUs
     deploy:
