@@ -37,6 +37,7 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://cms-monitoring.crusoeclou
 API_POLL_INTERVAL = int(os.environ.get("API_POLL_INTERVAL", "60"))
 API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
 COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))
+COLLECTION_INTERVAL = int(os.environ.get("COLLECTION_INTERVAL", "3600"))  # 1 hour default for scheduled mode
 CRUSOE_AUTH_TOKEN = os.environ.get("CRUSOE_AUTH_TOKEN")
 
 
@@ -453,6 +454,20 @@ class VmNvidiaLogCollector:
             # Wait before polling again
             time.sleep(API_POLL_INTERVAL)
 
+    def _run_scheduled_mode(self):
+        """Run in scheduled mode - collect logs at regular intervals."""
+        LOG.info(f"Running in scheduled mode")
+        LOG.info(f"Collection interval: {COLLECTION_INTERVAL}s")
+
+        while True:
+            try:
+                self.collect_logs()
+            except Exception as e:
+                LOG.error(f"Error during log collection: {e}", exc_info=True)
+
+            LOG.info(f"Sleeping for {COLLECTION_INTERVAL} seconds until next collection")
+            time.sleep(COLLECTION_INTERVAL)
+
     def run(self):
         """Main execution loop."""
         LOG.info(f"NVIDIA Log Collector v{VERSION} started on VM: {self.hostname}")
@@ -460,12 +475,12 @@ class VmNvidiaLogCollector:
         LOG.info(f"Output directory: {self.output_dir}")
         LOG.info(f"API-driven mode: {API_ENABLED}")
 
-        if not API_ENABLED:
-            LOG.error("API_ENABLED must be true for VM log collector")
-            sys.exit(1)
-
-        # VM log collector only supports API-driven mode
-        self._run_api_mode()
+        if API_ENABLED:
+            # API-driven mode: poll for tasks and collect logs on-demand
+            self._run_api_mode()
+        else:
+            # Scheduled mode: collect logs at regular intervals
+            self._run_scheduled_mode()
 
 
 def main():
