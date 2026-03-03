@@ -310,7 +310,11 @@ install_log_collector_native() {
   # Download and install requirements
   local GITHUB_REQ="$GITHUB_RAW_BASE_URL/vm/log-collector/requirements.txt"
   wget -q -O "/tmp/log-collector-requirements.txt" "$GITHUB_REQ" || error_exit "Failed to download requirements.txt"
-  pip3 install --break-system-packages -r /tmp/log-collector-requirements.txt || error_exit "Failed to install Python dependencies"
+
+  # Try with --break-system-packages first (pip >= 22.1), fall back without it for older pip
+  if ! pip3 install --break-system-packages -r /tmp/log-collector-requirements.txt 2>/dev/null; then
+    pip3 install -r /tmp/log-collector-requirements.txt || error_exit "Failed to install Python dependencies"
+  fi
   rm -f /tmp/log-collector-requirements.txt
 
   # Make sure nvidia-bug-report.sh is available
