@@ -33,7 +33,7 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 MAX_LOGS_TO_KEEP = int(os.environ.get("MAX_LOGS_TO_KEEP", "1"))
 
 # API configuration
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://cms-monitoring.crusoecloud.com")
+API_BASE_URL = os.environ.get("LOG_COLLECTOR_API_BASE_URL", "https://cms-monitoring.crusoecloud.com")
 API_POLL_INTERVAL = int(os.environ.get("API_POLL_INTERVAL", "60"))
 API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
 COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))
