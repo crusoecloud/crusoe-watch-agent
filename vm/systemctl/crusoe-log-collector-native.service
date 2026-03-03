@@ -15,7 +15,6 @@ EnvironmentFile=/etc/crusoe/secrets/.monitoring-token
 # Environment variables for log collector
 Environment="LOG_OUTPUT_DIR=/var/log/nvidia-bug-reports"
 Environment="API_ENABLED=true"
-Environment="API_BASE_URL=${LOG_COLLECTOR_API_BASE_URL}"
 Environment="API_POLL_INTERVAL=60"
 Environment="COLLECTION_INTERVAL=3600"
 Environment="COLLECTION_TIMEOUT=300"
