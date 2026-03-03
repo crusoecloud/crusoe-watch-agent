@@ -21,8 +21,8 @@ import logging
 import json
 import requests
 from pathlib import Path
-from typing import Optional, Dict, Any
-from datetime import datetime
+from typing import Optional, Dict, Any, Tuple
+from datetime import datetime, timezone
 
 # Configuration from environment variables
 LOG_OUTPUT_DIR = os.environ.get("LOG_OUTPUT_DIR", "/logs")
@@ -43,7 +43,7 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record):
         log_data = {
-            "timestamp": datetime.utcfromtimestamp(record.created).isoformat() + "Z",
+            "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat().replace('+00:00', 'Z'),
             "level": record.levelname.lower(),
             "message": record.getMessage(),
         }
@@ -338,7 +338,7 @@ class VmNvidiaLogCollector:
         except Exception as e:
             LOG.warning(f"Error during log cleanup (non-critical): {e}")
 
-    def collect_logs_with_timeout(self, event_id: str) -> tuple[bool, Optional[Path], str]:
+    def collect_logs_with_timeout(self, event_id: str) -> Tuple[bool, Optional[Path], str]:
         """
         Collect logs with timeout handling.
 
