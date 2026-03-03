@@ -321,7 +321,7 @@ install_log_collector_native() {
   # Make sure nvidia-bug-report.sh is available
   if ! command -v nvidia-bug-report.sh >/dev/null 2>&1; then
     status "Installing nvidia-utils for nvidia-bug-report.sh"
-    apt-get update && apt-get install -y nvidia-utils-565 || error_exit "Failed to install nvidia-utils"
+    apt-get update && apt-get install -y nvidia-utils-570 || error_exit "Failed to install nvidia-utils"
   fi
 
   status "Log collector native installation complete."
