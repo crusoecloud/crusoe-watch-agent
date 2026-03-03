@@ -7,8 +7,8 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 # GitHub branch (optional override via CLI, defaults to main)
 GITHUB_BRANCH="main"
 
-# Crusoe environment (optional override via CLI, defaults to main)
-ENVIRONMENT="prod"
+# CMS base URL (optional, defaults to prod)
+CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
 
 # Installation mode: "docker" (default) or "native" (--no-docker)
 INSTALL_MODE="docker"
@@ -56,30 +56,21 @@ declare -A -r DCGM_EXPORTER_VERSION_MAP=(
   ["24.04"]="4.3.1-4.4.0-ubi9"
 )
 
-# environment to CMS base URL map
-declare -A -r CMS_BASE_URL_MAP=(
-  ["dev"]="https://cms-monitoring.crusoecloud.xyz"
-  ["staging"]="https://cms-monitoring.crusoecloud.site"
-  ["prod"]="https://cms-monitoring.crusoecloud.com"
-)
-
 # CLI args parsing
 usage() {
   echo "Usage: $0 <command> [options]"
   echo "Commands: install | uninstall | refresh-token | upgrade | help"
   echo "Options:"
   echo "  --no-docker                               Install using native binaries instead of Docker (default: Docker)"
-  echo "  --env, -e ENV                             Environment: dev, staging, or prod (default: prod)"
   echo "  --dcgm-exporter-service-name NAME         Specify custom DCGM exporter service name"
   echo "  --dcgm-exporter-service-port PORT         Specify custom DCGM exporter port"
   echo "  --replace-dcgm-exporter [SERVICE_NAME]    Replace pre-installed dcgm-exporter systemd service with Crusoe version for full metrics collection."
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "                                            Optional SERVICE_NAME defaults to dcgm-exporter"
-  echo "Defaults: NAME=crusoe-dcgm-exporter, PORT=9400, MODE=docker, ENV=prod"
+  echo "Defaults: NAME=crusoe-dcgm-exporter, PORT=9400, MODE=docker"
   echo "Examples:"
   echo "  $0 install --branch main"
   echo "  $0 install --no-docker"
-  echo "  $0 install --env dev"
   echo "  $0 install --replace-dcgm-exporter"
   echo "  $0 install --replace-dcgm-exporter my-dcgm-exporter"
   echo "  $0 uninstall"
@@ -116,10 +107,9 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
-      # this is a hidden option to be used for internal testing
-      --env|-e)
+      --url)
         if [[ -n "$2" ]]; then
-          ENVIRONMENT="$2"; shift 2
+          CMS_BASE_URL="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -608,9 +598,9 @@ do_install() {
   cat <<EOF > "$ENV_FILE"
 VM_ID='${CRUSOE_VM_ID}'
 DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
-TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL_MAP[$ENVIRONMENT]}/ingest'
-LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL_MAP[$ENVIRONMENT]}/logs/ingest}'
-LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL_MAP[$ENVIRONMENT]}'
+TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
+LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}'
+LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
 AGENT_VERSION='${AGENT_VERSION}'
 EOF
   [[ "$INSTALL_MODE" == "docker" ]] && echo "DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'" >> "$ENV_FILE"
