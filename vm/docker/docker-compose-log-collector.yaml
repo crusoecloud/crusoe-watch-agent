@@ -4,9 +4,6 @@ services:
     container_name: crusoe-log-collector
     hostname: crusoe-log-collector
 
-    # Privileged for dmidecode and GPU access
-    privileged: true
-
     # GPU runtime for nvidia-bug-report.sh to access GPUs
     deploy:
       resources:
@@ -23,19 +20,12 @@ services:
       - /sys:/host/sys:ro
 
     env_file:
-      # VM_ID and AGENT_VERSION
       - ./.env
-      # CRUSOE_AUTH_TOKEN (used by log collector)
       - /etc/crusoe/secrets/.monitoring-token
 
     environment:
-      - LOG_OUTPUT_DIR=/logs
       - API_ENABLED=true
-      - API_POLL_INTERVAL=60
-      - COLLECTION_INTERVAL=3600
-      - COLLECTION_TIMEOUT=300
-      - MAX_LOGS_TO_KEEP=1
-      - LOG_LEVEL=INFO
 
+    privileged: true
     network_mode: host
     restart: always
