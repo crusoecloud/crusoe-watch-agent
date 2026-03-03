@@ -288,6 +288,11 @@ install_log_collector_native() {
     apt-get install -y python3-pip || error_exit "Failed to install python3-pip."
   fi
 
+  # Ensure dmidecode is installed for VM ID detection
+  if ! command_exists dmidecode; then
+    apt-get install -y dmidecode || error_exit "Failed to install dmidecode."
+  fi
+
   # Create installation directory
   local INSTALL_DIR="/opt/crusoe-log-collector"
   mkdir -p "$INSTALL_DIR" || error_exit "Failed to create $INSTALL_DIR"
