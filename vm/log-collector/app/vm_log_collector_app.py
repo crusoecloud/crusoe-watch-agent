@@ -24,9 +24,6 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
 
-# Version for VM log collector
-VERSION = "1.0.0"
-
 # Configuration from environment variables
 LOG_OUTPUT_DIR = os.environ.get("LOG_OUTPUT_DIR", "/logs")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -57,7 +54,7 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data)
 
 
-# Logging setup with JSON formatter
+# Logging setup
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(JSONFormatter())
 logging.basicConfig(
@@ -470,7 +467,7 @@ class VmNvidiaLogCollector:
 
     def run(self):
         """Main execution loop."""
-        LOG.info(f"NVIDIA Log Collector v{VERSION} started on VM: {self.hostname}")
+        LOG.info(f"NVIDIA Log Collector v{os.environ.get('AGENT_VERSION', 'unknown')} started on VM: {self.hostname}")
         LOG.info(f"VM ID: {self.vm_id}")
         LOG.info(f"Output directory: {self.output_dir}")
         LOG.info(f"API-driven mode: {API_ENABLED}")
