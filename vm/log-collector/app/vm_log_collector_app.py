@@ -263,26 +263,44 @@ class VmNvidiaLogCollector:
             log_path_base = self.output_dir / log_filename_base
             actual_log_path = Path(f"{log_path_base}.gz")
 
-            # Execute nvidia-bug-report.sh bundled in the container
-            cmd = ["/usr/bin/nvidia-bug-report.sh", "--output-file", str(log_path_base)]
+            # Temporarily rename mst to prevent nvidia-bug-report.sh from hanging on 'mst gpu add'
+            # Fix: Hide mst binary so nvidia-bug-report.sh skips MST sections
+            mst_path = Path("/usr/bin/mst")
+            mst_backup_path = Path("/usr/bin/mstbkup")
+            mst_was_renamed = False
 
-            LOG.info(f"Running command: {' '.join(cmd)}")
+            try:
+                if mst_path.exists():
+                    LOG.debug("Temporarily renaming /usr/bin/mst to prevent hang")
+                    mst_path.rename(mst_backup_path)
+                    mst_was_renamed = True
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=COLLECTION_TIMEOUT
-            )
+                # Execute nvidia-bug-report.sh bundled in the container
+                cmd = ["/usr/bin/nvidia-bug-report.sh", "--output-file", str(log_path_base)]
 
-            if result.returncode == 0 and actual_log_path.exists():
-                LOG.info(f"nvidia-bug-report.sh completed successfully: {actual_log_path}")
-                return actual_log_path
-            else:
-                LOG.error(f"nvidia-bug-report.sh failed with return code {result.returncode}")
-                LOG.error(f"stdout: {result.stdout}")
-                LOG.error(f"stderr: {result.stderr}")
-                return None
+                LOG.info(f"Running command: {' '.join(cmd)}")
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=COLLECTION_TIMEOUT
+                )
+
+                if result.returncode == 0 and actual_log_path.exists():
+                    LOG.info(f"nvidia-bug-report.sh completed successfully: {actual_log_path}")
+                    return actual_log_path
+                else:
+                    LOG.error(f"nvidia-bug-report.sh failed with return code {result.returncode}")
+                    LOG.error(f"stdout: {result.stdout}")
+                    LOG.error(f"stderr: {result.stderr}")
+                    return None
+
+            finally:
+                # Restore mst binary
+                if mst_was_renamed and mst_backup_path.exists():
+                    LOG.debug("Restoring /usr/bin/mst from backup")
+                    mst_backup_path.rename(mst_path)
 
         except subprocess.TimeoutExpired:
             LOG.error(f"nvidia-bug-report.sh timed out after {COLLECTION_TIMEOUT}s")

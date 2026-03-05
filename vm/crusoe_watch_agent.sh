@@ -312,9 +312,12 @@ install_log_collector_native() {
   fi
   rm -f /tmp/log-collector-requirements.txt
 
-  # Make sure nvidia-bug-report.sh is available
-  if ! command -v nvidia-bug-report.sh >/dev/null 2>&1; then
-    status "Installing nvidia-utils for nvidia-bug-report.sh"
+  # Check if nvidia-bug-report.sh is available
+  if command -v nvidia-bug-report.sh >/dev/null 2>&1; then
+    local nvidia_utils_version=$(dpkg -l | grep nvidia-utils | awk '{print $3}' | head -1)
+    status "nvidia-bug-report.sh already available (nvidia-utils $nvidia_utils_version)"
+  else
+    status "nvidia-bug-report.sh not found, installing nvidia-utils-565"
     apt-get update && apt-get install -y nvidia-utils-565 || error_exit "Failed to install nvidia-utils"
   fi
 
