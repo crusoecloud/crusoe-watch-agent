@@ -3,3 +3,4 @@
 .idea/*
 k8s/vector-config-reloader/app/__pycache__/*
 k8s/log-collector/app/__pycache__/*
+test/*
