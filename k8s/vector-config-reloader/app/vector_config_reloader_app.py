@@ -370,7 +370,6 @@ if exists(.level) {
         # add only crusoe_resource tag if app_id is present
         if endpoint_config.get("app_id"):
             vrl_lines.append(f'.tags.crusoe_resource = "custom_internal"')
-            vrl_lines.append(f'.tags.customer_project_id = "{self.project_id}"')
             vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
         else:
             vrl_lines.append(f'.tags.nodepool = "{self.nodepool_id}"')
@@ -684,7 +683,7 @@ if exists(.level) {
     def handle_pod_event(self, event):
         pod = event["object"]
         if not (VectorConfigReloader.is_pod_active(pod) or VectorConfigReloader.is_pod_terminating(pod)):
-            LOG.info(f"Pod {pod.metadata.name} state:({pod.status.phase}) is neither running nor terminating. ")
+            LOG.info(f"Pod {pod.metadata.name} state:({pod.status.phase}) is neither running nor terminating.")
             return
         
         current_vector_cfg = YamlUtils.load_yaml_config(VECTOR_CONFIG_PATH)
