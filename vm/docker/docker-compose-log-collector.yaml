@@ -1,0 +1,31 @@
+services:
+  crusoe-log-collector:
+    image: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector-vm:${AGENT_VERSION:-latest}
+    container_name: crusoe-log-collector
+    hostname: crusoe-log-collector
+
+    # GPU runtime for nvidia-bug-report.sh to access GPUs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    volumes:
+      # Persistent log storage on host
+      - /var/log/nvidia-bug-reports:/logs
+      # DMI information for VM ID detection
+      - /sys:/host/sys:ro
+
+    env_file:
+      - ./.env
+      - /etc/crusoe/secrets/.monitoring-token
+
+    environment:
+      - API_ENABLED=true
+
+    privileged: true
+    network_mode: host
+    restart: always

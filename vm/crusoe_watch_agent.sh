@@ -7,8 +7,8 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 # GitHub branch (optional override via CLI, defaults to main)
 GITHUB_BRANCH="main"
 
-# Crusoe environment (optional override via CLI, defaults to main)
-ENVIRONMENT="prod"
+# CMS base URL (optional, defaults to prod)
+CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
 
 # Installation mode: "docker" (default) or "native" (--no-docker)
 INSTALL_MODE="docker"
@@ -20,8 +20,11 @@ REMOTE_DCGM_EXPORTER_METRICS_CONFIG="vm/config/dcp-metrics-included.csv"
 REMOTE_DCGM_EXPORTER_METRICS_CONFIG_NO_NVLINK="vm/config/dcp-metrics-included-no-nvlink.csv"
 REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER="vm/docker/docker-compose-dcgm-exporter.yaml"
 REMOTE_DOCKER_COMPOSE_VECTOR="vm/docker/docker-compose-vector.yaml"
+REMOTE_DOCKER_COMPOSE_LOG_COLLECTOR="vm/docker/docker-compose-log-collector.yaml"
 REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE="vm/systemctl/crusoe-dcgm-exporter.service"
+REMOTE_CRUSOE_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-log-collector.service"
+REMOTE_CRUSOE_LOG_COLLECTOR_NATIVE_SERVICE="vm/systemctl/crusoe-log-collector-native.service"
 REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE="vm/systemctl/crusoe-watch-agent-native.service"
 REMOTE_CRUSOE_DCGM_EXPORTER_NATIVE_SERVICE="vm/systemctl/crusoe-dcgm-exporter-native.service"
 SYSTEMCTL_DIR="/etc/systemd/system"
@@ -38,6 +41,7 @@ DCGM_EXPORTER_SERVICE_NAME=$DEFAULT_DCGM_EXPORTER_SERVICE_NAME
 DCGM_EXPORTER_SERVICE_PORT="9400"
 REPLACE_DCGM_EXPORTER=false
 EXISTING_DCGM_EXPORTER_SERVICE="dcgm-exporter"
+DEFAULT_LOG_COLLECTOR_SERVICE_NAME="crusoe-log-collector.service"
 
 # Versioning and upgrade helpers (use vm/VERSION)
 REMOTE_VERSION_FILE="vm/VERSION"
@@ -50,15 +54,6 @@ declare -A -r DCGM_EXPORTER_VERSION_MAP=(
   ["22.04"]="4.3.1-4.4.0-ubuntu22.04"
   ["24.04"]="4.3.1-4.4.0-ubi9"
 )
-
-# environment to crusoe Ingress endpoint Map
-declare -A -r TELEMETRY_INGRESS_MAP=(
-  ["dev"]="https://cms-monitoring.crusoecloud.xyz/ingest"
-  ["staging"]="https://cms-monitoring.crusoecloud.site/ingest"
-  ["prod"]="https://cms-monitoring.crusoecloud.com/ingest"
-)
-
-LOGS_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.com/logs/ingest"
 
 # CLI args parsing
 usage() {
@@ -111,10 +106,9 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
-      # this is a hidden option to be used for internal testing
-      --env|-e)
+      --url)
         if [[ -n "$2" ]]; then
-          ENVIRONMENT="$2"; shift 2
+          CMS_BASE_URL="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -283,6 +277,53 @@ install_dcgm_exporter_native() {
   status "dcgm-exporter installed successfully."
 }
 
+install_log_collector_native() {
+  status "Installing NVIDIA log collector natively."
+
+  # Ensure Python3 and pip are installed
+  if ! command_exists python3; then
+    apt-get update && apt-get install -y python3 || error_exit "Failed to install python3."
+  fi
+  if ! command_exists pip3; then
+    apt-get install -y python3-pip || error_exit "Failed to install python3-pip."
+  fi
+
+  # Ensure dmidecode is installed for VM ID detection
+  if ! command_exists dmidecode; then
+    apt-get install -y dmidecode || error_exit "Failed to install dmidecode."
+  fi
+
+  # Create installation directory
+  local INSTALL_DIR="/opt/crusoe-log-collector"
+  mkdir -p "$INSTALL_DIR" || error_exit "Failed to create $INSTALL_DIR"
+
+  # Download application files
+  status "Downloading log collector application files."
+  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/vm/log-collector/app"
+  wget -q -O "$INSTALL_DIR/vm_log_collector_app.py" "$GITHUB_APP_BASE/vm_log_collector_app.py" || error_exit "Failed to download vm_log_collector_app.py"
+
+  # Download and install requirements
+  local GITHUB_REQ="$GITHUB_RAW_BASE_URL/vm/log-collector/requirements.txt"
+  wget -q -O "/tmp/log-collector-requirements.txt" "$GITHUB_REQ" || error_exit "Failed to download requirements.txt"
+
+  # Try with --break-system-packages first (pip >= 22.1), fall back without it for older pip
+  if ! pip3 install --break-system-packages -r /tmp/log-collector-requirements.txt 2>/dev/null; then
+    pip3 install -r /tmp/log-collector-requirements.txt || error_exit "Failed to install Python dependencies"
+  fi
+  rm -f /tmp/log-collector-requirements.txt
+
+  # Check if nvidia-bug-report.sh is available
+  if command -v nvidia-bug-report.sh >/dev/null 2>&1; then
+    local nvidia_utils_version=$(dpkg -l | grep nvidia-utils | awk '{print $3}' | head -1)
+    status "nvidia-bug-report.sh already available (nvidia-utils $nvidia_utils_version)"
+  else
+    status "nvidia-bug-report.sh not found, installing nvidia-utils-565"
+    apt-get update && apt-get install -y nvidia-utils-565 || error_exit "Failed to install nvidia-utils"
+  fi
+
+  status "Log collector native installation complete."
+}
+
 uninstall_native() {
   status "Removing native packages."
   if command_exists vector; then
@@ -297,6 +338,11 @@ uninstall_native() {
     systemctl stop nvidia-dcgm || true
     systemctl disable nvidia-dcgm || true
     apt-get remove -y 'datacenter-gpu-manager-4-cuda*' || true
+  fi
+  # Remove log collector
+  if [[ -d "/opt/crusoe-log-collector" ]]; then
+    status "Removing log collector files."
+    rm -rf /opt/crusoe-log-collector || true
   fi
 }
 
@@ -496,6 +542,26 @@ do_install() {
         wget -q -O "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_DCGM_EXPORTER_NATIVE_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_DCGM_EXPORTER_NATIVE_SERVICE"
       fi
     fi
+
+    # Download NVIDIA Log Collector artifacts
+    if [[ "$INSTALL_MODE" == "docker" ]]; then
+      status "Download NVIDIA Log Collector docker-compose file."
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-log-collector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_LOG_COLLECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_LOG_COLLECTOR"
+
+      status "Download $DEFAULT_LOG_COLLECTOR_SERVICE_NAME systemd unit."
+      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_LOG_COLLECTOR_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_LOG_COLLECTOR_SERVICE"
+    else
+      status "Installing log collector natively."
+      install_log_collector_native
+
+      status "Download $DEFAULT_LOG_COLLECTOR_SERVICE_NAME native systemd unit."
+      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_LOG_COLLECTOR_NATIVE_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_LOG_COLLECTOR_NATIVE_SERVICE"
+    fi
+
+    # Create log directory for NVIDIA log collector
+    status "Creating NVIDIA log collection directory."
+    mkdir -p /var/log/nvidia-bug-reports
+    chmod 755 /var/log/nvidia-bug-reports
   else
      status "Copy CPU Vector config."
      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CPU_VM"
@@ -536,24 +602,15 @@ do_install() {
 
   # Create .env file
   status "Creating .env file with VM_ID and DCGM_EXPORTER_PORT."
-  if [[ "$INSTALL_MODE" == "docker" ]]; then
-    cat <<EOF > "$ENV_FILE"
+  cat <<EOF > "$ENV_FILE"
 VM_ID='${CRUSOE_VM_ID}'
 DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
-DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'
-TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
-LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
+TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
+LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}'
+LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
 AGENT_VERSION='${AGENT_VERSION}'
 EOF
-  else
-    cat <<EOF > "$ENV_FILE"
-VM_ID='${CRUSOE_VM_ID}'
-DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
-TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
-LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
-AGENT_VERSION='${AGENT_VERSION}'
-EOF
-  fi
+  [[ "$INSTALL_MODE" == "docker" ]] && echo "DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'" >> "$ENV_FILE"
   echo ".env file created at $ENV_FILE"
 
   # Start DCGM exporter after .env is ready
@@ -565,6 +622,12 @@ EOF
     systemctl enable "$DCGM_EXPORTER_SERVICE_NAME"
     echo "systemctl start $DCGM_EXPORTER_SERVICE_NAME"
     systemctl start "$DCGM_EXPORTER_SERVICE_NAME"
+
+    status "Enable and start systemd services for $DEFAULT_LOG_COLLECTOR_SERVICE_NAME."
+    echo "systemctl enable $DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl enable "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
+    echo "systemctl start $DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl start "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
   fi
 
   # Download the appropriate crusoe-watch-agent systemd unit
@@ -590,6 +653,7 @@ EOF
   status "Setup Complete! (mode: $INSTALL_MODE)"
   if $HAS_NVIDIA_GPUS; then
     echo "Check status of $DCGM_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DCGM_EXPORTER_SERVICE_NAME'"
+    echo "Check status of $DEFAULT_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_LOG_COLLECTOR_SERVICE_NAME'"
   fi
   echo "Check status of crusoe-watch-agent service: 'sudo systemctl status crusoe-watch-agent.service'"
   echo "Setup finished successfully!"
@@ -613,9 +677,22 @@ do_uninstall() {
     systemctl disable "$DEFAULT_DCGM_EXPORTER_SERVICE_NAME" || true
   fi
 
+  status "Stopping and disabling NVIDIA Log Collector service if installed by this script."
+  if service_exists "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"; then
+    systemctl stop "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME" || true
+    systemctl disable "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME" || true
+  fi
+  # Also check for legacy service name
+  if service_exists "crusoe-nvidia-log-collector.service"; then
+    systemctl stop "crusoe-nvidia-log-collector.service" || true
+    systemctl disable "crusoe-nvidia-log-collector.service" || true
+  fi
+
   status "Removing systemd unit files."
   rm -f "$SYSTEMCTL_DIR/crusoe-watch-agent.service" || true
   rm -f "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" || true
+  rm -f "$SYSTEMCTL_DIR/$DEFAULT_LOG_COLLECTOR_SERVICE_NAME" || true
+  rm -f "$SYSTEMCTL_DIR/crusoe-nvidia-log-collector.service" || true  # Legacy name
   systemctl daemon-reload || true
 
   # Remove native packages if installed in native mode
