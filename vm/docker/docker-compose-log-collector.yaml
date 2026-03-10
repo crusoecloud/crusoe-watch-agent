@@ -27,5 +27,4 @@ services:
       - API_ENABLED=true
 
     privileged: true
-    network_mode: host
     restart: always
