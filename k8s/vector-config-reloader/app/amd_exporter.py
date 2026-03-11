@@ -45,6 +45,7 @@ class AmdExporterManager:
             """
 metrics_allowlist = [
     "gpu_used_visible_vram",
+    "gpu_free_visible_vram",
     "gpu_total_visible_vram",
     "gpu_gfx_activity",
     "gpu_power_usage",
@@ -57,6 +58,7 @@ metrics_allowlist = [
     "pcie_replay_count",
     "gpu_ecc_uncorrect_total",
     "gpu_ecc_correct_total",
+    "gpu_afid_errors",
     "gpu_prof_occupancy_percent",
     "gpu_prof_sm_active",
 ]

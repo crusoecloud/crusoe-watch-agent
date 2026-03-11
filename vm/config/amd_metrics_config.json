@@ -8,6 +8,7 @@
   "GPUConfig": {
     "Fields": [
       "GPU_USED_VISIBLE_VRAM",
+      "GPU_FREE_VISIBLE_VRAM",
       "GPU_TOTAL_VISIBLE_VRAM",
       "GPU_GFX_ACTIVITY",
       "GPU_POWER_USAGE",
@@ -20,6 +21,7 @@
       "PCIE_REPLAY_COUNT",
       "GPU_ECC_UNCORRECT_TOTAL",
       "GPU_ECC_CORRECT_TOTAL",
+      "GPU_AFID_ERRORS",
       "GPU_PROF_OCCUPANCY_PERCENT",
       "GPU_PROF_SM_ACTIVE"
     ],
