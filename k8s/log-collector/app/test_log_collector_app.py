@@ -68,13 +68,13 @@ class TestNvidiaLogCollector(unittest.TestCase):
 
     @patch('log_collector_app.config.load_incluster_config')
     @patch('log_collector_app.client.CoreV1Api')
-    def test_find_nvidia_driver_pod_success(self, mock_core_api, mock_load_config):
-        """Test finding NVIDIA driver pod."""
+    def test_find_nvidia_driver_pod_by_label(self, mock_core_api, mock_load_config):
+        """Test finding NVIDIA driver pod by label selector (primary method)."""
         collector = NvidiaLogCollector()
 
-        # Mock pod
+        # Mock pod found by label selector
         mock_pod = Mock()
-        mock_pod.metadata.name = 'nvidia-gpu-driver-ubuntu22.04-abc123'
+        mock_pod.metadata.name = 'nvidia-driver-daemonset-abc123'
         mock_pod.status.phase = 'Running'
 
         mock_pod_list = Mock()
@@ -85,22 +85,62 @@ class TestNvidiaLogCollector(unittest.TestCase):
         result = collector.find_nvidia_driver_pod()
 
         self.assertIsNotNone(result)
-        self.assertEqual(result.metadata.name, 'nvidia-gpu-driver-ubuntu22.04-abc123')
+        self.assertEqual(result.metadata.name, 'nvidia-driver-daemonset-abc123')
+        # Verify only one call was made (found by label, no fallback needed)
+        self.assertEqual(collector.k8s_api.list_namespaced_pod.call_count, 1)
+        # Verify label selector was used
+        call_kwargs = collector.k8s_api.list_namespaced_pod.call_args[1]
+        self.assertEqual(call_kwargs['label_selector'], 'app.kubernetes.io/component=nvidia-driver')
 
     @patch('log_collector_app.config.load_incluster_config')
     @patch('log_collector_app.client.CoreV1Api')
     def test_find_nvidia_driver_pod_not_found(self, mock_core_api, mock_load_config):
-        """Test when NVIDIA driver pod is not found."""
+        """Test when NVIDIA driver pod is not found by label or prefix."""
         collector = NvidiaLogCollector()
 
         mock_pod_list = Mock()
         mock_pod_list.items = []
 
+        # Both label selector and prefix fallback return empty
         collector.k8s_api.list_namespaced_pod = Mock(return_value=mock_pod_list)
 
         result = collector.find_nvidia_driver_pod()
 
         self.assertIsNone(result)
+        # Verify list_namespaced_pod was called twice (label lookup + prefix fallback)
+        self.assertEqual(collector.k8s_api.list_namespaced_pod.call_count, 2)
+
+    @patch('log_collector_app.config.load_incluster_config')
+    @patch('log_collector_app.client.CoreV1Api')
+    def test_find_nvidia_driver_pod_prefix_fallback(self, mock_core_api, mock_load_config):
+        """Test finding NVIDIA driver pod via name prefix fallback."""
+        collector = NvidiaLogCollector()
+
+        # First call (label selector) returns empty
+        mock_empty_list = Mock()
+        mock_empty_list.items = []
+
+        # Second call (prefix fallback) returns the pod
+        mock_pod = Mock()
+        mock_pod.metadata.name = 'nvidia-gpu-driver-ubuntu22.04-abc123'
+        mock_pod.status.phase = 'Running'
+
+        mock_pod_list_with_pod = Mock()
+        mock_pod_list_with_pod.items = [mock_pod]
+
+        collector.k8s_api.list_namespaced_pod = Mock(
+            side_effect=[mock_empty_list, mock_pod_list_with_pod]
+        )
+
+        result = collector.find_nvidia_driver_pod()
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.metadata.name, 'nvidia-gpu-driver-ubuntu22.04-abc123')
+        # Verify list_namespaced_pod was called twice
+        self.assertEqual(collector.k8s_api.list_namespaced_pod.call_count, 2)
+        # Verify first call used label selector
+        first_call_kwargs = collector.k8s_api.list_namespaced_pod.call_args_list[0][1]
+        self.assertEqual(first_call_kwargs['label_selector'], 'app.kubernetes.io/component=nvidia-driver')
 
     @patch('log_collector_app.config.load_incluster_config')
     @patch('log_collector_app.client.CoreV1Api')
@@ -342,10 +382,11 @@ class TestCollectionWorkflow(unittest.TestCase):
         collector.cleanup_remote_log = Mock(return_value=True)
         collector.cleanup_old_logs = Mock()
 
-        result = collector.collect_logs()
+        log_path, error_msg = collector.collect_logs()
 
-        self.assertIsNotNone(result)
-        self.assertEqual(result, test_log)
+        self.assertIsNotNone(log_path)
+        self.assertEqual(log_path, test_log)
+        self.assertEqual(error_msg, "")
         # Verify execute was called with event_id=None
         collector.execute_nvidia_bug_report.assert_called_once_with(mock_pod, None)
 
@@ -372,24 +413,64 @@ class TestCollectionWorkflow(unittest.TestCase):
         collector.cleanup_remote_log = Mock(return_value=True)
         collector.cleanup_old_logs = Mock()
 
-        result = collector.collect_logs(event_id='evt-123')
+        log_path, error_msg = collector.collect_logs(event_id='evt-123')
 
-        self.assertIsNotNone(result)
-        self.assertEqual(result, test_log)
+        self.assertIsNotNone(log_path)
+        self.assertEqual(log_path, test_log)
+        self.assertEqual(error_msg, "")
         # Verify execute was called with event_id
         collector.execute_nvidia_bug_report.assert_called_once_with(mock_pod, 'evt-123')
 
     @patch('log_collector_app.config.load_incluster_config')
     @patch('log_collector_app.client.CoreV1Api')
     def test_collect_logs_no_driver_pod(self, mock_core_api, mock_load_config):
-        """Test log collection when driver pod not found."""
+        """Test log collection when driver pod not found returns specific error."""
         collector = NvidiaLogCollector()
         collector.find_nvidia_driver_pod = Mock(return_value=None)
         collector.cleanup_old_logs = Mock()
 
-        result = collector.collect_logs()
+        log_path, error_msg = collector.collect_logs()
 
-        self.assertIsNone(result)
+        self.assertIsNone(log_path)
+        self.assertIn("NVIDIA driver pod not found", error_msg)
+        self.assertIn(collector.node_name, error_msg)
+
+    @patch('log_collector_app.config.load_incluster_config')
+    @patch('log_collector_app.client.CoreV1Api')
+    def test_collect_logs_execute_fails(self, mock_core_api, mock_load_config):
+        """Test log collection when nvidia-bug-report execution fails."""
+        collector = NvidiaLogCollector()
+
+        mock_pod = Mock()
+        mock_pod.metadata.name = 'nvidia-gpu-driver-test'
+        collector.find_nvidia_driver_pod = Mock(return_value=mock_pod)
+        collector.execute_nvidia_bug_report = Mock(return_value=None)
+        collector.cleanup_old_logs = Mock()
+
+        log_path, error_msg = collector.collect_logs()
+
+        self.assertIsNone(log_path)
+        self.assertIn("Failed to execute nvidia-bug-report.sh", error_msg)
+        self.assertIn(mock_pod.metadata.name, error_msg)
+
+    @patch('log_collector_app.config.load_incluster_config')
+    @patch('log_collector_app.client.CoreV1Api')
+    def test_collect_logs_download_fails(self, mock_core_api, mock_load_config):
+        """Test log collection when download fails."""
+        collector = NvidiaLogCollector()
+
+        mock_pod = Mock()
+        mock_pod.metadata.name = 'nvidia-gpu-driver-test'
+        collector.find_nvidia_driver_pod = Mock(return_value=mock_pod)
+        collector.execute_nvidia_bug_report = Mock(return_value='/tmp/test-log.log.gz')
+        collector.download_log_file = Mock(return_value=None)
+        collector.cleanup_old_logs = Mock()
+
+        log_path, error_msg = collector.collect_logs()
+
+        self.assertIsNone(log_path)
+        self.assertIn("Failed to download log file", error_msg)
+        self.assertIn(mock_pod.metadata.name, error_msg)
 
 
 if __name__ == '__main__':
