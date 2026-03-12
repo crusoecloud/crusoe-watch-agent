@@ -351,6 +351,7 @@ if exists(.level) {
         if endpoint_config.get("app_id"):
             vrl_lines.append(f'.tags.crusoe_resource = "custom_internal"')
             vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
+            vrl_lines.append(f'.tags.app_id = "{endpoint_config["app_id"]}"')
         else:
             vrl_lines.append(f'.tags.nodepool = "{self.nodepool_id}"')
             vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
