@@ -289,21 +289,41 @@ class NvidiaLogCollector:
         """
         Find the NVIDIA GPU driver pod running on this node.
 
+        Primary: Uses label selector (app.kubernetes.io/component=nvidia-driver) which is
+        set by the official NVIDIA GPU Operator.
+        Fallback: Uses pod name prefix for custom/legacy deployments.
+
         Returns:
             V1Pod object if found, None otherwise
         """
         try:
-            # List pods in nvidia-gpu-operator namespace on this node
+            # Primary: Find by label selector (reliable, set by GPU Operator)
+            pods = self.k8s_api.list_namespaced_pod(
+                namespace=self.nvidia_namespace,
+                field_selector=f"spec.nodeName={self.node_name}",
+                label_selector="app.kubernetes.io/component=nvidia-driver"
+            )
+
+            for pod in pods.items:
+                if pod.status.phase == "Running":
+                    LOG.info(f"Found NVIDIA driver pod by label selector: {pod.metadata.name}")
+                    return pod
+                else:
+                    LOG.warning(
+                        f"Found NVIDIA driver pod {pod.metadata.name} by label but it's not Running (status: {pod.status.phase})"
+                    )
+
+            # Fallback: Find by pod name prefix (for custom/legacy deployments)
+            LOG.info(f"No pod found with label selector, trying name prefix fallback: '{self.driver_pod_prefix}'")
             pods = self.k8s_api.list_namespaced_pod(
                 namespace=self.nvidia_namespace,
                 field_selector=f"spec.nodeName={self.node_name}"
             )
 
-            # Find the driver pod
             for pod in pods.items:
                 if pod.metadata.name.startswith(self.driver_pod_prefix):
                     if pod.status.phase == "Running":
-                        LOG.info(f"Found NVIDIA driver pod: {pod.metadata.name}")
+                        LOG.info(f"Found NVIDIA driver pod by name prefix: {pod.metadata.name}")
                         return pod
                     else:
                         LOG.warning(
@@ -681,7 +701,7 @@ class NvidiaLogCollector:
         except Exception as e:
             LOG.warning(f"Error during log cleanup (non-critical): {e}")
 
-    def collect_logs(self, event_id: Optional[str] = None) -> Optional[Path]:
+    def collect_logs(self, event_id: Optional[str] = None) -> tuple[Optional[Path], str]:
         """
         Main log collection workflow.
 
@@ -689,7 +709,9 @@ class NvidiaLogCollector:
             event_id: Optional event ID to include in filename and for API tracking
 
         Returns:
-            Path to collected log file if successful, None otherwise
+            Tuple of (path to collected log file, error message).
+            On success: (Path, "")
+            On failure: (None, "specific error message")
         """
         LOG.info(f"Starting log collection cycle (node {self.node_name}){f' for event {event_id}' if event_id else ''}")
 
@@ -704,31 +726,35 @@ class NvidiaLogCollector:
             local_log_path = self.execute_nvidia_bug_report_local(event_id)
 
             if not local_log_path:
-                LOG.error("Failed to execute nvidia-bug-report.sh locally")
-                return None
+                error_msg = "Failed to execute nvidia-bug-report.sh locally (bundled driver mode)"
+                LOG.error(error_msg)
+                return None, error_msg
         else:
             # A100/L40S/etc: Execute via GPU Operator driver pod
             LOG.info("Using GPU Operator mode (driver pod)")
             driver_pod = self.find_nvidia_driver_pod()
             if not driver_pod:
-                LOG.error("Cannot collect logs: NVIDIA driver pod not found")
-                return None
+                error_msg = f"NVIDIA driver pod not found on node {self.node_name} in namespace {self.nvidia_namespace}"
+                LOG.error(f"Cannot collect logs: {error_msg}")
+                return None, error_msg
 
             remote_log_path = self.execute_nvidia_bug_report(driver_pod, event_id)
             if not remote_log_path:
-                LOG.error("Failed to execute nvidia-bug-report.sh in driver pod")
-                return None
+                error_msg = f"Failed to execute nvidia-bug-report.sh in driver pod {driver_pod.metadata.name}"
+                LOG.error(error_msg)
+                return None, error_msg
 
             local_log_path = self.download_log_file(driver_pod, remote_log_path)
             if not local_log_path:
-                LOG.error("Failed to download log file from driver pod")
-                return None
+                error_msg = f"Failed to download log file from driver pod {driver_pod.metadata.name}"
+                LOG.error(error_msg)
+                return None, error_msg
 
             # Clean up remote log file
             self.cleanup_remote_log(driver_pod, remote_log_path)
 
         LOG.info(f"Log collection completed successfully: {local_log_path} ({local_log_path.stat().st_size / (1024*1024):.2f} MB)")
-        return local_log_path
+        return local_log_path, ""
 
     def collect_logs_with_timeout(self, event_id: str) -> tuple[bool, Optional[Path], str]:
         """
@@ -746,8 +772,10 @@ class NvidiaLogCollector:
 
         def collection_target():
             try:
-                log_path = self.collect_logs(event_id)
+                log_path, error_msg = self.collect_logs(event_id)
                 result["log_path"] = log_path
+                if error_msg:
+                    result["error"] = error_msg
                 result["completed"] = True
             except Exception as e:
                 result["error"] = str(e)
@@ -769,7 +797,7 @@ class NvidiaLogCollector:
         if result["log_path"]:
             return True, result["log_path"], ""
         else:
-            return False, None, "Collection failed without specific error"
+            return False, None, "Collection failed with unknown error"
 
     def _get_driver_container_name(self, pod: client.V1Pod) -> Optional[str]:
         """
@@ -801,7 +829,9 @@ class NvidiaLogCollector:
 
         if RUN_ONCE:
             # Run once and exit
-            log_path = self.collect_logs()
+            log_path, error_msg = self.collect_logs()
+            if error_msg:
+                LOG.error(f"Collection failed: {error_msg}")
             sys.exit(0 if log_path else 1)
         elif API_ENABLED:
             # API-driven mode: poll for tasks and collect logs on-demand
@@ -864,7 +894,9 @@ class NvidiaLogCollector:
 
         while True:
             try:
-                self.collect_logs()
+                log_path, error_msg = self.collect_logs()
+                if error_msg:
+                    LOG.error(f"Collection failed: {error_msg}")
             except Exception as e:
                 LOG.error(f"Error during log collection: {e}", exc_info=True)
 
