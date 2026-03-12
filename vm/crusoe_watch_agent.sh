@@ -7,8 +7,8 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 # GitHub branch (optional override via CLI, defaults to main)
 GITHUB_BRANCH="main"
 
-# Crusoe environment (optional override via CLI, defaults to main)
-ENVIRONMENT="prod"
+# Crusoe domain suffix (optional override via CLI, defaults to com)
+DOMAIN="com"
 
 # Installation mode: "docker" (default) or "native" (--no-docker)
 INSTALL_MODE="docker"
@@ -51,14 +51,7 @@ declare -A -r DCGM_EXPORTER_VERSION_MAP=(
   ["24.04"]="4.3.1-4.4.0-ubi9"
 )
 
-# environment to crusoe Ingress endpoint Map
-declare -A -r TELEMETRY_INGRESS_MAP=(
-  ["dev"]="https://cms-monitoring.crusoecloud.xyz/ingest"
-  ["staging"]="https://cms-monitoring.crusoecloud.site/ingest"
-  ["prod"]="https://cms-monitoring.crusoecloud.com/ingest"
-)
-
-LOGS_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.com/logs/ingest"
+LOGS_INGRESS_ENDPOINT=""
 
 # CLI args parsing
 usage() {
@@ -112,9 +105,9 @@ parse_args() {
         fi
         ;;
       # this is a hidden option to be used for internal testing
-      --env|-e)
+      --domain|-d)
         if [[ -n "$2" ]]; then
-          ENVIRONMENT="$2"; shift 2
+          DOMAIN="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -541,7 +534,7 @@ do_install() {
 VM_ID='${CRUSOE_VM_ID}'
 DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
 DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'
-TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
+TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 AGENT_VERSION='${AGENT_VERSION}'
 EOF
@@ -549,7 +542,7 @@ EOF
     cat <<EOF > "$ENV_FILE"
 VM_ID='${CRUSOE_VM_ID}'
 DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
-TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
+TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 AGENT_VERSION='${AGENT_VERSION}'
 EOF
@@ -750,6 +743,12 @@ parse_args "$@"
 
 # Update base URL to reflect chosen branch
 GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${GITHUB_BRANCH}"
+
+# Construct endpoints from domain (after parse_args so --domain is applied)
+TELEMETRY_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.${DOMAIN}/ingest"
+if [[ -z "$LOGS_INGRESS_ENDPOINT" ]]; then
+  LOGS_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.${DOMAIN}/logs/ingest"
+fi
 
 # --- Main Script ---
 
