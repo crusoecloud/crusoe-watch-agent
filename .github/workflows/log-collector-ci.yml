@@ -5,6 +5,7 @@ on:
     branches: ["main"]
     tags:
       - "v*"
+      - "vm-v*"
     # Run if changes occur under K8s or VM log-collector paths
     paths:
       - 'k8s/log-collector/**'
@@ -53,7 +54,7 @@ jobs:
           - name: vm
             image: log-collector-vm
             context: ./vm/log-collector
-            semver_prefix: "v"
+            semver_prefix: "vm-v"
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
