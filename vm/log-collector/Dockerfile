@@ -29,8 +29,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     acpica-tools \
     && echo "Installing nvidia-utils..." \
-    && apt-get install -y --no-install-recommends nvidia-utils-550 \
-    && dpkg --force-depends -r libnvidia-compute-550 cuda-compat-12-8 2>/dev/null || true \
+    && apt-get install -y --no-install-recommends nvidia-utils-565 \
+    && dpkg --force-depends -r libnvidia-compute-565 cuda-compat-12-8 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy pip-installed packages from builder
@@ -42,4 +42,4 @@ COPY app/ .
 # Create logs directory
 RUN mkdir -p /logs && chmod 755 /logs
 
-CMD ["python3", "log_collector_app.py"]
+CMD ["python3", "vm_log_collector_app.py"]
