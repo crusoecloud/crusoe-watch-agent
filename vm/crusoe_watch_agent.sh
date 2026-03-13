@@ -597,8 +597,9 @@ do_install() {
   status "Download VERSION file."
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
-  # Read agent version from VERSION file
-  AGENT_VERSION=$(tr -d '[:space:]' < "$INSTALLED_VERSION_FILE")
+  # Read agent version from VERSION file and prefix with vm-v to match Docker tag
+  VERSION_NUMBER=$(tr -d '[:space:]' < "$INSTALLED_VERSION_FILE")
+  AGENT_VERSION="vm-v${VERSION_NUMBER}"
 
   # Create .env file
   status "Creating .env file with VM_ID and DCGM_EXPORTER_PORT."
