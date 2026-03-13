@@ -27,7 +27,6 @@ REMOTE_CRUSOE_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-log-collector.service"
 REMOTE_CRUSOE_LOG_COLLECTOR_NATIVE_SERVICE="vm/systemctl/crusoe-log-collector-native.service"
 REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE="vm/systemctl/crusoe-watch-agent-native.service"
 REMOTE_CRUSOE_DCGM_EXPORTER_NATIVE_SERVICE="vm/systemctl/crusoe-dcgm-exporter-native.service"
-REMOTE_CRUSOE_NVIDIA_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-nvidia-log-collector.service"
 SYSTEMCTL_DIR="/etc/systemd/system"
 CRUSOE_WATCH_AGENT_DIR="/etc/crusoe/crusoe_watch_agent"
 CRUSOE_AUTH_TOKEN_LENGTH=82
