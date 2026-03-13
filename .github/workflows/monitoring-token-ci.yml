@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
     tags:
-      - "v*"
+      - "v[0-9]*"
     # Only run if changes occur under the monitoring-token/ path
     paths:
       - 'k8s/monitoring-token/**'
