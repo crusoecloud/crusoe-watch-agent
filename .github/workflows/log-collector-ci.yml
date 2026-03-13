@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
     tags:
-      - "v*"
+      - "v[0-9]*"
       - "vm-v*"
     # Run if changes occur under K8s or VM log-collector paths
     paths:
@@ -90,6 +90,10 @@ jobs:
             latest=auto
 
       - name: Build and push ${{ matrix.name }} image
+        if: |
+          (matrix.name == 'k8s' && !startsWith(github.ref, 'refs/tags/vm-v')) ||
+          (matrix.name == 'vm' && startsWith(github.ref, 'refs/tags/vm-v')) ||
+          github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}

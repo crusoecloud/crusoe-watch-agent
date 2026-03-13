@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
     tags:
-      - "v*"
+      - "v[0-9]*"
     # BUT only run if changes occur under the vector-config-reloader/ path
     paths:
       - 'k8s/vector-config-reloader/**'
