@@ -1,0 +1,301 @@
+stages:
+  - test
+  - tag
+  - build
+  - helm
+
+variables:
+  GHCR_REGISTRY: ghcr.io
+  GHCR_IMAGE_BASE: ghcr.io/crusoecloud/crusoe-watch-agent
+
+# ---------------------------------------------------------------------------
+# Test jobs
+# ---------------------------------------------------------------------------
+
+test:log-collector:
+  stage: test
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - k8s/log-collector/**/*
+        - vm/log-collector/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - k8s/log-collector/**/*
+        - vm/log-collector/**/*
+    - if: '$CI_COMMIT_TAG =~ /^v/ || $CI_COMMIT_TAG =~ /^vm-v/'
+  script:
+    - pip install --upgrade pip
+    - pip install -r ./k8s/log-collector/requirements.txt
+    - cd k8s/log-collector/app
+    - python -m unittest test_log_collector_app -v
+
+test:config-reloader:
+  stage: test
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - k8s/vector-config-reloader/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - k8s/vector-config-reloader/**/*
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - pip install --upgrade pip
+    - pip install pytest
+    - pip install -r ./k8s/vector-config-reloader/requirements.txt
+    - pytest -v
+
+# ---------------------------------------------------------------------------
+# Semver tagging — creates git tags when VERSION files change on main
+# ---------------------------------------------------------------------------
+
+.tag_from_version:
+  stage: tag
+  image: alpine/git:latest
+  variables:
+    GIT_DEPTH: 0
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - $VERSION_FILE
+  script:
+    - VERSION=$(tr -d ' \n' < "$VERSION_FILE")
+    - TAG="${TAG_PREFIX}${VERSION}"
+    - |
+      if git rev-parse "$TAG" >/dev/null 2>&1; then
+        echo "Tag $TAG already exists — skipping."
+      else
+        git config user.name "gitlab-ci"
+        git config user.email "gitlab-ci@crusoecloud.com"
+        git tag "$TAG"
+        git push "https://gitlab-ci-token:${REPO_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG"
+      fi
+
+tag:config-reloader:
+  extends: .tag_from_version
+  variables:
+    VERSION_FILE: k8s/vector-config-reloader/VERSION
+    TAG_PREFIX: "v"
+
+tag:vm-log-collector:
+  extends: .tag_from_version
+  variables:
+    VERSION_FILE: vm/VERSION
+    TAG_PREFIX: "vm-v"
+
+# ---------------------------------------------------------------------------
+# Docker build helpers
+# ---------------------------------------------------------------------------
+
+.docker_build:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u "$GHCR_USER" -p "$GHCR_TOKEN" "$GHCR_REGISTRY"
+    - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+    - docker buildx create --use --name multiarch --driver docker-container
+  after_script:
+    - docker buildx rm multiarch || true
+
+.build_rules_branch:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - $WATCH_PATH
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - $WATCH_PATH
+
+# ---------------------------------------------------------------------------
+# Image: log-collector (k8s) — triggered by branch/MR or v* tags
+# ---------------------------------------------------------------------------
+
+build:log-collector:
+  extends: .docker_build
+  needs: ["test:log-collector"]
+  variables:
+    WATCH_PATH: k8s/log-collector/**/*
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - k8s/log-collector/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - k8s/log-collector/**/*
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+  script:
+    - |
+      IMAGE="${GHCR_IMAGE_BASE}/log-collector"
+      TAGS=""
+
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
+        TAGS="-t ${IMAGE}:${CI_COMMIT_TAG} -t ${IMAGE}:${VERSION} -t ${IMAGE}:latest"
+      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        TAGS="-t ${IMAGE}:main -t ${IMAGE}:latest"
+      else
+        BRANCH_TAG=$(echo "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+        TAGS="-t ${IMAGE}:${BRANCH_TAG}"
+      fi
+
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --push \
+        $TAGS \
+        -f ./k8s/log-collector/Dockerfile \
+        ./k8s/log-collector
+
+# ---------------------------------------------------------------------------
+# Image: log-collector-vm — triggered by branch/MR or vm-v* tags
+# ---------------------------------------------------------------------------
+
+build:log-collector-vm:
+  extends: .docker_build
+  needs: ["test:log-collector"]
+  variables:
+    WATCH_PATH: vm/log-collector/**/*
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - vm/log-collector/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - vm/log-collector/**/*
+    - if: '$CI_COMMIT_TAG =~ /^vm-v/'
+  script:
+    - |
+      IMAGE="${GHCR_IMAGE_BASE}/log-collector-vm"
+      TAGS=""
+
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^vm-v//')
+        TAGS="-t ${IMAGE}:${CI_COMMIT_TAG} -t ${IMAGE}:${VERSION} -t ${IMAGE}:latest"
+      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        TAGS="-t ${IMAGE}:main -t ${IMAGE}:latest"
+      else
+        BRANCH_TAG=$(echo "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+        TAGS="-t ${IMAGE}:${BRANCH_TAG}"
+      fi
+
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --push \
+        $TAGS \
+        -f ./vm/log-collector/Dockerfile \
+        ./vm/log-collector
+
+# ---------------------------------------------------------------------------
+# Image: vector-config-reloader — triggered by branch/MR or v* tags
+# ---------------------------------------------------------------------------
+
+build:config-reloader:
+  extends: .docker_build
+  needs: ["test:config-reloader"]
+  variables:
+    WATCH_PATH: k8s/vector-config-reloader/**/*
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - k8s/vector-config-reloader/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - k8s/vector-config-reloader/**/*
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+  script:
+    - |
+      IMAGE="${GHCR_IMAGE_BASE}/vector-config-reloader"
+      TAGS=""
+
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
+        TAGS="-t ${IMAGE}:${CI_COMMIT_TAG} -t ${IMAGE}:${VERSION} -t ${IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${IMAGE}:latest"
+      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        TAGS="-t ${IMAGE}:main -t ${IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${IMAGE}:latest"
+      else
+        BRANCH_TAG=$(echo "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+        TAGS="-t ${IMAGE}:${BRANCH_TAG} -t ${IMAGE}:${CI_COMMIT_SHORT_SHA}"
+      fi
+
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --push \
+        $TAGS \
+        -f ./k8s/vector-config-reloader/Dockerfile \
+        ./k8s/vector-config-reloader
+
+# ---------------------------------------------------------------------------
+# Image: token-job (monitoring-token) — triggered by branch/MR or v* tags
+# ---------------------------------------------------------------------------
+
+build:token-job:
+  extends: .docker_build
+  needs: []
+  variables:
+    WATCH_PATH: k8s/monitoring-token/**/*
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - k8s/monitoring-token/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - k8s/monitoring-token/**/*
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+  script:
+    - |
+      IMAGE="${GHCR_IMAGE_BASE}/token-job"
+      TAGS=""
+
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
+        TAGS="-t ${IMAGE}:${CI_COMMIT_TAG} -t ${IMAGE}:${VERSION} -t ${IMAGE}:latest"
+      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        TAGS="-t ${IMAGE}:main -t ${IMAGE}:latest"
+      else
+        BRANCH_TAG=$(echo "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+        TAGS="-t ${IMAGE}:${BRANCH_TAG}"
+      fi
+
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --push \
+        $TAGS \
+        -f ./k8s/monitoring-token/Dockerfile \
+        ./k8s/monitoring-token
+
+# ---------------------------------------------------------------------------
+# Helm chart packaging — commits to docs/ so push mirror keeps GH Pages alive
+# ---------------------------------------------------------------------------
+
+helm:package:
+  stage: helm
+  needs: []
+  image:
+    name: alpine/helm:latest
+    entrypoint: [""]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - k8s/helm-charts/**/*
+  before_script:
+    - apk add --no-cache git
+  script:
+    - mkdir -p docs/k8s/helm-charts
+    - helm package ./k8s/helm-charts -d docs/k8s/helm-charts
+    - helm repo index docs/k8s/helm-charts --url https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts
+    - git config user.name "gitlab-ci"
+    - git config user.email "gitlab-ci@crusoecloud.com"
+    - git add docs/k8s/helm-charts
+    - |
+      if git diff --cached --quiet; then
+        echo "No helm chart changes to commit."
+      else
+        git commit -m "Update helm repo [skip ci]"
+        git push "https://gitlab-ci-token:${REPO_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
+      fi
