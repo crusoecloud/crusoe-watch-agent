@@ -211,12 +211,18 @@ if .kubernetes.pod_labels.app == "crusoe-log-collector" {
 
 if .source_type == "journald" {
     .log_source = "journald"
-    if .PRIORITY == "0" || .PRIORITY == "1" {
-        .level = "error"
-    } else if .PRIORITY == "2" || .PRIORITY== "3" {
+    if .PRIORITY == "0" {
+        .level = "emergency"
+    } else if .PRIORITY == "1" {
+        .level = "alert"
+    } else if .PRIORITY == "2" {
         .level = "critical"
-    } else if .PRIORITY == "4" || .PRIORITY == "5" {
+    } else if .PRIORITY == "3" {
+        .level = "error"
+    } else if .PRIORITY == "4" {
         .level = "warning"
+    } else if .PRIORITY == "5" {
+        .level = "notice"
     } else if .PRIORITY == "6" {
         .level = "info"
     } else if .PRIORITY == "7" {
