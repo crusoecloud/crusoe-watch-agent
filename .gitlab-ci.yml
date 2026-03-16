@@ -5,8 +5,8 @@ stages:
   - helm
 
 variables:
-  GHCR_REGISTRY: ghcr.io
-  GHCR_IMAGE_BASE: ghcr.io/crusoecloud/crusoe-watch-agent
+  REGISTRY: registry.gitlab.com
+  RELEASE_IMAGE: ${REGISTRY}/${CI_PROJECT_PATH}
 
 # ---------------------------------------------------------------------------
 # Test jobs
@@ -71,7 +71,7 @@ test:config-reloader:
         git config user.name "gitlab-ci"
         git config user.email "gitlab-ci@crusoecloud.com"
         git tag "$TAG"
-        git push "https://gitlab-ci-token:${REPO_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG"
+        git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG"
       fi
 
 tag:config-reloader:
@@ -98,20 +98,7 @@ tag:vm-log-collector:
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
   before_script:
-    - docker login -u "$GHCR_USER" -p "$GHCR_TOKEN" "$GHCR_REGISTRY"
-    - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-    - docker buildx create --use --name multiarch --driver docker-container
-  after_script:
-    - docker buildx rm multiarch || true
-
-.build_rules_branch:
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-      changes:
-        - $WATCH_PATH
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      changes:
-        - $WATCH_PATH
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $REGISTRY
 
 # ---------------------------------------------------------------------------
 # Image: log-collector (k8s) — triggered by branch/MR or v* tags
@@ -120,8 +107,6 @@ tag:vm-log-collector:
 build:log-collector:
   extends: .docker_build
   needs: ["test:log-collector"]
-  variables:
-    WATCH_PATH: k8s/log-collector/**/*
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
@@ -131,26 +116,11 @@ build:log-collector:
         - k8s/log-collector/**/*
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
   script:
-    - |
-      IMAGE="${GHCR_IMAGE_BASE}/log-collector"
-      TAGS=""
-
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
-        TAGS="-t ${IMAGE}:${CI_COMMIT_TAG} -t ${IMAGE}:${VERSION} -t ${IMAGE}:latest"
-      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        TAGS="-t ${IMAGE}:main -t ${IMAGE}:latest"
-      else
-        BRANCH_TAG=$(echo "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
-        TAGS="-t ${IMAGE}:${BRANCH_TAG}"
-      fi
-
-      docker buildx build \
-        --platform linux/amd64,linux/arm64 \
-        --push \
-        $TAGS \
-        -f ./k8s/log-collector/Dockerfile \
+    - docker build --no-cache --pull
+        -f ./k8s/log-collector/Dockerfile
+        -t "${RELEASE_IMAGE}/log-collector:${CI_COMMIT_REF_NAME##*/}"
         ./k8s/log-collector
+    - docker push "${RELEASE_IMAGE}/log-collector:${CI_COMMIT_REF_NAME##*/}"
 
 # ---------------------------------------------------------------------------
 # Image: log-collector-vm — triggered by branch/MR or vm-v* tags
@@ -159,8 +129,6 @@ build:log-collector:
 build:log-collector-vm:
   extends: .docker_build
   needs: ["test:log-collector"]
-  variables:
-    WATCH_PATH: vm/log-collector/**/*
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
@@ -170,26 +138,11 @@ build:log-collector-vm:
         - vm/log-collector/**/*
     - if: '$CI_COMMIT_TAG =~ /^vm-v/'
   script:
-    - |
-      IMAGE="${GHCR_IMAGE_BASE}/log-collector-vm"
-      TAGS=""
-
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^vm-v//')
-        TAGS="-t ${IMAGE}:${CI_COMMIT_TAG} -t ${IMAGE}:${VERSION} -t ${IMAGE}:latest"
-      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        TAGS="-t ${IMAGE}:main -t ${IMAGE}:latest"
-      else
-        BRANCH_TAG=$(echo "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
-        TAGS="-t ${IMAGE}:${BRANCH_TAG}"
-      fi
-
-      docker buildx build \
-        --platform linux/amd64,linux/arm64 \
-        --push \
-        $TAGS \
-        -f ./vm/log-collector/Dockerfile \
+    - docker build --no-cache --pull
+        -f ./vm/log-collector/Dockerfile
+        -t "${RELEASE_IMAGE}/log-collector-vm:${CI_COMMIT_REF_NAME##*/}"
         ./vm/log-collector
+    - docker push "${RELEASE_IMAGE}/log-collector-vm:${CI_COMMIT_REF_NAME##*/}"
 
 # ---------------------------------------------------------------------------
 # Image: vector-config-reloader — triggered by branch/MR or v* tags
@@ -198,8 +151,6 @@ build:log-collector-vm:
 build:config-reloader:
   extends: .docker_build
   needs: ["test:config-reloader"]
-  variables:
-    WATCH_PATH: k8s/vector-config-reloader/**/*
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
@@ -209,26 +160,11 @@ build:config-reloader:
         - k8s/vector-config-reloader/**/*
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
   script:
-    - |
-      IMAGE="${GHCR_IMAGE_BASE}/vector-config-reloader"
-      TAGS=""
-
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
-        TAGS="-t ${IMAGE}:${CI_COMMIT_TAG} -t ${IMAGE}:${VERSION} -t ${IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${IMAGE}:latest"
-      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        TAGS="-t ${IMAGE}:main -t ${IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${IMAGE}:latest"
-      else
-        BRANCH_TAG=$(echo "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
-        TAGS="-t ${IMAGE}:${BRANCH_TAG} -t ${IMAGE}:${CI_COMMIT_SHORT_SHA}"
-      fi
-
-      docker buildx build \
-        --platform linux/amd64,linux/arm64 \
-        --push \
-        $TAGS \
-        -f ./k8s/vector-config-reloader/Dockerfile \
+    - docker build --no-cache --pull
+        -f ./k8s/vector-config-reloader/Dockerfile
+        -t "${RELEASE_IMAGE}/vector-config-reloader:${CI_COMMIT_REF_NAME##*/}"
         ./k8s/vector-config-reloader
+    - docker push "${RELEASE_IMAGE}/vector-config-reloader:${CI_COMMIT_REF_NAME##*/}"
 
 # ---------------------------------------------------------------------------
 # Image: token-job (monitoring-token) — triggered by branch/MR or v* tags
@@ -237,8 +173,6 @@ build:config-reloader:
 build:token-job:
   extends: .docker_build
   needs: []
-  variables:
-    WATCH_PATH: k8s/monitoring-token/**/*
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
@@ -248,26 +182,11 @@ build:token-job:
         - k8s/monitoring-token/**/*
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
   script:
-    - |
-      IMAGE="${GHCR_IMAGE_BASE}/token-job"
-      TAGS=""
-
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        VERSION=$(echo "$CI_COMMIT_TAG" | sed 's/^v//')
-        TAGS="-t ${IMAGE}:${CI_COMMIT_TAG} -t ${IMAGE}:${VERSION} -t ${IMAGE}:latest"
-      elif [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        TAGS="-t ${IMAGE}:main -t ${IMAGE}:latest"
-      else
-        BRANCH_TAG=$(echo "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-$CI_COMMIT_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
-        TAGS="-t ${IMAGE}:${BRANCH_TAG}"
-      fi
-
-      docker buildx build \
-        --platform linux/amd64,linux/arm64 \
-        --push \
-        $TAGS \
-        -f ./k8s/monitoring-token/Dockerfile \
+    - docker build --no-cache --pull
+        -f ./k8s/monitoring-token/Dockerfile
+        -t "${RELEASE_IMAGE}/token-job:${CI_COMMIT_REF_NAME##*/}"
         ./k8s/monitoring-token
+    - docker push "${RELEASE_IMAGE}/token-job:${CI_COMMIT_REF_NAME##*/}"
 
 # ---------------------------------------------------------------------------
 # Helm chart packaging — commits to docs/ so push mirror keeps GH Pages alive
