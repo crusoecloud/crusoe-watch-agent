@@ -60,11 +60,19 @@ spec:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
+              {{- if eq $gpuType "amd" }}
+              - matchExpressions:
+                  - key: feature.node.kubernetes.io/amd-gpu
+                    operator: In
+                    values:
+                      - "true"
+              {{- else }}
               - matchExpressions:
                   - key: {{ $gpuVendor }}.present
                     operator: In
                     values:
                       - "true"
+              {{- end }}
 
       initContainers:
         - name: fix-logs-permissions
