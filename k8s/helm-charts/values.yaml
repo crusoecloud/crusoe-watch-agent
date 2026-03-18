@@ -883,8 +883,8 @@ vector:
 # Log Collector configuration
 logCollector:
   # Shared defaults (applied to both NVIDIA and AMD unless overridden per-vendor)
-  imageTag: pr-77
-  pullPolicy: Always
+  imageTag: v0.2.12
+  pullPolicy: IfNotPresent
 
   env:
     LOG_OUTPUT_DIR: "/logs"
