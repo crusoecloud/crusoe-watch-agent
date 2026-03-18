@@ -66,6 +66,8 @@ echo "" | tee -a "$LOG_FILE"
 
 run_command "OS Distribution and Version" "lsb_release -sd"
 run_command "CPU Model and Architecture" "lshw -c cpu"
+run_command "System Uptime and Load" "uptime"
+run_command "System Memory" "free -h"
 run_command "GPU Models and UUIDs" "amd-smi list"
 run_command "ROCm and SMI Versions" "amd-smi version"
 
@@ -76,6 +78,8 @@ echo "=====================================" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
 run_command "AMDGPU Driver Status (DKMS)" "dkms status"
+run_command "AMDGPU Kernel Module" "lsmod | grep amdgpu"
+run_command "AMDGPU Module Info" "modinfo amdgpu"
 run_command "PCIe Bus Speeds and Device IDs" "lspci -vnn"
 run_command "Linux Kernel Version" "uname -a"
 
@@ -88,6 +92,19 @@ echo "" | tee -a "$LOG_FILE"
 run_command "VBIOS and Power Limits" "amd-smi static"
 run_command "ROCm GPU Visibility (rocminfo)" "rocminfo"
 run_command "XGMI/P2P Interconnect Topology" "amd-smi topology"
+run_command "ROCm Environment Variables" "env | grep -E 'ROCM|HSA|HIP'"
+
+echo "" | tee -a "$LOG_FILE"
+echo "=====================================" | tee -a "$LOG_FILE"
+echo "PERFORMANCE & METRICS" | tee -a "$LOG_FILE"
+echo "=====================================" | tee -a "$LOG_FILE"
+echo "" | tee -a "$LOG_FILE"
+
+run_command "GPU Processes" "amd-smi process"
+run_command "GPU Memory Usage" "amd-smi metric -m memory_usage"
+run_command "GPU Temperature and Power" "amd-smi metric -m temperature,power"
+run_command "GPU Utilization" "amd-smi metric -m utilization"
+run_command "GPU Clock Frequencies" "amd-smi metric -m clock"
 
 echo "" | tee -a "$LOG_FILE"
 echo "=====================================" | tee -a "$LOG_FILE"
@@ -96,7 +113,9 @@ echo "=====================================" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
 run_command "Hardware VRAM Defects" "amd-smi bad-pages"
-run_command "ECC Error Counts (RAS)" "amd-smi ras -v"
+run_command "GPU Error Counts" "amd-smi metric -m ecc"
+run_command "Firmware Versions" "amd-smi firmware"
+run_command "Recent GPU Errors from dmesg" "dmesg | grep -i -E 'amdgpu|amd-smi|rocm' | tail -n 100"
 
 echo "" | tee -a "$LOG_FILE"
 echo "=====================================" | tee -a "$LOG_FILE"
