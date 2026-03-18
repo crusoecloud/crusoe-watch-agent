@@ -1,0 +1,111 @@
+name: Log Collector CI
+
+on:
+  push:
+    branches: ["main"]
+    tags:
+      - "v[0-9]*"
+      - "vm-v*"
+    # Run if changes occur under K8s or VM log-collector paths
+    paths:
+      - 'k8s/log-collector/**'
+      - 'vm/log-collector/**'
+  pull_request:
+    branches: ["main"]
+    paths:
+      - 'k8s/log-collector/**'
+      - 'vm/log-collector/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ./k8s/log-collector/requirements.txt
+
+      - name: Run tests
+        run: |
+          cd k8s/log-collector/app
+          python -m unittest test_log_collector_app -v
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: k8s-nvidia
+            image: log-collector
+            context: ./k8s/log-collector
+            dockerfile: ./k8s/log-collector/Dockerfile.nvidia
+            semver_prefix: ""
+          - name: k8s-amd
+            image: amd-log-collector
+            context: ./k8s/log-collector
+            dockerfile: ./k8s/log-collector/Dockerfile.amd
+            semver_prefix: ""
+          - name: vm
+            image: log-collector-vm
+            context: ./vm/log-collector
+            dockerfile: ./vm/log-collector/Dockerfile
+            semver_prefix: "vm-v"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract branch name
+        id: vars
+        run: echo "BRANCH_TAG=$(echo '${{ github.head_ref || github.ref_name }}' | tr '[:upper:]' '[:lower:]' | tr '/' '-')" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=ref,event=tag
+            type=semver,pattern={{version}},prefix=${{ matrix.semver_prefix }}
+          flavor: |
+            latest=auto
+
+      - name: Build and push ${{ matrix.name }} image
+        if: |
+          (startsWith(matrix.name, 'k8s') && !startsWith(github.ref, 'refs/tags/vm-v')) ||
+          (matrix.name == 'vm' && startsWith(github.ref, 'refs/tags/vm-v')) ||
+          github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

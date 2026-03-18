@@ -885,16 +885,17 @@ logCollector:
   enabled: true
   name: crusoe-log-collector
 
+  # GPU type - leave empty for auto-detection (checks for nvidia-gpu-operator or amd-gpu-operator namespace)
+  # Or explicitly set to "nvidia" or "amd" to override
+  gpuType: ""
+
   image:
     repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
     tag: v0.2.12
     pullPolicy: IfNotPresent
 
-  # Environment variables for log collector
   env:
     LOG_OUTPUT_DIR: "/logs"
-    NVIDIA_NAMESPACE: "nvidia-gpu-operator"
-    NVIDIA_DRIVER_POD_PREFIX: "nvidia-gpu-driver"
     COLLECTION_INTERVAL: "3600"
     RUN_ONCE: "false"
     LOG_LEVEL: "INFO"
@@ -904,64 +905,8 @@ logCollector:
     API_POLL_INTERVAL: "60"
     COLLECTION_TIMEOUT: "300"
 
-  # Schedule on GPU nodes only
-  # Comment out to deploy on all nodes for testing
   nodeSelector: {}
-    # nvidia.com/gpu: "true"
 
-  # Affinity to schedule only on NVIDIA GPU nodes
-  affinity:
-    nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: nvidia.com/gpu.present
-                operator: In
-                values:
-                  - "true"
-
-  # Tolerations for GPU nodes
-  tolerations:
-    - key: nvidia.com/gpu
-      operator: Exists
-      effect: NoSchedule
-
-  # Init container to fix permissions
-  initContainers:
-    - name: fix-nvidia-logs-permissions
-      image: busybox:latest
-      command:
-        - sh
-        - -c
-        - |
-          mkdir -p /logs
-          chown -R 0:0 /logs
-          chmod -R 755 /logs
-      volumeMounts:
-        - name: nvidia-logs
-          mountPath: /logs
-      securityContext:
-        runAsUser: 0
-
-  # Volume mounts for log collector
-  volumeMounts:
-    - name: nvidia-logs
-      mountPath: /logs
-    - name: sysfs
-      mountPath: /host/sys
-      readOnly: true
-
-  # Volumes
-  volumes:
-    - name: nvidia-logs
-      hostPath:
-        path: /var/log/nvidia-bug-reports
-        type: DirectoryOrCreate
-    - name: sysfs
-      hostPath:
-        path: /sys
-
-  # Resources
   resources:
     requests:
       cpu: 50m
@@ -970,9 +915,6 @@ logCollector:
       cpu: 200m
       memory: 512Mi
 
-  # Security context
-  # Note: Running as root (UID 0) to read /host/sys/class/dmi/id/product_uuid for VM_ID
-  # and to access host paths for NVIDIA log collection
   securityContext:
     runAsUser: 0
     privileged: true
