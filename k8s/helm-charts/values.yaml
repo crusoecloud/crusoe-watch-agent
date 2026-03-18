@@ -1,5 +1,5 @@
 namespace: crusoe-system
-domain: com
+ingressEndpoint: "https://cms-monitoring.crusoecloud.com"
 
 proxy:
   enabled: false

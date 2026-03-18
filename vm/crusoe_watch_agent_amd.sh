@@ -7,8 +7,8 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 # GitHub branch (optional override via CLI, defaults to main)
 GITHUB_BRANCH="main"
 
-# Crusoe domain suffix (optional override via CLI, defaults to com)
-DOMAIN="com"
+# CMS base URL (optional, defaults to prod)
+CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
 
 # Define paths for config files within the GitHub repository (vm subdir)
 REMOTE_VECTOR_CONFIG_AMD_GPU_VM="vm/config/vector_amd_gpu_vm.yaml"
@@ -42,7 +42,7 @@ usage() {
   echo "Commands: install | uninstall | refresh-token | upgrade | help"
   echo "Options:"
   echo "  --branch|-b BRANCH                        Specify GitHub branch (default: main)"
-  echo "  --domain|-d DOMAIN                        Specify domain suffix: e.g. xyz|site|com (default: com)"
+  echo "  --ingress-url URL                         Specify CMS base URL (default: https://cms-monitoring.crusoecloud.com)"
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
@@ -81,9 +81,9 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
-      --domain|-d)
+      --ingress-url)
         if [[ -n "$2" ]]; then
-          DOMAIN="$2"; shift 2
+          CMS_BASE_URL="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -478,10 +478,10 @@ parse_args "$@"
 # Update base URL to reflect chosen branch
 GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${GITHUB_BRANCH}"
 
-# Construct endpoints from domain (after parse_args so --domain is applied)
-TELEMETRY_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.${DOMAIN}/ingest"
+# Construct endpoints from CMS_BASE_URL (after parse_args so --ingress-url is applied)
+TELEMETRY_INGRESS_ENDPOINT="${CMS_BASE_URL}/ingest"
 if [[ -z "$LOGS_INGRESS_ENDPOINT" ]]; then
-  LOGS_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.${DOMAIN}/logs/ingest"
+  LOGS_INGRESS_ENDPOINT="${CMS_BASE_URL}/logs/ingest"
 fi
 
 # --- Main Script ---
