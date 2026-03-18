@@ -4,27 +4,9 @@ A Kubernetes DaemonSet application that collects GPU driver bug reports from nod
 
 ## Overview
 
-This application runs as **two separate DaemonSets** (`crusoe-log-collector-nvidia` and `crusoe-log-collector-amd`) in your Kubernetes cluster and periodically collects diagnostic logs from GPU nodes. Each DaemonSet is GPU-vendor-specific with its own:
-- Docker image (NVIDIA uses CUDA base, AMD uses ROCm tools)
-- Node affinity (schedules only on matching GPU nodes)
-- Bug report utility (nvidia-bug-report.sh vs amd-bug-report.sh)
-
-This architecture supports **mixed GPU clusters** where both NVIDIA and AMD nodes exist. Each DaemonSet deploys only to its matching nodes, creating 0 pods if no matching nodes exist.
+This application runs as a separate DaemonSet (`crusoe-log-collector-nvidia` or `crusoe-log-collector-amd`) in your Kubernetes cluster and periodically collects diagnostic logs from NVIDIA GPU driver pods using the `nvidia-bug-report.sh` utility. The logs are stored locally in the collector pod and can be accessed for troubleshooting GPU-related issues.
 
 **Deployment:** Integrated into the `crusoe-watch-agent` Helm chart with shared RBAC but separate ServiceAccounts.
-
-## Supported GPU Vendors
-
-### NVIDIA
-- **Bug report tool**: `nvidia-bug-report.sh`
-- **Driver modes**: GPU Operator (A100, L40S, H100) or Bundled (GB200)
-- **Docker image**: Built from `Dockerfile.nvidia` using `nvcr.io/nvidia/cuda:12.8.0-base-ubuntu24.04`
-
-### AMD
-- **Bug report tool**: Custom `amd-bug-report.sh` script
-- **Driver mode**: Bundled only (no GPU Operator support)
-- **Docker image**: Built from `Dockerfile.amd` using `rocm/dev-ubuntu-24.04:6.3-complete`
-- **Collects**: `amd-smi`, `rocminfo`, PCIe info, DKMS status, ECC errors, topology
 
 ## Features
 
@@ -58,13 +40,6 @@ The log collector supports **heterogeneous clusters** with both NVIDIA and AMD n
 
 **AMD (`crusoe-log-collector-amd`):**
 - **All AMD nodes**: Always uses bundled mode, executes `/usr/bin/amd-bug-report.sh` locally
-
-### Implementation 
-Details
-- Shared ClusterRole with unified permissions for both vendors
-- Separate ServiceAccounts per DaemonSet
-- Independent enable/disable flags in values.yaml
-- Separate Docker images minimize bloat (CUDA vs ROCm tools)
 
 ## Execution Modes
 
@@ -131,46 +106,7 @@ Set `RUN_ONCE=true` to collect logs once and exit. Useful for testing or manual 
 
 ## Configuration
 
-The application is configured via environment variables. The Helm chart has separate sections for NVIDIA and AMD log collectors.
-
-### Helm Configuration (values.yaml)
-
-For **mixed GPU clusters**, both DaemonSets can be enabled:
-```yaml
-logCollector:
-  nvidia:
-    enabled: true  # Deploys to NVIDIA nodes only
-    name: crusoe-log-collector-nvidia
-    image:
-      repository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
-      tag: v0.2.12
-    # ... other config
-
-  amd:
-    enabled: true  # Deploys to AMD nodes only
-    name: crusoe-log-collector-amd
-    image:
-      repository: ghcr.io/crusoecloud/crusoe-watch-agent/amd-log-collector
-      tag: v0.2.12
-    # ... other config
-```
-
-For **homogeneous clusters**, disable the unused vendor:
-```yaml
-logCollector:
-  nvidia:
-    enabled: true   # NVIDIA-only cluster
-  amd:
-    enabled: false  # No AMD nodes
-```
-
-Each DaemonSet automatically configures:
-- `GPU_TYPE`, `DRIVER_NAMESPACE`, `DRIVER_POD_PREFIX` environment variables
-- Node affinity (vendor-specific labels)
-- Tolerations (vendor-specific taints)
-- Volume paths (/var/log/nvidia-bug-reports or /var/log/amd-bug-reports)
-
-### Environment Variables
+The application is configured via environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -219,11 +155,15 @@ The AMD bug report script collects comprehensive diagnostic information:
 **Basic Info:**
 - `lsb_release -sd`: OS distribution and version
 - `lshw -c cpu`: CPU model and architecture
+- `uptime`: System uptime and load
+- `free -h`: System memory
 - `amd-smi list`: GPU models and UUIDs
 - `amd-smi version`: ROCm and SMI versions
 
 **Hardware & Installation:**
 - `dkms status`: amdgpu driver status
+- `lsmod | grep amdgpu`: AMDGPU kernel module
+- `modinfo amdgpu`: AMDGPU module info
 - `lspci -vnn`: PCIe bus speeds and device IDs
 - `uname -a`: Linux kernel version
 
@@ -231,10 +171,20 @@ The AMD bug report script collects comprehensive diagnostic information:
 - `amd-smi static`: VBIOS, power limits, board metadata
 - `rocminfo`: GPU visibility via KFD
 - `amd-smi topology`: XGMI/P2P interconnect map
+- `env | grep -E 'ROCM|HSA|HIP'`: ROCm environment variables
+
+**Performance & Metrics:**
+- `amd-smi process`: GPU processes
+- `amd-smi metric -m memory_usage`: GPU memory usage
+- `amd-smi metric -m temperature,power`: GPU temperature and power
+- `amd-smi metric -m utilization`: GPU utilization
+- `amd-smi metric -m clock`: GPU clock frequencies
 
 **Health & Reliability:**
 - `amd-smi bad-pages`: VRAM memory defects
 - `amd-smi metric -m ecc`: ECC error counts
+- `amd-smi firmware`: Firmware versions
+- `dmesg | grep -i -E 'amdgpu|amd-smi|rocm'`: Recent GPU errors from dmesg
 
 ## Driver Pod Discovery (NVIDIA Only)
 
@@ -260,20 +210,8 @@ When running in API-driven mode, specific error messages are reported to the con
 | Local execution fails | `Failed to execute bug report locally (bundled driver mode)` |
 | Timeout | `Collection timeout after {timeout} seconds` |
 
-## Docker Images
+## CI/CD
 
-The log collector uses **separate Dockerfiles** for each GPU vendor to minimize image bloat:
-
-- **Dockerfile.nvidia**: Uses `nvcr.io/nvidia/cuda:12.8.0-base-ubuntu24.04` with NVIDIA utilities (~2GB)
-- **Dockerfile.amd**: Uses `ubuntu:24.04` base with minimal ROCm packages (`rocm-smi`, `rocminfo`) (~1-2GB)
-
-This approach avoids a combined image that would be 10-15GB with both CUDA and full ROCm dev tools.
-
-**CI/CD:**
-Both images are built in parallel via GitHub Actions matrix and pushed to:
+The log collector has automated CI/CD pipelines that build and push Docker images:
 - NVIDIA: `ghcr.io/crusoecloud/crusoe-watch-agent/log-collector`
 - AMD: `ghcr.io/crusoecloud/crusoe-watch-agent/amd-log-collector`
-
-**Deployment:**
-In mixed clusters, Helm deploys both DaemonSets with vendor-specific images. Each DaemonSet only schedules on matching GPU nodes.
-
