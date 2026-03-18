@@ -1,0 +1,19 @@
+[Unit]
+Description=Crusoe AMD Log Collector for VMs (Native)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/crusoe-amd-log-collector
+EnvironmentFile=/etc/crusoe/crusoe_watch_agent/.env
+EnvironmentFile=/etc/crusoe/secrets/.monitoring-token
+Environment="GPU_TYPE=amd"
+Environment="LOG_OUTPUT_DIR=/var/log/amd-bug-reports"
+Environment="API_ENABLED=true"
+ExecStart=/usr/bin/python3 /opt/crusoe-amd-log-collector/vm_log_collector_app.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
