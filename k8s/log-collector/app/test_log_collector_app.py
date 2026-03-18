@@ -13,11 +13,11 @@ from pathlib import Path
 os.environ['NODE_NAME'] = 'test-node'
 os.environ['LOG_OUTPUT_DIR'] = tempfile.mkdtemp()
 
-from log_collector_app import NvidiaLogCollector
+from log_collector_app import LogCollector
 
 
-class TestNvidiaLogCollector(unittest.TestCase):
-    """Test cases for NvidiaLogCollector class."""
+class TestLogCollector(unittest.TestCase):
+    """Test cases for LogCollector class."""
 
     def setUp(self):
         """Set up test fixtures."""
@@ -26,7 +26,8 @@ class TestNvidiaLogCollector(unittest.TestCase):
         self.original_env = {
             'NODE_NAME': os.environ.get('NODE_NAME'),
             'LOG_OUTPUT_DIR': os.environ.get('LOG_OUTPUT_DIR'),
-            'NVIDIA_NAMESPACE': os.environ.get('NVIDIA_NAMESPACE'),
+            'GPU_TYPE': os.environ.get('GPU_TYPE'),
+            'DRIVER_NAMESPACE': os.environ.get('DRIVER_NAMESPACE'),
             'VM_ID': os.environ.get('VM_ID'),
             'API_ENABLED': os.environ.get('API_ENABLED'),
         }
@@ -34,7 +35,8 @@ class TestNvidiaLogCollector(unittest.TestCase):
         # Set test environment
         os.environ['NODE_NAME'] = 'test-node'
         os.environ['LOG_OUTPUT_DIR'] = self.output_dir
-        os.environ['NVIDIA_NAMESPACE'] = 'nvidia-gpu-operator'
+        os.environ['GPU_TYPE'] = 'nvidia'
+        os.environ['DRIVER_NAMESPACE'] = 'nvidia-gpu-operator'
 
     def tearDown(self):
         """Clean up after tests."""
@@ -50,10 +52,11 @@ class TestNvidiaLogCollector(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_initialization(self, mock_core_api, mock_load_config):
         """Test collector initialization."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         self.assertEqual(collector.node_name, 'test-node')
-        self.assertEqual(collector.nvidia_namespace, 'nvidia-gpu-operator')
+        self.assertEqual(collector.gpu_type, 'nvidia')
+        self.assertEqual(collector.driver_namespace, 'nvidia-gpu-operator')
         self.assertTrue(collector.output_dir.exists())
         mock_load_config.assert_called_once()
 
@@ -62,7 +65,7 @@ class TestNvidiaLogCollector(unittest.TestCase):
     def test_initialization_with_vm_id(self, mock_core_api, mock_load_config):
         """Test collector initialization with VM_ID."""
         os.environ['VM_ID'] = 'test-vm-123'
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         self.assertEqual(collector.vm_id, 'test-vm-123')
 
@@ -70,7 +73,7 @@ class TestNvidiaLogCollector(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_find_nvidia_driver_pod_by_label(self, mock_core_api, mock_load_config):
         """Test finding NVIDIA driver pod by label selector (primary method)."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         # Mock pod found by label selector
         mock_pod = Mock()
@@ -96,7 +99,7 @@ class TestNvidiaLogCollector(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_find_nvidia_driver_pod_not_found(self, mock_core_api, mock_load_config):
         """Test when NVIDIA driver pod is not found by label or prefix."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         mock_pod_list = Mock()
         mock_pod_list.items = []
@@ -114,7 +117,7 @@ class TestNvidiaLogCollector(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_find_nvidia_driver_pod_prefix_fallback(self, mock_core_api, mock_load_config):
         """Test finding NVIDIA driver pod via name prefix fallback."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         # First call (label selector) returns empty
         mock_empty_list = Mock()
@@ -146,7 +149,7 @@ class TestNvidiaLogCollector(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_get_driver_container_name(self, mock_core_api, mock_load_config):
         """Test getting driver container name."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         # Mock pod with multiple containers
         mock_container1 = Mock()
@@ -166,7 +169,7 @@ class TestNvidiaLogCollector(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_get_driver_container_name_fallback(self, mock_core_api, mock_load_config):
         """Test getting driver container name with fallback."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         # Mock pod with no 'driver' in container names
         mock_container = Mock()
@@ -183,7 +186,7 @@ class TestNvidiaLogCollector(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_cleanup_old_logs(self, mock_core_api, mock_load_config):
         """Test cleanup of old log files."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         # Create some fake log files
         for i in range(10):
@@ -221,7 +224,7 @@ class TestAPIMode(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_check_for_tasks_success(self, mock_core_api, mock_load_config, mock_get):
         """Test checking for tasks successfully."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         # Mock successful API response
         mock_response = Mock()
@@ -243,7 +246,7 @@ class TestAPIMode(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_check_for_tasks_no_tasks(self, mock_core_api, mock_load_config, mock_get):
         """Test checking for tasks when none available."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         # Mock API response with no tasks
         mock_response = Mock()
@@ -259,7 +262,7 @@ class TestAPIMode(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_report_result_success(self, mock_core_api, mock_load_config, mock_post):
         """Test reporting successful collection result with file upload."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         # Create a fake log file
         log_file = Path(self.output_dir) / "test-log.log.gz"
@@ -284,7 +287,7 @@ class TestAPIMode(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_report_result_failure(self, mock_core_api, mock_load_config, mock_post):
         """Test reporting failed collection result."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
 
         # Mock successful API response
         mock_response = Mock()
@@ -307,7 +310,7 @@ class TestEnvironmentVariables(unittest.TestCase):
     def setUp(self):
         """Store original environment variables."""
         self.original_node_name = os.environ.get('NODE_NAME')
-        self.original_namespace = os.environ.get('NVIDIA_NAMESPACE')
+        self.original_namespace = os.environ.get('DRIVER_NAMESPACE')
 
     def tearDown(self):
         """Restore original environment variables."""
@@ -317,9 +320,9 @@ class TestEnvironmentVariables(unittest.TestCase):
             del os.environ['NODE_NAME']
 
         if self.original_namespace:
-            os.environ['NVIDIA_NAMESPACE'] = self.original_namespace
-        elif 'NVIDIA_NAMESPACE' in os.environ:
-            del os.environ['NVIDIA_NAMESPACE']
+            os.environ['DRIVER_NAMESPACE'] = self.original_namespace
+        elif 'DRIVER_NAMESPACE' in os.environ:
+            del os.environ['DRIVER_NAMESPACE']
 
     def test_missing_node_name(self):
         """Test that missing NODE_NAME raises error."""
@@ -330,17 +333,19 @@ class TestEnvironmentVariables(unittest.TestCase):
         with patch('log_collector_app.config.load_incluster_config'):
             with patch('log_collector_app.client.CoreV1Api'):
                 with self.assertRaises(RuntimeError):
-                    NvidiaLogCollector()
+                    LogCollector()
 
-    def test_custom_nvidia_namespace(self):
-        """Test custom NVIDIA namespace."""
-        os.environ['NVIDIA_NAMESPACE'] = 'custom-gpu-namespace'
+    def test_custom_driver_namespace(self):
+        """Test custom driver namespace."""
         os.environ['NODE_NAME'] = 'test-node'
-
+        os.environ['GPU_TYPE'] = 'nvidia'
+        
         with patch('log_collector_app.config.load_incluster_config'):
             with patch('log_collector_app.client.CoreV1Api'):
-                collector = NvidiaLogCollector()
-                self.assertEqual(collector.nvidia_namespace, 'custom-gpu-namespace')
+                # Patch the module-level constant since it's evaluated at import time
+                with patch('log_collector_app.DRIVER_NAMESPACE', 'custom-gpu-namespace'):
+                    collector = LogCollector()
+                    self.assertEqual(collector.driver_namespace, 'custom-gpu-namespace')
 
 
 class TestCollectionWorkflow(unittest.TestCase):
@@ -363,7 +368,10 @@ class TestCollectionWorkflow(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_collect_logs_without_event_id(self, mock_core_api, mock_load_config):
         """Test log collection without event_id (scheduled mode)."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
+
+        # Mock GPU Operator mode (not bundled)
+        collector._is_bundled_driver_mode = Mock(return_value=False)
 
         # Mock finding driver pod
         mock_pod = Mock()
@@ -394,7 +402,10 @@ class TestCollectionWorkflow(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_collect_logs_with_event_id(self, mock_core_api, mock_load_config):
         """Test log collection with event_id (API mode)."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
+
+        # Mock GPU Operator mode (not bundled)
+        collector._is_bundled_driver_mode = Mock(return_value=False)
 
         # Mock finding driver pod
         mock_pod = Mock()
@@ -425,7 +436,8 @@ class TestCollectionWorkflow(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_collect_logs_no_driver_pod(self, mock_core_api, mock_load_config):
         """Test log collection when driver pod not found returns specific error."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
+        collector._is_bundled_driver_mode = Mock(return_value=False)
         collector.find_nvidia_driver_pod = Mock(return_value=None)
         collector.cleanup_old_logs = Mock()
 
@@ -439,7 +451,8 @@ class TestCollectionWorkflow(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_collect_logs_execute_fails(self, mock_core_api, mock_load_config):
         """Test log collection when nvidia-bug-report execution fails."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
+        collector._is_bundled_driver_mode = Mock(return_value=False)
 
         mock_pod = Mock()
         mock_pod.metadata.name = 'nvidia-gpu-driver-test'
@@ -457,7 +470,8 @@ class TestCollectionWorkflow(unittest.TestCase):
     @patch('log_collector_app.client.CoreV1Api')
     def test_collect_logs_download_fails(self, mock_core_api, mock_load_config):
         """Test log collection when download fails."""
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
+        collector._is_bundled_driver_mode = Mock(return_value=False)
 
         mock_pod = Mock()
         mock_pod.metadata.name = 'nvidia-gpu-driver-test'
