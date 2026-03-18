@@ -4,9 +4,10 @@
 {{- if not .Values.logCollector.gpuType }}
   {{- $nvidiaNamespace := lookup "v1" "Namespace" "" "nvidia-gpu-operator" }}
   {{- $amdNamespace := lookup "v1" "Namespace" "" "amd-gpu-operator" }}
+  {{- $kubeAmdNamespace := lookup "v1" "Namespace" "" "kube-amd-gpu" }}
   {{- if $nvidiaNamespace }}
     {{- $detectedGpuType = "nvidia" }}
-  {{- else if $amdNamespace }}
+  {{- else if or $amdNamespace $kubeAmdNamespace }}
     {{- $detectedGpuType = "amd" }}
   {{- else }}
     {{- $detectedGpuType = "nvidia" }}
