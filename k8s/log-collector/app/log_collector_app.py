@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-NVIDIA GPU Driver Log Collector
+GPU Driver Log Collector
 
-This application runs as a DaemonSet and collects nvidia-bug-report logs from
-NVIDIA GPU driver pods running in the nvidia-gpu-operator namespace.
+This application runs as a DaemonSet and collects bug reports from GPU driver pods.
+Supports both NVIDIA and AMD GPUs.
 
 Features:
-- Discovers NVIDIA GPU driver pods on the same node
-- Executes nvidia-bug-report.sh in the driver pod
-- Downloads the generated log file to local storage
+- Auto-detects or uses configured GPU type (NVIDIA or AMD)
+- Discovers GPU driver pods on the same node
+- Executes vendor-specific bug report scripts
+- Downloads generated log files to local storage
 - Supports periodic collection or one-time execution
+- API-driven or scheduled collection modes
 """
 
 import os
@@ -37,8 +39,9 @@ from kubernetes.stream import stream
 NODE_NAME = os.environ.get("NODE_NAME")
 VM_ID = os.environ.get("VM_ID")  # Unique VM identifier
 LOG_OUTPUT_DIR = os.environ.get("LOG_OUTPUT_DIR", "/logs")
-NVIDIA_NAMESPACE = os.environ.get("NVIDIA_NAMESPACE", "nvidia-gpu-operator")
-NVIDIA_DRIVER_POD_PREFIX = os.environ.get("NVIDIA_DRIVER_POD_PREFIX", "nvidia-gpu-driver")
+GPU_TYPE = os.environ.get("GPU_TYPE", "nvidia").lower()  # nvidia or amd
+DRIVER_NAMESPACE = os.environ.get("DRIVER_NAMESPACE", "nvidia-gpu-operator" if GPU_TYPE == "nvidia" else "amd-gpu-operator")
+DRIVER_POD_PREFIX = os.environ.get("DRIVER_POD_PREFIX", f"{GPU_TYPE}-gpu-driver")
 COLLECTION_INTERVAL = int(os.environ.get("COLLECTION_INTERVAL", "3600"))  # 1 hour default
 RUN_ONCE = os.environ.get("RUN_ONCE", "false").lower() == "true"
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
@@ -77,8 +80,8 @@ logging.basicConfig(
 LOG = logging.getLogger(__name__)
 
 
-class NvidiaLogCollector:
-    """Collects nvidia-bug-report logs from NVIDIA GPU driver pods."""
+class LogCollector:
+    """Collects bug reports from NVIDIA or AMD GPU driver pods."""
 
     def __init__(self):
         """Initialize the log collector."""
@@ -92,8 +95,9 @@ class NvidiaLogCollector:
         if not self.vm_id:
             self.vm_id = self._read_vm_id_from_dmi()
 
-        self.nvidia_namespace = os.environ.get("NVIDIA_NAMESPACE", NVIDIA_NAMESPACE)
-        self.driver_pod_prefix = os.environ.get("NVIDIA_DRIVER_POD_PREFIX", NVIDIA_DRIVER_POD_PREFIX)
+        self.gpu_type = GPU_TYPE
+        self.driver_namespace = DRIVER_NAMESPACE
+        self.driver_pod_prefix = DRIVER_POD_PREFIX
         self.output_dir = Path(os.environ.get("LOG_OUTPUT_DIR", LOG_OUTPUT_DIR))
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -106,7 +110,7 @@ class NvidiaLogCollector:
             LOG.info("Loaded kubeconfig from local environment")
 
         self.k8s_api = client.CoreV1Api()
-        LOG.info(f"Initialized log collector for node: {self.node_name}")
+        LOG.info(f"Initialized {self.gpu_type.upper()} log collector for node: {self.node_name}")
         if self.vm_id:
             LOG.info(f"VM ID: {self.vm_id}")
 
@@ -268,15 +272,20 @@ class NvidiaLogCollector:
 
     def _is_bundled_driver_mode(self) -> bool:
         """
-        Determine if this node uses bundled driver mode (GB200).
+        Determine if this node uses bundled driver mode.
 
         Returns:
             True if node should use bundled drivers (execute locally),
             False for GPU Operator path (exec into driver pod)
         """
+        # AMD always uses bundled driver mode in K8s
+        if self.gpu_type == "amd":
+            LOG.info(f"Node {self.node_name} uses AMD, using bundled driver mode")
+            return True
+
         instance_type = self._get_node_instance_type()
 
-        # GB200 nodes use bundled drivers
+        # GB200 nodes use bundled NVIDIA drivers
         if instance_type and 'gb200' in instance_type.lower():
             LOG.info(f"Node {self.node_name} is GB200 (instance-type={instance_type}), using bundled driver mode")
             return True
@@ -299,7 +308,7 @@ class NvidiaLogCollector:
         try:
             # Primary: Find by label selector (reliable, set by GPU Operator)
             pods = self.k8s_api.list_namespaced_pod(
-                namespace=self.nvidia_namespace,
+                namespace=self.driver_namespace,
                 field_selector=f"spec.nodeName={self.node_name}",
                 label_selector="app.kubernetes.io/component=nvidia-driver"
             )
@@ -316,7 +325,7 @@ class NvidiaLogCollector:
             # Fallback: Find by pod name prefix (for custom/legacy deployments)
             LOG.info(f"No pod found with label selector, trying name prefix fallback: '{self.driver_pod_prefix}'")
             pods = self.k8s_api.list_namespaced_pod(
-                namespace=self.nvidia_namespace,
+                namespace=self.driver_namespace,
                 field_selector=f"spec.nodeName={self.node_name}"
             )
 
@@ -331,7 +340,7 @@ class NvidiaLogCollector:
                         )
 
             LOG.warning(
-                f"No running NVIDIA driver pod found on node {self.node_name} in namespace {self.nvidia_namespace}"
+                f"No running NVIDIA driver pod found on node {self.node_name} in namespace {self.driver_namespace}"
             )
             return None
 
@@ -384,7 +393,7 @@ class NvidiaLogCollector:
             resp = stream(
                 self.k8s_api.connect_get_namespaced_pod_exec,
                 pod_name,
-                self.nvidia_namespace,
+                self.driver_namespace,
                 container=container_name,
                 command=exec_command,
                 stderr=True,
@@ -420,9 +429,10 @@ class NvidiaLogCollector:
             LOG.error(f"Unexpected error during nvidia-bug-report execution: {e}")
             return None
 
-    def execute_nvidia_bug_report_local(self, event_id: Optional[str] = None) -> Optional[Path]:
+    def execute_bug_report_local(self, event_id: Optional[str] = None) -> Optional[Path]:
         """
-        Execute nvidia-bug-report.sh locally (bundled in container).
+        Execute bug report script locally (bundled in container).
+        Works for both NVIDIA (GB200) and AMD GPUs.
 
         Args:
             event_id: Optional event ID to include in filename
@@ -430,26 +440,28 @@ class NvidiaLogCollector:
         Returns:
             Path to generated log file, or None on error
         """
-        LOG.info("Executing nvidia-bug-report.sh locally (bundled driver mode)")
+        LOG.info(f"Executing {self.gpu_type}-bug-report.sh locally (bundled driver mode)")
 
-        if not Path("/usr/bin/nvidia-bug-report.sh").exists():
-            LOG.error("nvidia-bug-report.sh not found at /usr/bin/nvidia-bug-report.sh")
+        # Determine script path based on GPU type
+        script_path = Path(f"/usr/bin/{self.gpu_type}-bug-report.sh")
+        if not script_path.exists():
+            LOG.error(f"Bug report script not found at {script_path}")
             return None
 
         try:
             # Generate unique filename with timestamp and optional event_id
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             if event_id:
-                log_filename_base = f"nvidia-bug-report-{self.node_name}-{event_id}-{timestamp}.log"
+                log_filename_base = f"{self.gpu_type}-bug-report-{self.node_name}-{event_id}-{timestamp}.log"
             else:
-                log_filename_base = f"nvidia-bug-report-{self.node_name}-{timestamp}.log"
+                log_filename_base = f"{self.gpu_type}-bug-report-{self.node_name}-{timestamp}.log"
 
             # Output directly to /logs
             log_path_base = Path(self.output_dir) / log_filename_base
             actual_log_path = Path(f"{log_path_base}.gz")
 
-            # Execute nvidia-bug-report.sh bundled in the container
-            cmd = ["/usr/bin/nvidia-bug-report.sh", "--output-file", str(log_path_base)]
+            # Execute bug report script bundled in the container
+            cmd = [str(script_path), "--output-file", str(log_path_base)]
 
             LOG.info(f"Running command: {' '.join(cmd)}")
 
@@ -461,19 +473,19 @@ class NvidiaLogCollector:
             )
 
             if result.returncode == 0 and actual_log_path.exists():
-                LOG.info(f"nvidia-bug-report.sh completed successfully: {actual_log_path}")
+                LOG.info(f"Bug report completed successfully: {actual_log_path}")
                 return actual_log_path
             else:
-                LOG.error(f"nvidia-bug-report.sh failed with return code {result.returncode}")
+                LOG.error(f"Bug report failed with return code {result.returncode}")
                 LOG.error(f"stdout: {result.stdout}")
                 LOG.error(f"stderr: {result.stderr}")
                 return None
 
         except subprocess.TimeoutExpired:
-            LOG.error(f"nvidia-bug-report.sh timed out after {COLLECTION_TIMEOUT}s")
+            LOG.error(f"Bug report timed out after {COLLECTION_TIMEOUT}s")
             return None
         except Exception as e:
-            LOG.error(f"Error executing nvidia-bug-report.sh locally: {e}")
+            LOG.error(f"Error executing bug report locally: {e}")
             return None
 
     def download_log_file(self, pod: client.V1Pod, remote_path: str) -> Optional[Path]:
@@ -504,7 +516,7 @@ class NvidiaLogCollector:
             resp = stream(
                 self.k8s_api.connect_get_namespaced_pod_exec,
                 pod_name,
-                self.nvidia_namespace,
+                self.driver_namespace,
                 container=container_name,
                 command=["/bin/sh", "-c", " ".join(check_command)],
                 stderr=True,
@@ -519,7 +531,7 @@ class NvidiaLogCollector:
                 list_resp = stream(
                     self.k8s_api.connect_get_namespaced_pod_exec,
                     pod_name,
-                    self.nvidia_namespace,
+                    self.driver_namespace,
                     container=container_name,
                     command=["ls", "-lh", "/tmp/"],
                     stderr=True,
@@ -544,7 +556,7 @@ class NvidiaLogCollector:
             resp = stream(
                 self.k8s_api.connect_get_namespaced_pod_exec,
                 pod_name,
-                self.nvidia_namespace,
+                self.driver_namespace,
                 container=container_name,
                 command=exec_command,
                 stderr=True,
@@ -631,7 +643,7 @@ class NvidiaLogCollector:
             resp = stream(
                 self.k8s_api.connect_get_namespaced_pod_exec,
                 pod_name,
-                self.nvidia_namespace,
+                self.driver_namespace,
                 container=container_name,
                 command=exec_command,
                 stderr=True,
@@ -696,8 +708,8 @@ class NvidiaLogCollector:
         Cleans up both compressed (.log.gz) and unzipped (.log) files in the output directory.
         """
         try:
-            self._cleanup_logs_by_pattern("nvidia-bug-report-*.log.gz", "compressed")
-            self._cleanup_logs_by_pattern("nvidia-bug-report-*.log", "unzipped")
+            self._cleanup_logs_by_pattern(f"{self.gpu_type}-bug-report-*.log.gz", "compressed")
+            self._cleanup_logs_by_pattern(f"{self.gpu_type}-bug-report-*.log", "unzipped")
         except Exception as e:
             LOG.warning(f"Error during log cleanup (non-critical): {e}")
 
@@ -721,20 +733,20 @@ class NvidiaLogCollector:
         local_log_path = None
 
         if self._is_bundled_driver_mode():
-            # GB200: Execute nvidia-bug-report.sh locally (bundled in container)
-            LOG.info("Using bundled driver mode (GB200)")
-            local_log_path = self.execute_nvidia_bug_report_local(event_id)
+            # Execute bug report locally (bundled in container)
+            LOG.info("Using bundled driver mode")
+            local_log_path = self.execute_bug_report_local(event_id)
 
             if not local_log_path:
-                error_msg = "Failed to execute nvidia-bug-report.sh locally (bundled driver mode)"
+                error_msg = "Failed to execute bug report locally (bundled driver mode)"
                 LOG.error(error_msg)
                 return None, error_msg
         else:
-            # A100/L40S/etc: Execute via GPU Operator driver pod
+            # Execute via GPU Operator driver pod (NVIDIA only)
             LOG.info("Using GPU Operator mode (driver pod)")
             driver_pod = self.find_nvidia_driver_pod()
             if not driver_pod:
-                error_msg = f"NVIDIA driver pod not found on node {self.node_name} in namespace {self.nvidia_namespace}"
+                error_msg = f"NVIDIA driver pod not found on node {self.node_name} in namespace {self.driver_namespace}"
                 LOG.error(f"Cannot collect logs: {error_msg}")
                 return None, error_msg
 
@@ -822,7 +834,7 @@ class NvidiaLogCollector:
 
     def run(self):
         """Main execution loop."""
-        LOG.info(f"NVIDIA Log Collector started on node: {self.node_name}")
+        LOG.info(f"{self.gpu_type.upper()} Log Collector started on node: {self.node_name}")
         LOG.info(f"Output directory: {self.output_dir}")
         LOG.info(f"Run once mode: {RUN_ONCE}")
         LOG.info(f"API-driven mode: {API_ENABLED}")
@@ -907,7 +919,7 @@ class NvidiaLogCollector:
 def main():
     """Entry point."""
     try:
-        collector = NvidiaLogCollector()
+        collector = LogCollector()
         collector.run()
     except KeyboardInterrupt:
         LOG.info("Received interrupt signal, shutting down")

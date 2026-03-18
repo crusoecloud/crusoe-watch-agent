@@ -1,4 +1,28 @@
 {{- if .Values.logCollector.enabled }}
+{{- /* Auto-detect GPU type by checking for GPU Operator namespaces */ -}}
+{{- $detectedGpuType := "" }}
+{{- if not .Values.logCollector.gpuType }}
+  {{- $nvidiaNamespace := lookup "v1" "Namespace" "" "nvidia-gpu-operator" }}
+  {{- $amdNamespace := lookup "v1" "Namespace" "" "amd-gpu-operator" }}
+  {{- if $nvidiaNamespace }}
+    {{- $detectedGpuType = "nvidia" }}
+  {{- else if $amdNamespace }}
+    {{- $detectedGpuType = "amd" }}
+  {{- else }}
+    {{- $detectedGpuType = "nvidia" }}
+  {{- end }}
+{{- end }}
+{{- $gpuType := .Values.logCollector.gpuType | default $detectedGpuType }}
+{{- $gpuVendor := printf "%s.com/gpu" $gpuType }}
+{{- $volumeName := printf "%s-logs" $gpuType }}
+{{- $logPath := printf "/var/log/%s-bug-reports" $gpuType }}
+{{- /* Select appropriate image based on GPU type */ -}}
+{{- $imageRepo := .Values.logCollector.image.repository }}
+{{- if eq $gpuType "amd" }}
+  {{- if not (contains "amd" $imageRepo) }}
+    {{- $imageRepo = "ghcr.io/crusoecloud/crusoe-watch-agent/amd-log-collector" }}
+  {{- end }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -21,30 +45,39 @@ spec:
     spec:
       serviceAccountName: {{ .Values.logCollector.name }}
 
-      # Only schedule on GPU nodes
       {{- if .Values.logCollector.nodeSelector }}
       nodeSelector:
         {{- toYaml .Values.logCollector.nodeSelector | nindent 8 }}
       {{- end }}
 
-      {{- if .Values.logCollector.tolerations }}
       tolerations:
-        {{- toYaml .Values.logCollector.tolerations | nindent 8 }}
-      {{- end }}
+        - key: {{ $gpuVendor }}
+          operator: Exists
+          effect: NoSchedule
 
-      {{- if .Values.logCollector.affinity }}
       affinity:
-        {{- toYaml .Values.logCollector.affinity | nindent 8 }}
-      {{- end }}
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: {{ $gpuVendor }}.present
+                    operator: In
+                    values:
+                      - "true"
 
-      {{- if .Values.logCollector.initContainers }}
       initContainers:
-        {{- toYaml .Values.logCollector.initContainers | nindent 8 }}
-      {{- end }}
+        - name: fix-logs-permissions
+          image: busybox:latest
+          command: ["sh", "-c", "mkdir -p /logs && chown -R 0:0 /logs && chmod -R 755 /logs"]
+          volumeMounts:
+            - name: {{ $volumeName }}
+              mountPath: /logs
+          securityContext:
+            runAsUser: 0
 
       containers:
       - name: log-collector
-        image: "{{ .Values.logCollector.image.repository }}:{{ .Values.logCollector.image.tag }}"
+        image: "{{ $imageRepo }}:{{ .Values.logCollector.image.tag }}"
         imagePullPolicy: {{ .Values.logCollector.image.pullPolicy }}
 
         env:
@@ -57,6 +90,12 @@ spec:
             secretKeyRef:
               name: crusoe-monitoring-token
               key: CRUSOE_MONITORING_TOKEN
+        - name: GPU_TYPE
+          value: {{ $gpuType | quote }}
+        - name: DRIVER_NAMESPACE
+          value: {{ printf "%s-gpu-operator" $gpuType | quote }}
+        - name: DRIVER_POD_PREFIX
+          value: {{ printf "%s-gpu-driver" $gpuType | quote }}
         {{- range $key, $value := .Values.logCollector.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
@@ -68,9 +107,11 @@ spec:
             optional: false
 
         volumeMounts:
-        {{- if .Values.logCollector.volumeMounts }}
-          {{- toYaml .Values.logCollector.volumeMounts | nindent 8 }}
-        {{- end }}
+        - name: {{ $volumeName }}
+          mountPath: /logs
+        - name: sysfs
+          mountPath: /host/sys
+          readOnly: true
 
         {{- if .Values.logCollector.resources }}
         resources:
@@ -83,7 +124,11 @@ spec:
         {{- end }}
 
       volumes:
-      {{- if .Values.logCollector.volumes }}
-        {{- toYaml .Values.logCollector.volumes | nindent 6 }}
-      {{- end }}
+      - name: {{ $volumeName }}
+        hostPath:
+          path: {{ $logPath }}
+          type: DirectoryOrCreate
+      - name: sysfs
+        hostPath:
+          path: /sys
 {{- end }}
