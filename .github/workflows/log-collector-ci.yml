@@ -59,11 +59,17 @@ jobs:
             dockerfile: ./k8s/log-collector/Dockerfile.amd
             platforms: linux/amd64
             semver_prefix: ""
-          - name: vm
+          - name: vm-nvidia
             image: log-collector-vm
             context: ./vm/log-collector
-            dockerfile: ./vm/log-collector/Dockerfile
+            dockerfile: ./vm/log-collector/Dockerfile.nvidia
             platforms: linux/amd64,linux/arm64
+            semver_prefix: "vm-v"
+          - name: vm-amd
+            image: amd-log-collector-vm
+            context: ./vm/log-collector
+            dockerfile: ./vm/log-collector/Dockerfile.amd
+            platforms: linux/amd64
             semver_prefix: "vm-v"
     steps:
       - name: Checkout repo
@@ -102,7 +108,7 @@ jobs:
       - name: Build and push ${{ matrix.name }} image
         if: |
           (startsWith(matrix.name, 'k8s') && !startsWith(github.ref, 'refs/tags/vm-v')) ||
-          (matrix.name == 'vm' && startsWith(github.ref, 'refs/tags/vm-v')) ||
+          (startsWith(matrix.name, 'vm-') && startsWith(github.ref, 'refs/tags/vm-v')) ||
           github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
         uses: docker/build-push-action@v5
         with:

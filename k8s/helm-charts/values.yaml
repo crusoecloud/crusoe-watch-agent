@@ -883,8 +883,8 @@ vector:
 # Log Collector configuration
 logCollector:
   # Shared defaults (applied to both NVIDIA and AMD unless overridden per-vendor)
-  imageTag: v0.2.12
-  pullPolicy: IfNotPresent
+  imageTag: pr-77
+  pullPolicy: Always
 
   env:
     LOG_OUTPUT_DIR: "/logs"
@@ -907,6 +907,9 @@ logCollector:
       cpu: 200m
       memory: 512Mi
 
+  # Security context
+  # Note: Running as root (UID 0) to read /host/sys/class/dmi/id/product_uuid for VM_ID
+  # and to access host paths for NVIDIA log collection
   securityContext:
     runAsUser: 0
     privileged: true

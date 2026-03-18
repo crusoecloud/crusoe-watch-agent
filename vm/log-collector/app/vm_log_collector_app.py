@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-NVIDIA GPU Driver Log Collector for VMs
+GPU Driver Log Collector for VMs
 
-This application collects nvidia-bug-report logs from VMs by executing
-nvidia-bug-report.sh locally (bundled in container via nvidia-utils).
+This application collects GPU bug report logs from VMs by executing
+vendor-specific bug report scripts locally (bundled in container).
+
+Supported GPU vendors:
+- NVIDIA: nvidia-bug-report.sh
+- AMD: amd-bug-report.sh
 
 Features:
 - Polls API for on-demand log collection tasks
-- Executes nvidia-bug-report.sh locally
+- Executes appropriate bug report script based on GPU_TYPE
 - Uploads collected logs to monitoring backend
 - Manages disk space by keeping only recent logs
 """
@@ -25,6 +29,7 @@ from typing import Optional, Dict, Any, Tuple
 from datetime import datetime, timezone
 
 # Configuration from environment variables
+GPU_TYPE = os.environ.get("GPU_TYPE", "nvidia").lower()  # "nvidia" or "amd"
 LOG_OUTPUT_DIR = os.environ.get("LOG_OUTPUT_DIR", "/logs")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 MAX_LOGS_TO_KEEP = int(os.environ.get("MAX_LOGS_TO_KEEP", "1"))
@@ -64,19 +69,22 @@ logging.basicConfig(
 LOG = logging.getLogger(__name__)
 
 
-class VmNvidiaLogCollector:
+class VmLogCollector:
     """
-    VM-specific NVIDIA log collector.
+    VM-specific GPU log collector supporting both NVIDIA and AMD.
 
     Features:
     - VM ID detection via dmidecode
     - Hostname-based identification
     - API-driven on-demand collection
-    - Local nvidia-bug-report.sh execution
+    - Local bug report script execution (nvidia-bug-report.sh or amd-bug-report.sh)
     """
 
     def __init__(self):
         """Initialize the VM log collector."""
+        # Get GPU type
+        self.gpu_type = GPU_TYPE
+
         # Get hostname
         self.hostname = socket.gethostname()
 
@@ -89,7 +97,7 @@ class VmNvidiaLogCollector:
         self.output_dir = Path(os.environ.get("LOG_OUTPUT_DIR", LOG_OUTPUT_DIR))
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        LOG.info(f"Initialized log collector for VM: {self.hostname}")
+        LOG.info(f"Initialized {self.gpu_type.upper()} log collector for VM: {self.hostname}")
         if self.vm_id:
             LOG.info(f"VM ID: {self.vm_id}")
 
@@ -235,9 +243,10 @@ class VmNvidiaLogCollector:
             LOG.error(f"Unexpected error during report: {e}")
             return False
 
-    def execute_nvidia_bug_report_local(self, event_id: Optional[str] = None) -> Optional[Path]:
+    def execute_bug_report_local(self, event_id: Optional[str] = None) -> Optional[Path]:
         """
-        Execute nvidia-bug-report.sh locally (bundled in container).
+        Execute the GPU-specific bug report script locally (bundled in container).
+        Handles NVIDIA mst binary workaround when gpu_type is nvidia.
 
         Args:
             event_id: Optional event ID to include in filename
@@ -245,38 +254,38 @@ class VmNvidiaLogCollector:
         Returns:
             Path to generated log file, or None on error
         """
-        LOG.info("Executing nvidia-bug-report.sh locally (bundled driver mode)")
+        script_path = Path(f"/usr/bin/{self.gpu_type}-bug-report.sh")
+        LOG.info(f"Executing {script_path.name} locally (bundled driver mode)")
 
-        if not Path("/usr/bin/nvidia-bug-report.sh").exists():
-            LOG.error("nvidia-bug-report.sh not found at /usr/bin/nvidia-bug-report.sh")
+        if not script_path.exists():
+            LOG.error(f"{script_path.name} not found at {script_path}")
             return None
 
         try:
             # Generate unique filename with timestamp and optional event_id
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             if event_id:
-                log_filename_base = f"nvidia-bug-report-{self.hostname}-{event_id}-{timestamp}.log"
+                log_filename_base = f"{self.gpu_type}-bug-report-{self.hostname}-{event_id}-{timestamp}.log"
             else:
-                log_filename_base = f"nvidia-bug-report-{self.hostname}-{timestamp}.log"
+                log_filename_base = f"{self.gpu_type}-bug-report-{self.hostname}-{timestamp}.log"
 
             # Output directly to /logs
             log_path_base = self.output_dir / log_filename_base
             actual_log_path = Path(f"{log_path_base}.gz")
 
-            # Temporarily rename mst to prevent nvidia-bug-report.sh from hanging on 'mst gpu add'
-            # Fix: Hide mst binary so nvidia-bug-report.sh skips MST sections
+            # NVIDIA workaround: temporarily rename mst to prevent
+            # nvidia-bug-report.sh from hanging on 'mst gpu add'
             mst_path = Path("/usr/bin/mst")
             mst_backup_path = Path("/usr/bin/mstbkup")
             mst_was_renamed = False
 
             try:
-                if mst_path.exists():
+                if self.gpu_type == "nvidia" and mst_path.exists():
                     LOG.debug("Temporarily renaming /usr/bin/mst to prevent hang")
                     mst_path.rename(mst_backup_path)
                     mst_was_renamed = True
 
-                # Execute nvidia-bug-report.sh bundled in the container
-                cmd = ["/usr/bin/nvidia-bug-report.sh", "--output-file", str(log_path_base)]
+                cmd = [str(script_path), "--output-file", str(log_path_base)]
 
                 LOG.info(f"Running command: {' '.join(cmd)}")
 
@@ -288,25 +297,25 @@ class VmNvidiaLogCollector:
                 )
 
                 if result.returncode == 0 and actual_log_path.exists():
-                    LOG.info(f"nvidia-bug-report.sh completed successfully: {actual_log_path}")
+                    LOG.info(f"{script_path.name} completed successfully: {actual_log_path}")
                     return actual_log_path
                 else:
-                    LOG.error(f"nvidia-bug-report.sh failed with return code {result.returncode}")
+                    LOG.error(f"{script_path.name} failed with return code {result.returncode}")
                     LOG.error(f"stdout: {result.stdout}")
                     LOG.error(f"stderr: {result.stderr}")
                     return None
 
             finally:
-                # Restore mst binary
+                # Restore mst binary if it was renamed
                 if mst_was_renamed and mst_backup_path.exists():
                     LOG.debug("Restoring /usr/bin/mst from backup")
                     mst_backup_path.rename(mst_path)
 
         except subprocess.TimeoutExpired:
-            LOG.error(f"nvidia-bug-report.sh timed out after {COLLECTION_TIMEOUT}s")
+            LOG.error(f"{script_path.name} timed out after {COLLECTION_TIMEOUT}s")
             return None
         except Exception as e:
-            LOG.error(f"Error executing nvidia-bug-report.sh locally: {e}")
+            LOG.error(f"Error executing {script_path.name} locally: {e}")
             return None
 
     def _cleanup_logs_by_pattern(self, pattern: str, log_type: str) -> None:
@@ -351,8 +360,9 @@ class VmNvidiaLogCollector:
         Cleans up both compressed (.log.gz) and unzipped (.log) files in the output directory.
         """
         try:
-            self._cleanup_logs_by_pattern("nvidia-bug-report-*.log.gz", "compressed")
-            self._cleanup_logs_by_pattern("nvidia-bug-report-*.log", "unzipped")
+            pattern_prefix = f"{self.gpu_type}-bug-report-"
+            self._cleanup_logs_by_pattern(f"{pattern_prefix}*.log.gz", "compressed")
+            self._cleanup_logs_by_pattern(f"{pattern_prefix}*.log", "unzipped")
         except Exception as e:
             LOG.warning(f"Error during log cleanup (non-critical): {e}")
 
@@ -407,16 +417,16 @@ class VmNvidiaLogCollector:
         Returns:
             Path to collected log file if successful, None otherwise
         """
-        LOG.info(f"Starting log collection for VM {self.vm_id}{f' for event {event_id}' if event_id else ''}")
+        LOG.info(f"Starting {self.gpu_type.upper()} log collection for VM {self.vm_id}{f' for event {event_id}' if event_id else ''}")
 
         # Clean up old logs to prevent disk space issues
         self.cleanup_old_logs()
 
-        # Execute nvidia-bug-report.sh locally
-        local_log_path = self.execute_nvidia_bug_report_local(event_id)
+        # Execute bug report script
+        local_log_path = self.execute_bug_report_local(event_id)
 
         if not local_log_path:
-            LOG.error("Failed to execute nvidia-bug-report.sh locally")
+            LOG.error(f"Failed to execute {self.gpu_type}-bug-report.sh locally")
             return None
 
         LOG.info(f"Log collection completed successfully: {local_log_path} ({local_log_path.stat().st_size / (1024*1024):.2f} MB)")
@@ -485,7 +495,8 @@ class VmNvidiaLogCollector:
 
     def run(self):
         """Main execution loop."""
-        LOG.info(f"NVIDIA Log Collector v{os.environ.get('AGENT_VERSION', 'unknown')} started on VM: {self.hostname}")
+        LOG.info(f"{self.gpu_type.upper()} Log Collector v{os.environ.get('AGENT_VERSION', 'unknown')} started on VM: {self.hostname}")
+        LOG.info(f"GPU Type: {self.gpu_type}")
         LOG.info(f"VM ID: {self.vm_id}")
         LOG.info(f"Output directory: {self.output_dir}")
         LOG.info(f"API-driven mode: {API_ENABLED}")
@@ -501,7 +512,7 @@ class VmNvidiaLogCollector:
 def main():
     """Entry point."""
     try:
-        collector = VmNvidiaLogCollector()
+        collector = VmLogCollector()
         collector.run()
     except KeyboardInterrupt:
         LOG.info("Received interrupt signal, shutting down")
