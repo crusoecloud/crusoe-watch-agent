@@ -1,58 +1,45 @@
-{{- if .Values.logCollector.enabled }}
-{{- /* Auto-detect GPU type by checking for GPU Operator namespaces */ -}}
-{{- $detectedGpuType := "" }}
-{{- if not .Values.logCollector.gpuType }}
-  {{- $nvidiaNamespace := lookup "v1" "Namespace" "" "nvidia-gpu-operator" }}
-  {{- $amdNamespace := lookup "v1" "Namespace" "" "amd-gpu-operator" }}
-  {{- $kubeAmdNamespace := lookup "v1" "Namespace" "" "kube-amd-gpu" }}
-  {{- if $nvidiaNamespace }}
-    {{- $detectedGpuType = "nvidia" }}
-  {{- else if or $amdNamespace $kubeAmdNamespace }}
-    {{- $detectedGpuType = "amd" }}
-  {{- else }}
-    {{- $detectedGpuType = "nvidia" }}
-  {{- end }}
-{{- end }}
-{{- $gpuType := .Values.logCollector.gpuType | default $detectedGpuType }}
-{{- $gpuVendor := printf "%s.com/gpu" $gpuType }}
-{{- $volumeName := printf "%s-logs" $gpuType }}
-{{- $logPath := printf "/var/log/%s-bug-reports" $gpuType }}
-{{- /* Select appropriate image based on GPU type */ -}}
-{{- $imageRepo := .Values.logCollector.image.repository }}
-{{- if eq $gpuType "amd" }}
-  {{- if not (contains "amd" $imageRepo) }}
-    {{- $imageRepo = "ghcr.io/crusoecloud/crusoe-watch-agent/amd-log-collector" }}
-  {{- end }}
-{{- end }}
+{{- /* Vendor-specific configuration for GPU log collectors */ -}}
+{{- $vendorConfigs := dict
+  "nvidia" (dict "tolerationKey" "nvidia.com/gpu" "affinityKey" "nvidia.com/gpu.present" "driverNamespace" "nvidia-gpu-operator" "driverPodPrefix" "nvidia-gpu-driver")
+  "amd" (dict "tolerationKey" "amd.com/gpu" "affinityKey" "feature.node.kubernetes.io/amd-gpu" "driverNamespace" "kube-amd-gpu" "driverPodPrefix" "amd-gpu-driver")
+}}
+
+{{- range $vendor := list "nvidia" "amd" }}
+{{- $vendorValues := index $.Values.logCollector $vendor }}
+{{- $vcfg := index $vendorConfigs $vendor }}
+{{- $shared := $.Values.logCollector }}
+{{- if $vendorValues.enabled }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ .Values.logCollector.name }}
-  namespace: {{ .Values.namespace }}
+  name: {{ $vendorValues.name }}
+  namespace: {{ $.Values.namespace }}
   labels:
-    app: {{ .Values.logCollector.name }}
-    app.kubernetes.io/name: {{ .Values.logCollector.name }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app: {{ $vendorValues.name }}
+    app.kubernetes.io/name: {{ $vendorValues.name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    gpu-vendor: {{ $vendor }}
 spec:
   selector:
     matchLabels:
-      app: {{ .Values.logCollector.name }}
+      app: {{ $vendorValues.name }}
   template:
     metadata:
       labels:
-        app: {{ .Values.logCollector.name }}
+        app: {{ $vendorValues.name }}
+        gpu-vendor: {{ $vendor }}
     spec:
-      serviceAccountName: {{ .Values.logCollector.name }}
+      serviceAccountName: {{ $vendorValues.name }}
 
-      {{- if .Values.logCollector.nodeSelector }}
+      {{- with ($vendorValues.nodeSelector | default $shared.nodeSelector) }}
       nodeSelector:
-        {{- toYaml .Values.logCollector.nodeSelector | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
 
       tolerations:
-        - key: {{ $gpuVendor }}
+        - key: {{ $vcfg.tolerationKey }}
           operator: Exists
           effect: NoSchedule
 
@@ -60,34 +47,26 @@ spec:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
-              {{- if eq $gpuType "amd" }}
               - matchExpressions:
-                  - key: feature.node.kubernetes.io/amd-gpu
+                  - key: {{ $vcfg.affinityKey }}
                     operator: In
                     values:
                       - "true"
-              {{- else }}
-              - matchExpressions:
-                  - key: {{ $gpuVendor }}.present
-                    operator: In
-                    values:
-                      - "true"
-              {{- end }}
 
       initContainers:
         - name: fix-logs-permissions
           image: busybox:latest
           command: ["sh", "-c", "mkdir -p /logs && chown -R 0:0 /logs && chmod -R 755 /logs"]
           volumeMounts:
-            - name: {{ $volumeName }}
+            - name: {{ $vendor }}-logs
               mountPath: /logs
           securityContext:
             runAsUser: 0
 
       containers:
       - name: log-collector
-        image: "{{ $imageRepo }}:{{ .Values.logCollector.image.tag }}"
-        imagePullPolicy: {{ .Values.logCollector.image.pullPolicy }}
+        image: "{{ $vendorValues.imageRepository }}:{{ $vendorValues.imageTag | default $shared.imageTag }}"
+        imagePullPolicy: {{ $vendorValues.pullPolicy | default $shared.pullPolicy }}
 
         env:
         - name: NODE_NAME
@@ -100,12 +79,12 @@ spec:
               name: crusoe-monitoring-token
               key: CRUSOE_MONITORING_TOKEN
         - name: GPU_TYPE
-          value: {{ $gpuType | quote }}
+          value: {{ $vendor | quote }}
         - name: DRIVER_NAMESPACE
-          value: {{ printf "%s-gpu-operator" $gpuType | quote }}
+          value: {{ $vcfg.driverNamespace | quote }}
         - name: DRIVER_POD_PREFIX
-          value: {{ printf "%s-gpu-driver" $gpuType | quote }}
-        {{- range $key, $value := .Values.logCollector.env }}
+          value: {{ $vcfg.driverPodPrefix | quote }}
+        {{- range $key, $value := ($vendorValues.env | default $shared.env) }}
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
@@ -116,28 +95,29 @@ spec:
             optional: false
 
         volumeMounts:
-        - name: {{ $volumeName }}
+        - name: {{ $vendor }}-logs
           mountPath: /logs
         - name: sysfs
           mountPath: /host/sys
           readOnly: true
 
-        {{- if .Values.logCollector.resources }}
+        {{- with ($vendorValues.resources | default $shared.resources) }}
         resources:
-          {{- toYaml .Values.logCollector.resources | nindent 10 }}
+          {{- toYaml . | nindent 10 }}
         {{- end }}
 
-        {{- if .Values.logCollector.securityContext }}
+        {{- with ($vendorValues.securityContext | default $shared.securityContext) }}
         securityContext:
-          {{- toYaml .Values.logCollector.securityContext | nindent 10 }}
+          {{- toYaml . | nindent 10 }}
         {{- end }}
 
       volumes:
-      - name: {{ $volumeName }}
+      - name: {{ $vendor }}-logs
         hostPath:
-          path: {{ $logPath }}
+          path: /var/log/{{ $vendor }}-bug-reports
           type: DirectoryOrCreate
       - name: sysfs
         hostPath:
           path: /sys
+{{- end }}
 {{- end }}
