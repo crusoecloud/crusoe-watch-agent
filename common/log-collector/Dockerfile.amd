@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/python3.12/dist-packages /usr/local/lib/python3.12/dist-packages
 
 # Copy AMD bug report script
-COPY scripts/amd-bug-report.sh /usr/bin/amd-bug-report.sh
+COPY app/amd-bug-report.sh /usr/bin/amd-bug-report.sh
 RUN chmod +x /usr/bin/amd-bug-report.sh
 
 # Copy application code

@@ -7,11 +7,11 @@ on:
       - "v[0-9]*"
     # Run if changes occur under unified log-collector path
     paths:
-      - '../../common/log-collector/**'
+      - 'common/log-collector/**'
   pull_request:
     branches: ["main"]
     paths:
-      - '../../common/log-collector/**'
+      - 'common/log-collector/**'
 
 jobs:
   test:
