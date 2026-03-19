@@ -106,7 +106,7 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
-      --url)
+      --ingress-url)
         if [[ -n "$2" ]]; then
           CMS_BASE_URL="$2"; shift 2
         else

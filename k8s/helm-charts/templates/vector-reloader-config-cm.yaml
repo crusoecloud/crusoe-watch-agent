@@ -31,7 +31,7 @@ data:
     logs:
       enabled: {{ .Values.logs.enabled }}
     sink:
-      endpoint: {{ index .Values.endpoints .Values.environment | quote }}
+      endpoint: {{ .Values.ingressEndpoint | quote }}
 {{- if .Values.proxy.enabled }}
       proxy:
         enabled: {{ .Values.proxy.enabled }}

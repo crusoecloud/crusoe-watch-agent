@@ -7,8 +7,8 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 # GitHub branch (optional override via CLI, defaults to main)
 GITHUB_BRANCH="main"
 
-# Crusoe environment (optional override via CLI, defaults to main)
-ENVIRONMENT="prod"
+# CMS base URL (optional, defaults to prod)
+CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
 
 # Define paths for config files within the GitHub repository (vm subdir)
 REMOTE_VECTOR_CONFIG_AMD_GPU_VM="vm/config/vector_amd_gpu_vm.yaml"
@@ -34,14 +34,7 @@ DEFAULT_AMD_EXPORTER_SERVICE_NAME="crusoe-amd-exporter.service"
 AMD_EXPORTER_SERVICE_NAME=$DEFAULT_AMD_EXPORTER_SERVICE_NAME
 AMD_EXPORTER_PORT="5000"
 
-# environment to crusoe Ingress endpoint Map
-declare -A -r TELEMETRY_INGRESS_MAP=(
-  ["dev"]="https://cms-monitoring.crusoecloud.xyz/ingest"
-  ["staging"]="https://cms-monitoring.crusoecloud.site/ingest"
-  ["prod"]="https://cms-monitoring.crusoecloud.com/ingest"
-)
-
-LOGS_INGRESS_ENDPOINT="https://cms-monitoring.crusoecloud.com/logs/ingest"
+LOGS_INGRESS_ENDPOINT=""
 
 # CLI args parsing
 usage() {
@@ -49,7 +42,7 @@ usage() {
   echo "Commands: install | uninstall | refresh-token | upgrade | help"
   echo "Options:"
   echo "  --branch|-b BRANCH                        Specify GitHub branch (default: main)"
-  echo "  --env|-e ENVIRONMENT                      Specify environment: dev|staging|prod (default: prod)"
+  echo "  --ingress-url URL                         Specify CMS base URL (default: https://cms-monitoring.crusoecloud.com)"
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
@@ -88,9 +81,9 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
-      --env|-e)
+      --ingress-url)
         if [[ -n "$2" ]]; then
-          ENVIRONMENT="$2"; shift 2
+          CMS_BASE_URL="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -369,7 +362,7 @@ do_install() {
   cat <<EOF > "$ENV_FILE"
 VM_ID='${CRUSOE_VM_ID}'
 AMD_EXPORTER_PORT='${AMD_EXPORTER_PORT}'
-TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_MAP[$ENVIRONMENT]}'
+TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 AGENT_VERSION='${AGENT_VERSION}'
 EOF
@@ -484,6 +477,12 @@ parse_args "$@"
 
 # Update base URL to reflect chosen branch
 GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${GITHUB_BRANCH}"
+
+# Construct endpoints from CMS_BASE_URL (after parse_args so --ingress-url is applied)
+TELEMETRY_INGRESS_ENDPOINT="${CMS_BASE_URL}/ingest"
+if [[ -z "$LOGS_INGRESS_ENDPOINT" ]]; then
+  LOGS_INGRESS_ENDPOINT="${CMS_BASE_URL}/logs/ingest"
+fi
 
 # --- Main Script ---
 

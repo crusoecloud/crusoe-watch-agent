@@ -1,9 +1,5 @@
 namespace: crusoe-system
-environment: prod
-endpoints:
-  prod: "https://cms-monitoring.crusoecloud.com"
-  staging: "https://cms-monitoring.crusoecloud.site"
-  dev: "https://cms-monitoring.crusoecloud.xyz"
+ingressEndpoint: "https://cms-monitoring.crusoecloud.com"
 
 proxy:
   enabled: false
