@@ -309,7 +309,7 @@ install_log_collector_native() {
 
   # Download application files
   status "Downloading log collector application files."
-  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/log-collector/app"
+  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/common/log-collector/app"
   wget -q -O "$INSTALL_DIR/log_collector.py" "$GITHUB_APP_BASE/log_collector.py" || error_exit "Failed to download log_collector.py"
 
   # Download and install requirements

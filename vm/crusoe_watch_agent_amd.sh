@@ -301,10 +301,9 @@ install_amd_log_collector_native() {
 
   # Download application files
   status "Downloading AMD log collector application files."
-  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/log-collector/app"
-  local GITHUB_SCRIPTS_BASE="$GITHUB_RAW_BASE_URL/log-collector/scripts"
+  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/common/log-collector/app"
   wget -q -O "$INSTALL_DIR/log_collector.py" "$GITHUB_APP_BASE/log_collector.py" || error_exit "Failed to download log_collector.py"
-  wget -q -O "$INSTALL_DIR/amd-bug-report.sh" "$GITHUB_SCRIPTS_BASE/amd-bug-report.sh" || error_exit "Failed to download amd-bug-report.sh"
+  wget -q -O "$INSTALL_DIR/amd-bug-report.sh" "$GITHUB_APP_BASE/amd-bug-report.sh" || error_exit "Failed to download amd-bug-report.sh"
 
   # Make amd-bug-report.sh executable and copy to /usr/bin
   chmod +x "$INSTALL_DIR/amd-bug-report.sh"
