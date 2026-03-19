@@ -11,7 +11,7 @@ EnvironmentFile=/etc/crusoe/secrets/.monitoring-token
 Environment="GPU_TYPE=amd"
 Environment="LOG_OUTPUT_DIR=/var/log/amd-bug-reports"
 Environment="API_ENABLED=true"
-ExecStart=/usr/bin/python3 /opt/crusoe-amd-log-collector/vm_log_collector_app.py
+ExecStart=/usr/bin/python3 /opt/crusoe-amd-log-collector/log_collector.py
 Restart=always
 RestartSec=10
 

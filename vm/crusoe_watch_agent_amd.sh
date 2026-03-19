@@ -308,16 +308,17 @@ install_amd_log_collector_native() {
 
   # Download application files
   status "Downloading AMD log collector application files."
-  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/vm/log-collector/app"
-  wget -q -O "$INSTALL_DIR/vm_log_collector_app.py" "$GITHUB_APP_BASE/vm_log_collector_app.py" || error_exit "Failed to download vm_log_collector_app.py"
-  wget -q -O "$INSTALL_DIR/amd-bug-report.sh" "$GITHUB_APP_BASE/amd-bug-report.sh" || error_exit "Failed to download amd-bug-report.sh"
+  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/log-collector/app"
+  local GITHUB_SCRIPTS_BASE="$GITHUB_RAW_BASE_URL/log-collector/scripts"
+  wget -q -O "$INSTALL_DIR/log_collector.py" "$GITHUB_APP_BASE/log_collector.py" || error_exit "Failed to download log_collector.py"
+  wget -q -O "$INSTALL_DIR/amd-bug-report.sh" "$GITHUB_SCRIPTS_BASE/amd-bug-report.sh" || error_exit "Failed to download amd-bug-report.sh"
 
   # Make amd-bug-report.sh executable and copy to /usr/bin
   chmod +x "$INSTALL_DIR/amd-bug-report.sh"
   cp "$INSTALL_DIR/amd-bug-report.sh" /usr/bin/amd-bug-report.sh || error_exit "Failed to install amd-bug-report.sh"
 
   # Download and install Python requirements
-  local GITHUB_REQ="$GITHUB_RAW_BASE_URL/vm/log-collector/requirements.txt"
+  local GITHUB_REQ="$GITHUB_APP_BASE/requirements.txt"
   wget -q -O "/tmp/amd-log-collector-requirements.txt" "$GITHUB_REQ" || error_exit "Failed to download requirements.txt"
 
   # Try with --break-system-packages first (pip >= 22.1), fall back without it for older pip

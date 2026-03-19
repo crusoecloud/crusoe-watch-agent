@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-GPU Driver Log Collector
+GPU Driver Log Collector - Unified K8s and VM
 
-This application runs as a DaemonSet and collects bug reports from GPU driver pods.
+This application collects GPU bug reports in both Kubernetes and VM environments.
 Supports both NVIDIA and AMD GPUs.
 
 Features:
+- Auto-detects K8s vs VM environment
 - Auto-detects or uses configured GPU type (NVIDIA or AMD)
-- Discovers GPU driver pods on the same node
-- Executes vendor-specific bug report scripts
-- Downloads generated log files to local storage
-- Supports periodic collection or one-time execution
+- K8s: Discovers GPU driver pods and executes bug reports (GPU Operator or bundled mode)
+- VM: Executes bug report scripts locally
 - API-driven or scheduled collection modes
+- Manages disk space by keeping only recent logs
 """
 
 import os
@@ -22,44 +22,50 @@ import tarfile
 import tempfile
 import base64
 import requests
-import gzip
-import shutil
+import subprocess
+import socket
 import json
 import shlex
-import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
-from datetime import datetime
+from typing import Optional, Dict, Any, Tuple
+from datetime import datetime, timezone
 
-from kubernetes import client, config
-from kubernetes.client.rest import ApiException
-from kubernetes.stream import stream
+# Environment detection - determines K8s vs VM mode
+ENVIRONMENT = "kubernetes" if os.getenv("KUBERNETES_SERVICE_HOST") else "vm"
+
+# Conditional imports for K8s
+if ENVIRONMENT == "kubernetes":
+    from kubernetes import client, config
+    from kubernetes.client.rest import ApiException
+    from kubernetes.stream import stream
 
 # Configuration from environment variables
-NODE_NAME = os.environ.get("NODE_NAME")
-VM_ID = os.environ.get("VM_ID")  # Unique VM identifier
-LOG_OUTPUT_DIR = os.environ.get("LOG_OUTPUT_DIR", "/logs")
 GPU_TYPE = os.environ.get("GPU_TYPE", "nvidia").lower()  # nvidia or amd
+LOG_OUTPUT_DIR = os.environ.get("LOG_OUTPUT_DIR", "/logs")
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+MAX_LOGS_TO_KEEP = int(os.environ.get("MAX_LOGS_TO_KEEP", "1"))
+
+# API configuration
+API_BASE_URL = os.environ.get("API_BASE_URL", os.environ.get("LOG_COLLECTOR_API_BASE_URL", "https://cms-monitoring.crusoecloud.com"))
+API_POLL_INTERVAL = int(os.environ.get("API_POLL_INTERVAL", "60"))
+API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
+COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))
+COLLECTION_INTERVAL = int(os.environ.get("COLLECTION_INTERVAL", "3600"))
+CRUSOE_AUTH_TOKEN = os.environ.get("CRUSOE_MONITORING_TOKEN") or os.environ.get("CRUSOE_AUTH_TOKEN")
+
+# K8s-specific configuration (only used when ENVIRONMENT == "kubernetes")
+NODE_NAME = os.environ.get("NODE_NAME")
 DRIVER_NAMESPACE = os.environ.get("DRIVER_NAMESPACE", "nvidia-gpu-operator" if GPU_TYPE == "nvidia" else "amd-gpu-operator")
 DRIVER_POD_PREFIX = os.environ.get("DRIVER_POD_PREFIX", f"{GPU_TYPE}-gpu-driver")
-COLLECTION_INTERVAL = int(os.environ.get("COLLECTION_INTERVAL", "3600"))  # 1 hour default
 RUN_ONCE = os.environ.get("RUN_ONCE", "false").lower() == "true"
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
-MAX_LOGS_TO_KEEP = int(os.environ.get("MAX_LOGS_TO_KEEP", "1"))  # Keep only last 1 logs
 
-# API configuration for event-driven collection
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://cms-monitoring.crusoecloud.com")
-API_POLL_INTERVAL = int(os.environ.get("API_POLL_INTERVAL", "60"))  # Poll every 60 seconds
-API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
-COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))  # 5 minutes timeout
-CRUSOE_MONITORING_TOKEN = os.environ.get("CRUSOE_MONITORING_TOKEN")  # Auth token for API calls
 
 class JSONFormatter(logging.Formatter):
     """JSON formatter for structured logging - efficient and no parsing needed."""
 
     def format(self, record):
         log_data = {
-            "timestamp": datetime.utcfromtimestamp(record.created).isoformat() + "Z",
+            "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat().replace('+00:00', 'Z'),
             "level": record.levelname.lower(),
             "message": record.getMessage(),
         }
@@ -81,25 +87,41 @@ LOG = logging.getLogger(__name__)
 
 
 class LogCollector:
-    """Collects bug reports from NVIDIA or AMD GPU driver pods."""
+    """
+    Unified GPU log collector supporting both Kubernetes and VM environments.
+    Supports both NVIDIA and AMD GPUs.
+    """
 
     def __init__(self):
-        """Initialize the log collector."""
-        # Read from environment for testability
-        self.node_name = os.environ.get("NODE_NAME")
+        """Initialize the log collector for K8s or VM environment."""
+        self.environment = ENVIRONMENT
+        self.gpu_type = GPU_TYPE
+        self.output_dir = Path(LOG_OUTPUT_DIR)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Environment-specific initialization
+        if self.environment == "kubernetes":
+            self._init_kubernetes()
+        else:
+            self._init_vm()
+
+        # Warn if API mode is enabled but token is missing
+        if API_ENABLED and not CRUSOE_AUTH_TOKEN:
+            LOG.warning("API_ENABLED is true but auth token is not set. API calls may fail authentication.")
+
+    def _init_kubernetes(self):
+        """Initialize Kubernetes-specific configuration."""
+        self.node_name = NODE_NAME
         if not self.node_name:
-            raise RuntimeError("NODE_NAME environment variable not set")
+            raise RuntimeError("NODE_NAME environment variable not set in Kubernetes mode")
+
+        self.driver_namespace = DRIVER_NAMESPACE
+        self.driver_pod_prefix = DRIVER_POD_PREFIX
 
         # Get VM_ID from environment or read from DMI
         self.vm_id = os.environ.get("VM_ID")
         if not self.vm_id:
             self.vm_id = self._read_vm_id_from_dmi()
-
-        self.gpu_type = GPU_TYPE
-        self.driver_namespace = DRIVER_NAMESPACE
-        self.driver_pod_prefix = DRIVER_POD_PREFIX
-        self.output_dir = Path(os.environ.get("LOG_OUTPUT_DIR", LOG_OUTPUT_DIR))
-        self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Kubernetes client
         try:
@@ -110,32 +132,63 @@ class LogCollector:
             LOG.info("Loaded kubeconfig from local environment")
 
         self.k8s_api = client.CoreV1Api()
-        LOG.info(f"Initialized {self.gpu_type.upper()} log collector for node: {self.node_name}")
+        LOG.info(f"Initialized {self.gpu_type.upper()} log collector for K8s node: {self.node_name}")
         if self.vm_id:
             LOG.info(f"VM ID: {self.vm_id}")
 
-        # Warn if API mode is enabled but token is missing
-        if API_ENABLED and not CRUSOE_MONITORING_TOKEN:
-            LOG.warning("API_ENABLED is true but CRUSOE_MONITORING_TOKEN is not set. API calls may fail authentication.")
+    def _init_vm(self):
+        """Initialize VM-specific configuration."""
+        self.node_name = socket.gethostname()
+        self.hostname = self.node_name
+
+        # Get VM_ID from environment or read from DMI
+        self.vm_id = os.environ.get("VM_ID")
+        if not self.vm_id:
+            self.vm_id = self._read_vm_id_from_dmi()
+
+        LOG.info(f"Initialized {self.gpu_type.upper()} log collector for VM: {self.hostname}")
+        if self.vm_id:
+            LOG.info(f"VM ID: {self.vm_id}")
 
     def _read_vm_id_from_dmi(self) -> Optional[str]:
         """
-        Read VM ID from DMI product_uuid file.
+        Read VM ID from DMI.
+
+        In K8s: Reads from /host/sys/class/dmi/id/product_uuid
+        In VM: Uses dmidecode command
 
         Returns:
             VM ID string if available, None otherwise
         """
-        dmi_path = Path("/host/sys/class/dmi/id/product_uuid")
-        try:
-            if dmi_path.exists():
-                vm_id = dmi_path.read_text().strip()
-                LOG.info(f"Read VM ID from DMI: {vm_id}")
-                return vm_id
-            else:
-                LOG.warning(f"DMI file not found: {dmi_path}")
+        if self.environment == "kubernetes":
+            # K8s: Read from mounted host filesystem
+            dmi_path = Path("/host/sys/class/dmi/id/product_uuid")
+            try:
+                if dmi_path.exists():
+                    vm_id = dmi_path.read_text().strip()
+                    LOG.info(f"Read VM ID from DMI: {vm_id}")
+                    return vm_id
+                else:
+                    LOG.warning(f"DMI file not found: {dmi_path}")
+                    return None
+            except Exception as e:
+                LOG.warning(f"Failed to read VM ID from DMI: {e}")
                 return None
-        except Exception as e:
-            LOG.warning(f"Failed to read VM ID from DMI: {e}")
+        else:
+            # VM: Use dmidecode command
+            try:
+                result = subprocess.run(
+                    ["dmidecode", "-s", "system-uuid"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    vm_id = result.stdout.strip()
+                    LOG.info(f"Read VM ID from dmidecode: {vm_id}")
+                    return vm_id
+            except Exception as e:
+                LOG.error(f"Failed to read VM ID from dmidecode: {e}")
             return None
 
     def _get_auth_headers(self) -> Dict[str, str]:
@@ -146,8 +199,8 @@ class LogCollector:
             Dictionary with Authorization header if token is available
         """
         headers = {}
-        if CRUSOE_MONITORING_TOKEN:
-            headers['Authorization'] = f'Bearer {CRUSOE_MONITORING_TOKEN}'
+        if CRUSOE_AUTH_TOKEN:
+            headers['Authorization'] = f'Bearer {CRUSOE_AUTH_TOKEN}'
         return headers
 
     def check_for_tasks(self) -> Optional[Dict[str, Any]]:
@@ -258,11 +311,14 @@ class LogCollector:
 
     def _get_node_instance_type(self) -> Optional[str]:
         """
-        Get the instance type from Kubernetes node labels.
+        Get the instance type from Kubernetes node labels (K8s only).
 
         Returns:
             Instance type (e.g., "a100-80gb.1x", "gb200-320gb.1x") or None
         """
+        if self.environment != "kubernetes":
+            return None
+
         try:
             node = self.k8s_api.read_node(self.node_name)
             return node.metadata.labels.get('node.kubernetes.io/instance-type')
@@ -272,20 +328,23 @@ class LogCollector:
 
     def _is_bundled_driver_mode(self) -> bool:
         """
-        Determine if this node uses bundled driver mode.
+        Determine if this node uses bundled driver mode (K8s only).
 
         Returns:
             True if node should use bundled drivers (execute locally),
             False for GPU Operator path (exec into driver pod)
         """
+        if self.environment == "vm":
+            # VMs always use bundled/local mode
+            return True
+
         # AMD always uses bundled driver mode in K8s
         if self.gpu_type == "amd":
             LOG.info(f"Node {self.node_name} uses AMD, using bundled driver mode")
             return True
 
-        instance_type = self._get_node_instance_type()
-
         # GB200 nodes use bundled NVIDIA drivers
+        instance_type = self._get_node_instance_type()
         if instance_type and 'gb200' in instance_type.lower():
             LOG.info(f"Node {self.node_name} is GB200 (instance-type={instance_type}), using bundled driver mode")
             return True
@@ -294,9 +353,9 @@ class LogCollector:
         LOG.info(f"Node {self.node_name} instance-type={instance_type}, using GPU Operator mode")
         return False
 
-    def find_nvidia_driver_pod(self) -> Optional[client.V1Pod]:
+    def find_nvidia_driver_pod(self):
         """
-        Find the NVIDIA GPU driver pod running on this node.
+        Find the NVIDIA GPU driver pod running on this node (K8s only).
 
         Primary: Uses label selector (app.kubernetes.io/component=nvidia-driver) which is
         set by the official NVIDIA GPU Operator.
@@ -305,6 +364,9 @@ class LogCollector:
         Returns:
             V1Pod object if found, None otherwise
         """
+        if self.environment != "kubernetes":
+            return None
+
         try:
             # Primary: Find by label selector (reliable, set by GPU Operator)
             pods = self.k8s_api.list_namespaced_pod(
@@ -348,9 +410,9 @@ class LogCollector:
             LOG.error(f"Error finding NVIDIA driver pod: {e}")
             return None
 
-    def execute_nvidia_bug_report(self, pod: client.V1Pod, event_id: Optional[str] = None) -> Optional[str]:
+    def execute_nvidia_bug_report(self, pod, event_id: Optional[str] = None) -> Optional[str]:
         """
-        Execute nvidia-bug-report.sh in the driver pod.
+        Execute nvidia-bug-report.sh in the driver pod (K8s only).
 
         Args:
             pod: The NVIDIA driver pod
@@ -359,6 +421,9 @@ class LogCollector:
         Returns:
             Path to the generated log file within the pod, or None on error
         """
+        if self.environment != "kubernetes":
+            return None
+
         pod_name = pod.metadata.name
         container_name = self._get_driver_container_name(pod)
 
@@ -432,7 +497,7 @@ class LogCollector:
     def execute_bug_report_local(self, event_id: Optional[str] = None) -> Optional[Path]:
         """
         Execute bug report script locally (bundled in container).
-        Works for both NVIDIA (GB200) and AMD GPUs.
+        Works for both NVIDIA and AMD GPUs, in both K8s (bundled mode) and VM environments.
 
         Args:
             event_id: Optional event ID to include in filename
@@ -460,26 +525,45 @@ class LogCollector:
             log_path_base = Path(self.output_dir) / log_filename_base
             actual_log_path = Path(f"{log_path_base}.gz")
 
-            # Execute bug report script bundled in the container
-            cmd = [str(script_path), "--output-file", str(log_path_base)]
+            # NVIDIA workaround: temporarily rename mst to prevent
+            # nvidia-bug-report.sh from hanging on 'mst gpu add'
+            # This is primarily needed in VM environments
+            mst_path = Path("/usr/bin/mst")
+            mst_backup_path = Path("/usr/bin/mstbkup")
+            mst_was_renamed = False
 
-            LOG.info(f"Running command: {' '.join(cmd)}")
+            try:
+                if self.gpu_type == "nvidia" and mst_path.exists():
+                    LOG.debug("Temporarily renaming /usr/bin/mst to prevent hang")
+                    mst_path.rename(mst_backup_path)
+                    mst_was_renamed = True
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=COLLECTION_TIMEOUT
-            )
+                # Execute bug report script bundled in the container
+                cmd = [str(script_path), "--output-file", str(log_path_base)]
 
-            if result.returncode == 0 and actual_log_path.exists():
-                LOG.info(f"Bug report completed successfully: {actual_log_path}")
-                return actual_log_path
-            else:
-                LOG.error(f"Bug report failed with return code {result.returncode}")
-                LOG.error(f"stdout: {result.stdout}")
-                LOG.error(f"stderr: {result.stderr}")
-                return None
+                LOG.info(f"Running command: {' '.join(cmd)}")
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=COLLECTION_TIMEOUT
+                )
+
+                if result.returncode == 0 and actual_log_path.exists():
+                    LOG.info(f"Bug report completed successfully: {actual_log_path}")
+                    return actual_log_path
+                else:
+                    LOG.error(f"Bug report failed with return code {result.returncode}")
+                    LOG.error(f"stdout: {result.stdout}")
+                    LOG.error(f"stderr: {result.stderr}")
+                    return None
+
+            finally:
+                # Restore mst binary if it was renamed
+                if mst_was_renamed and mst_backup_path.exists():
+                    LOG.debug("Restoring /usr/bin/mst from backup")
+                    mst_backup_path.rename(mst_path)
 
         except subprocess.TimeoutExpired:
             LOG.error(f"Bug report timed out after {COLLECTION_TIMEOUT}s")
@@ -488,9 +572,9 @@ class LogCollector:
             LOG.error(f"Error executing bug report locally: {e}")
             return None
 
-    def download_log_file(self, pod: client.V1Pod, remote_path: str) -> Optional[Path]:
+    def download_log_file(self, pod, remote_path: str) -> Optional[Path]:
         """
-        Download the log file from the driver pod using tar.
+        Download the log file from the driver pod using tar (K8s only).
 
         Args:
             pod: The NVIDIA driver pod
@@ -499,6 +583,9 @@ class LogCollector:
         Returns:
             Path to the downloaded file, or None on error
         """
+        if self.environment != "kubernetes":
+            return None
+
         pod_name = pod.metadata.name
         container_name = self._get_driver_container_name(pod)
 
@@ -614,9 +701,9 @@ class LogCollector:
             LOG.error(f"Unexpected error downloading log file: {e}")
             return None
 
-    def cleanup_remote_log(self, pod: client.V1Pod, remote_path: str) -> bool:
+    def cleanup_remote_log(self, pod, remote_path: str) -> bool:
         """
-        Clean up the temporary log file from the driver pod.
+        Clean up the temporary log file from the driver pod (K8s only).
 
         Args:
             pod: The NVIDIA driver pod
@@ -625,6 +712,9 @@ class LogCollector:
         Returns:
             True if cleanup successful, False otherwise
         """
+        if self.environment != "kubernetes":
+            return False
+
         pod_name = pod.metadata.name
         container_name = self._get_driver_container_name(pod)
 
@@ -713,9 +803,9 @@ class LogCollector:
         except Exception as e:
             LOG.warning(f"Error during log cleanup (non-critical): {e}")
 
-    def collect_logs(self, event_id: Optional[str] = None) -> tuple[Optional[Path], str]:
+    def collect_logs(self, event_id: Optional[str] = None) -> Tuple[Optional[Path], str]:
         """
-        Main log collection workflow.
+        Main log collection workflow for both K8s and VM environments.
 
         Args:
             event_id: Optional event ID to include in filename and for API tracking
@@ -725,7 +815,7 @@ class LogCollector:
             On success: (Path, "")
             On failure: (None, "specific error message")
         """
-        LOG.info(f"Starting log collection cycle (node {self.node_name}){f' for event {event_id}' if event_id else ''}")
+        LOG.info(f"Starting log collection cycle ({self.environment} mode, node {self.node_name}){f' for event {event_id}' if event_id else ''}")
 
         # Clean up old logs to prevent disk space issues
         self.cleanup_old_logs()
@@ -734,6 +824,7 @@ class LogCollector:
 
         if self._is_bundled_driver_mode():
             # Execute bug report locally (bundled in container)
+            # This path is used by: VMs, AMD in K8s, GB200 in K8s
             LOG.info("Using bundled driver mode")
             local_log_path = self.execute_bug_report_local(event_id)
 
@@ -742,7 +833,7 @@ class LogCollector:
                 LOG.error(error_msg)
                 return None, error_msg
         else:
-            # Execute via GPU Operator driver pod (NVIDIA only)
+            # Execute via GPU Operator driver pod (NVIDIA in K8s only, non-GB200)
             LOG.info("Using GPU Operator mode (driver pod)")
             driver_pod = self.find_nvidia_driver_pod()
             if not driver_pod:
@@ -768,7 +859,7 @@ class LogCollector:
         LOG.info(f"Log collection completed successfully: {local_log_path} ({local_log_path.stat().st_size / (1024*1024):.2f} MB)")
         return local_log_path, ""
 
-    def collect_logs_with_timeout(self, event_id: str) -> tuple[bool, Optional[Path], str]:
+    def collect_logs_with_timeout(self, event_id: str) -> Tuple[bool, Optional[Path], str]:
         """
         Collect logs with timeout handling.
 
@@ -811,9 +902,9 @@ class LogCollector:
         else:
             return False, None, "Collection failed with unknown error"
 
-    def _get_driver_container_name(self, pod: client.V1Pod) -> Optional[str]:
+    def _get_driver_container_name(self, pod) -> Optional[str]:
         """
-        Get the name of the driver container in the pod.
+        Get the name of the driver container in the pod (K8s only).
 
         Args:
             pod: The NVIDIA driver pod
@@ -821,6 +912,9 @@ class LogCollector:
         Returns:
             Container name, or None if not found
         """
+        if self.environment != "kubernetes":
+            return None
+
         # Try to find a container with 'driver' in the name
         for container in pod.spec.containers:
             if "driver" in container.name.lower():
@@ -834,18 +928,23 @@ class LogCollector:
 
     def run(self):
         """Main execution loop."""
-        LOG.info(f"{self.gpu_type.upper()} Log Collector started on node: {self.node_name}")
+        LOG.info(f"{self.gpu_type.upper()} Log Collector started")
+        LOG.info(f"Environment: {self.environment}")
+        LOG.info(f"Node/Host: {self.node_name}")
+        LOG.info(f"VM ID: {self.vm_id}")
         LOG.info(f"Output directory: {self.output_dir}")
-        LOG.info(f"Run once mode: {RUN_ONCE}")
         LOG.info(f"API-driven mode: {API_ENABLED}")
 
-        if RUN_ONCE:
-            # Run once and exit
-            log_path, error_msg = self.collect_logs()
-            if error_msg:
-                LOG.error(f"Collection failed: {error_msg}")
-            sys.exit(0 if log_path else 1)
-        elif API_ENABLED:
+        if self.environment == "kubernetes":
+            LOG.info(f"Run once mode: {RUN_ONCE}")
+            if RUN_ONCE:
+                # Run once and exit (K8s only)
+                log_path, error_msg = self.collect_logs()
+                if error_msg:
+                    LOG.error(f"Collection failed: {error_msg}")
+                sys.exit(0 if log_path else 1)
+
+        if API_ENABLED:
             # API-driven mode: poll for tasks and collect logs on-demand
             self._run_api_mode()
         else:
@@ -879,7 +978,7 @@ class LogCollector:
                         # Report success and upload logs in a single call
                         LOG.info(f"Reporting success and uploading logs for event {event_id}")
                         upload_success = self.report_result(event_id, "success", log_file=log_path)
-                        
+
                         if not upload_success:
                             # Upload failed - try to report failure status without file
                             LOG.warning(f"Upload failed for event {event_id}, reporting failure status")

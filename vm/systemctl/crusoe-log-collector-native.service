@@ -10,7 +10,7 @@ EnvironmentFile=/etc/crusoe/crusoe_watch_agent/.env
 EnvironmentFile=/etc/crusoe/secrets/.monitoring-token
 Environment="LOG_OUTPUT_DIR=/var/log/nvidia-bug-reports"
 Environment="API_ENABLED=true"
-ExecStart=/usr/bin/python3 /opt/crusoe-log-collector/vm_log_collector_app.py
+ExecStart=/usr/bin/python3 /opt/crusoe-log-collector/log_collector.py
 Restart=always
 RestartSec=10
 
