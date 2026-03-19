@@ -57,10 +57,11 @@ usage() {
   echo "  --env|-e ENVIRONMENT                      Specify environment: dev|staging|prod (default: prod)"
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
-  echo "  --install-mode MODE                       Installation mode: docker (default) or native"
+  echo "  --no-docker                               Install using native binaries instead of Docker (default: Docker)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "Examples:"
   echo "  $0 install --branch main"
+  echo "  $0 install --no-docker"
   echo "  $0 uninstall"
   echo "  $0 refresh-token"
   echo "  $0 upgrade -b main"
@@ -101,13 +102,8 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
-      --install-mode)
-        if [[ -n "$2" ]]; then
-          INSTALL_MODE="$2"; shift 2
-        else
-          error_exit "Missing value for $1"
-        fi
-        ;;
+      --no-docker)
+        INSTALL_MODE="native"; shift ;;
       --logs-endpoint)
         if [[ -n "$2" ]]; then
           LOGS_INGRESS_ENDPOINT="$2"; shift 2
