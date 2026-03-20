@@ -1,54 +1,62 @@
-{{- if .Values.logCollector.enabled }}
+{{- if or .Values.logCollector.nvidia.enabled .Values.logCollector.amd.enabled }}
+---
+# Shared ClusterRole for both NVIDIA and AMD log collectors
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crusoe-log-collector
+  labels:
+    app: crusoe-log-collector
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+rules:
+  # Need to list and get pods to find GPU driver pods (NVIDIA GPU Operator mode)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Need to exec into pods to run nvidia-bug-report.sh (NVIDIA GPU Operator mode)
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+  # Need to read nodes to detect GPU type via instance-type label (NVIDIA GB200 detection)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
+{{- end }}
+
+{{- range $vendor := list "nvidia" "amd" }}
+{{- $vendorValues := index $.Values.logCollector $vendor }}
+{{- if $vendorValues.enabled }}
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ .Values.logCollector.name }}
-  namespace: {{ .Values.namespace }}
+  name: {{ $vendorValues.name }}
+  namespace: {{ $.Values.namespace }}
   labels:
-    app: {{ .Values.logCollector.name }}
-    app.kubernetes.io/name: {{ .Values.logCollector.name }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: {{ .Values.logCollector.name }}
-  labels:
-    app: {{ .Values.logCollector.name }}
-    app.kubernetes.io/name: {{ .Values.logCollector.name }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-rules:
-  # Need to list and get pods to find NVIDIA driver pods
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list"]
-  # Need to exec into pods to run nvidia-bug-report.sh
-  - apiGroups: [""]
-    resources: ["pods/exec"]
-    verbs: ["create", "get"]
-  # Need to read nodes to detect GPU type via instance-type label (GB200 vs A100/L40S)
-  - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["get"]
+    app: {{ $vendorValues.name }}
+    app.kubernetes.io/name: {{ $vendorValues.name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    gpu-vendor: {{ $vendor }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ .Values.logCollector.name }}
+  name: {{ $vendorValues.name }}
   labels:
-    app: {{ .Values.logCollector.name }}
-    app.kubernetes.io/name: {{ .Values.logCollector.name }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app: {{ $vendorValues.name }}
+    app.kubernetes.io/name: {{ $vendorValues.name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    gpu-vendor: {{ $vendor }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ .Values.logCollector.name }}
+  name: crusoe-log-collector
 subjects:
   - kind: ServiceAccount
-    name: {{ .Values.logCollector.name }}
-    namespace: {{ .Values.namespace }}
+    name: {{ $vendorValues.name }}
+    namespace: {{ $.Values.namespace }}
+{{- end }}
 {{- end }}

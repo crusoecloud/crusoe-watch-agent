@@ -299,11 +299,11 @@ install_log_collector_native() {
 
   # Download application files
   status "Downloading log collector application files."
-  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/vm/log-collector/app"
-  wget -q -O "$INSTALL_DIR/vm_log_collector_app.py" "$GITHUB_APP_BASE/vm_log_collector_app.py" || error_exit "Failed to download vm_log_collector_app.py"
+  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/common/log-collector/app"
+  wget -q -O "$INSTALL_DIR/log_collector.py" "$GITHUB_APP_BASE/log_collector.py" || error_exit "Failed to download log_collector.py"
 
   # Download and install requirements
-  local GITHUB_REQ="$GITHUB_RAW_BASE_URL/vm/log-collector/requirements.txt"
+  local GITHUB_REQ="$GITHUB_APP_BASE/requirements.txt"
   wget -q -O "/tmp/log-collector-requirements.txt" "$GITHUB_REQ" || error_exit "Failed to download requirements.txt"
 
   # Try with --break-system-packages first (pip >= 22.1), fall back without it for older pip

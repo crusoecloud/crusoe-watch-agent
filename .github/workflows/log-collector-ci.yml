@@ -5,16 +5,13 @@ on:
     branches: ["main"]
     tags:
       - "v[0-9]*"
-      - "vm-v*"
-    # Run if changes occur under K8s or VM log-collector paths
+    # Run if changes occur under unified log-collector path
     paths:
-      - 'k8s/log-collector/**'
-      - 'vm/log-collector/**'
+      - 'common/log-collector/**'
   pull_request:
     branches: ["main"]
     paths:
-      - 'k8s/log-collector/**'
-      - 'vm/log-collector/**'
+      - 'common/log-collector/**'
 
 jobs:
   test:
@@ -31,12 +28,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r ./k8s/log-collector/requirements.txt
+          pip install -r ./common/log-collector/app/requirements.txt
 
       - name: Run tests
         run: |
-          cd k8s/log-collector/app
-          python -m unittest test_log_collector_app -v
+          cd common/log-collector/app
+          python -m unittest test_log_collector -v
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -47,14 +44,16 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: k8s
+          - name: nvidia
             image: log-collector
-            context: ./k8s/log-collector
-            semver_prefix: ""
-          - name: vm
-            image: log-collector-vm
-            context: ./vm/log-collector
-            semver_prefix: "vm-v"
+            context: ./common/log-collector
+            dockerfile: ./common/log-collector/Dockerfile.nvidia
+            platforms: linux/amd64,linux/arm64
+          - name: amd
+            image: amd-log-collector
+            context: ./common/log-collector
+            dockerfile: ./common/log-collector/Dockerfile.amd
+            platforms: linux/amd64
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -85,20 +84,16 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=ref,event=tag
-            type=semver,pattern={{version}},prefix=${{ matrix.semver_prefix }}
+            type=semver,pattern={{version}}
           flavor: |
             latest=auto
 
       - name: Build and push ${{ matrix.name }} image
-        if: |
-          (matrix.name == 'k8s' && !startsWith(github.ref, 'refs/tags/vm-v')) ||
-          (matrix.name == 'vm' && startsWith(github.ref, 'refs/tags/vm-v')) ||
-          github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}
-          file: ${{ matrix.context }}/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
