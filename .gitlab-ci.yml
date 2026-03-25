@@ -1,0 +1,17 @@
+stages:
+  - test
+  - build
+  - publish
+
+variables:
+  DOCKER_BUILDKIT: "1"
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_HOST: tcp://docker:2375
+  GITHUB_MIRROR_REPO: "crusoecloud/crusoe-watch-agent"
+
+include:
+  - local: ci/log-collector.gitlab-ci.yml
+  - local: ci/config-reloader.gitlab-ci.yml
+  - local: ci/monitoring-token.gitlab-ci.yml
+  - local: ci/helm-package.gitlab-ci.yml
+  - local: ci/semver-tag.gitlab-ci.yml

@@ -1,0 +1,57 @@
+.semver-tag-base:
+  stage: publish
+  image: alpine:3.19
+  before_script:
+    - apk add --no-cache git
+
+semver-tag:config-reloader:
+  extends: .semver-tag-base
+  script:
+    - |
+      VERSION=$(tr -d ' \n' < k8s/vector-config-reloader/VERSION)
+      TAG="v${VERSION}"
+
+      if git rev-parse "$TAG" >/dev/null 2>&1; then
+        echo "Tag $TAG already exists. Skipping."
+        exit 0
+      fi
+
+      git config user.name "gitlab-ci"
+      git config user.email "gitlab-ci@crusoe.ai"
+      git tag "$TAG"
+
+      # Push tag to GitLab
+      git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG"
+
+      # Push tag to GitHub mirror
+      git push "https://x-access-token:${GITHUB_MIRROR_PAT}@github.com/${GITHUB_MIRROR_REPO}.git" "$TAG"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - k8s/vector-config-reloader/VERSION
+
+semver-tag:vm-log-collector:
+  extends: .semver-tag-base
+  script:
+    - |
+      VERSION=$(tr -d ' \n' < vm/VERSION)
+      TAG="vm-v${VERSION}"
+
+      if git rev-parse "$TAG" >/dev/null 2>&1; then
+        echo "Tag $TAG already exists. Skipping."
+        exit 0
+      fi
+
+      git config user.name "gitlab-ci"
+      git config user.email "gitlab-ci@crusoe.ai"
+      git tag "$TAG"
+
+      # Push tag to GitLab
+      git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG"
+
+      # Push tag to GitHub mirror
+      git push "https://x-access-token:${GITHUB_MIRROR_PAT}@github.com/${GITHUB_MIRROR_REPO}.git" "$TAG"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - vm/VERSION

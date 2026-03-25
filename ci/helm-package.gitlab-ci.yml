@@ -1,0 +1,19 @@
+helm:package:
+  stage: publish
+  image: alpine/helm:3.14.0
+  before_script:
+    - apk add --no-cache git
+    - git config user.name "gitlab-ci"
+    - git config user.email "gitlab-ci@crusoe.ai"
+  script:
+    - mkdir -p docs/k8s/helm-charts
+    - helm package ./k8s/helm-charts -d docs/k8s/helm-charts
+    - helm repo index docs/k8s/helm-charts --url https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts
+    - git add docs/k8s/helm-charts
+    - git commit -m "Update helm repo [skip ci]"
+    - git pull --rebase origin main
+    - git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - k8s/helm-charts/**
