@@ -15,3 +15,20 @@ include:
   - local: ci/monitoring-token.gitlab-ci.yml
   - local: ci/helm-package.gitlab-ci.yml
   - local: ci/semver-tag.gitlab-ci.yml
+
+# Runs if we don't change files in the submodules to ensure that a pipeline is always created.
+# Attempts to track files that don't have an associated job.
+no_op_pipeline_stub:
+  needs: []
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - .gitlab/**/*
+        - runbook/**/*
+        - scripts/**/*
+        - README.md
+        - .gitlab-ci.yml
+
+  script: |
+    echo 'job that will run if we do not change files in the submodules to ensure that a pipeline is always created'
