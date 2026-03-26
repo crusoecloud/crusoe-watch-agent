@@ -12,7 +12,7 @@ helm:package:
     - git add docs/k8s/helm-charts
     - git commit -m "Update helm repo [skip ci]"
     - git pull --rebase origin main
-    - git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
+    - git push "https://ci-push-token:${REPO_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
