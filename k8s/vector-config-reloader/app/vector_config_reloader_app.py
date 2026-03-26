@@ -442,7 +442,8 @@ if exists(.level) {
         # Add journald_logs source
         sources[JOURNALD_LOGS_SOURCE_NAME] = {
             "type": "journald",
-            "journal_directory": "/var/log/journal"
+            "journal_directory": "/var/log/journal",
+            "since_now": True
         }
 
         # Add kubernetes logs source
