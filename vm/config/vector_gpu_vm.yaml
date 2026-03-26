@@ -33,6 +33,7 @@ sources:
     journald_logs:
         type: journald
         journal_directory: /var/log/journal
+        since_now: true
 
 
 transforms:
