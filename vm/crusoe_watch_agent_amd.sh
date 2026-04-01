@@ -28,8 +28,8 @@ ENV_FILE="$CRUSOE_WATCH_AGENT_DIR/.env" # Define the .env file path
 CRUSOE_SECRETS_DIR="/etc/crusoe/secrets"
 CRUSOE_MONITORING_TOKEN_FILE="$CRUSOE_SECRETS_DIR/.monitoring-token"
 
-# Versioning and upgrade helpers
-REMOTE_VERSION_FILE="vm/VERSION"
+# Versioning and upgrade helpers (shared version with k8s images)
+REMOTE_VERSION_FILE="k8s/vector-config-reloader/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
 
 # Optional parameters with defaults
@@ -435,8 +435,8 @@ do_install() {
   status "Download VERSION file."
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
-  # Read agent version from VERSION file
-  AGENT_VERSION=$(tr -d '[:space:]' < "$INSTALLED_VERSION_FILE")
+  # Read agent version from VERSION file and prefix with v to match Docker tag
+  AGENT_VERSION="v$(tr -d '[:space:]' < "$INSTALLED_VERSION_FILE")"
 
   # Create .env file
   status "Creating .env file with VM_ID, GPU_TYPE, and AMD_EXPORTER_PORT."

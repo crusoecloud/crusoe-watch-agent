@@ -49,8 +49,8 @@ DEFAULT_LOG_COLLECTOR_SERVICE_NAME="crusoe-log-collector.service"
 DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=false
 
-# Versioning and upgrade helpers (use vm/VERSION)
-REMOTE_VERSION_FILE="vm/VERSION"
+# Versioning and upgrade helpers (shared version with k8s images)
+REMOTE_VERSION_FILE="k8s/vector-config-reloader/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
 INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
 
@@ -626,9 +626,9 @@ do_install() {
   status "Download VERSION file."
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
-  # Read agent version from VERSION file and prefix with vm-v to match Docker tag
+  # Read agent version from VERSION file and prefix with v to match Docker tag
   VERSION_NUMBER=$(tr -d '[:space:]' < "$INSTALLED_VERSION_FILE")
-  AGENT_VERSION="vm-v${VERSION_NUMBER}"
+  AGENT_VERSION="v${VERSION_NUMBER}"
 
   # Create .env file
   status "Creating .env file with VM_ID and DCGM_EXPORTER_PORT."
