@@ -1,0 +1,26 @@
+services:
+  crusoe-metrics-exporter:
+    image: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter:0.1.0
+    container_name: crusoe-metrics-exporter
+    hostname: crusoe-metrics-exporter
+
+    volumes:
+      # Host proc filesystem for disk/mount stats
+      - /proc:/host/proc:ro
+      # DMI information for VM ID detection
+      - /sys:/host/sys:ro
+
+    env_file:
+      - ./.env
+      - /etc/crusoe/secrets/.monitoring-token
+
+    environment:
+      - PORT=9500
+      - DISKSTATS_PATH=/host/proc/diskstats
+      - MOUNTSTATS_PATH=/host/proc/self/mountstats
+
+    ports:
+      - "${CRUSOE_METRICS_EXPORTER_PORT:-9500}:9500"
+
+    privileged: true
+    restart: always

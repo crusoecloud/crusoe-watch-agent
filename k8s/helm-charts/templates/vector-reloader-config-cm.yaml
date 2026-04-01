@@ -28,6 +28,11 @@ data:
         - {{ . }}
 {{- end }}
       scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
+    crusoe_metrics_exporter:
+      enabled: {{ .Values.crusoeMetricsExporter.enabled }}
+      port: {{ .Values.crusoeMetricsExporter.port }}
+      path: {{ .Values.metricsExporter.defaultMetricsPath }}
+      scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
     logs:
       enabled: {{ .Values.logs.enabled }}
     sink:

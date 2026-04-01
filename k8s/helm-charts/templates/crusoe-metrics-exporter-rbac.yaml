@@ -1,0 +1,13 @@
+{{- if .Values.crusoeMetricsExporter.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.crusoeMetricsExporter.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Values.crusoeMetricsExporter.name }}
+    app.kubernetes.io/name: {{ .Values.crusoeMetricsExporter.name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}

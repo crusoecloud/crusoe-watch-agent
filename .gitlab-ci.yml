@@ -35,6 +35,8 @@ no_op_pipeline_stub:
         - scripts/**/*
         - README.md
         - .gitlab-ci.yml
+        - vm/**/*
+        - k8s/helm-charts/**/*
 
   script: |
     echo 'job that will run if we do not change files in the submodules to ensure that a pipeline is always created'

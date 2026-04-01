@@ -16,6 +16,8 @@ INSTALL_MODE="docker"
 # Define paths for config files within the GitHub repository (vm subdir)
 REMOTE_VECTOR_CONFIG_GPU_VM="vm/config/vector_gpu_vm.yaml"
 REMOTE_VECTOR_CONFIG_CPU_VM="vm/config/vector_cpu_vm.yaml"
+REMOTE_VECTOR_CONFIG_CME_GPU_VM="vm/config/vector_cme_gpu.yaml"
+REMOTE_VECTOR_CONFIG_CME_CPU_VM="vm/config/vector_cme_cpu.yaml"
 REMOTE_DCGM_EXPORTER_METRICS_CONFIG="vm/config/dcp-metrics-included.csv"
 REMOTE_DCGM_EXPORTER_METRICS_CONFIG_NO_NVLINK="vm/config/dcp-metrics-included-no-nvlink.csv"
 REMOTE_DOCKER_COMPOSE_DCGM_EXPORTER="vm/docker/docker-compose-dcgm-exporter.yaml"
@@ -24,6 +26,8 @@ REMOTE_DOCKER_COMPOSE_LOG_COLLECTOR="vm/docker/docker-compose-log-collector.yaml
 REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_DCGM_EXPORTER_SERVICE="vm/systemctl/crusoe-dcgm-exporter.service"
 REMOTE_CRUSOE_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-log-collector.service"
+REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER="vm/docker/docker-compose-crusoe-metrics-exporter.yaml"
+REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE="vm/systemctl/crusoe-metrics-exporter.service"
 REMOTE_CRUSOE_LOG_COLLECTOR_NATIVE_SERVICE="vm/systemctl/crusoe-log-collector-native.service"
 REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE="vm/systemctl/crusoe-watch-agent-native.service"
 REMOTE_CRUSOE_DCGM_EXPORTER_NATIVE_SERVICE="vm/systemctl/crusoe-dcgm-exporter-native.service"
@@ -42,6 +46,8 @@ DCGM_EXPORTER_SERVICE_PORT="9400"
 REPLACE_DCGM_EXPORTER=false
 EXISTING_DCGM_EXPORTER_SERVICE="dcgm-exporter"
 DEFAULT_LOG_COLLECTOR_SERVICE_NAME="crusoe-log-collector.service"
+DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
+ENABLE_METRICS_EXPORTER=false
 
 # Versioning and upgrade helpers (use vm/VERSION)
 REMOTE_VERSION_FILE="vm/VERSION"
@@ -64,6 +70,7 @@ usage() {
   echo "  --dcgm-exporter-service-name NAME         Specify custom DCGM exporter service name"
   echo "  --dcgm-exporter-service-port PORT         Specify custom DCGM exporter port"
   echo "  --replace-dcgm-exporter [SERVICE_NAME]    Replace pre-installed dcgm-exporter systemd service with Crusoe version for full metrics collection."
+  echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "                                            Optional SERVICE_NAME defaults to dcgm-exporter"
   echo "Defaults: NAME=crusoe-dcgm-exporter, PORT=9400, MODE=docker"
@@ -72,6 +79,7 @@ usage() {
   echo "  $0 install --no-docker"
   echo "  $0 install --replace-dcgm-exporter"
   echo "  $0 install --replace-dcgm-exporter my-dcgm-exporter"
+  echo "  $0 install --enable-metrics-exporter"
   echo "  $0 uninstall"
   echo "  $0 refresh-token"
   echo "  $0 upgrade -b main"
@@ -122,6 +130,8 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
+      --enable-metrics-exporter)
+        ENABLE_METRICS_EXPORTER=true; shift ;;
       --replace-dcgm-exporter)
         REPLACE_DCGM_EXPORTER=true
         shift
@@ -519,7 +529,11 @@ do_install() {
     wget -q -O "$CRUSOE_WATCH_AGENT_DIR/dcp-metrics-included.csv" "$METRICS_CONFIG_URL" || error_exit "Failed to download $METRICS_CONFIG_URL"
 
     status "Download GPU Vector config."
-    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_GPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_GPU_VM"
+    if $ENABLE_METRICS_EXPORTER; then
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CME_GPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CME_GPU_VM"
+    else
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_GPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_GPU_VM"
+    fi
 
     if $REPLACE_DCGM_EXPORTER; then
       status "Checking for pre-installed dcgm-exporter service: $EXISTING_DCGM_EXPORTER_SERVICE"
@@ -562,9 +576,24 @@ do_install() {
     status "Creating NVIDIA log collection directory."
     mkdir -p /var/log/nvidia-bug-reports
     chmod 755 /var/log/nvidia-bug-reports
-  else
+  fi
+
+  # Download Crusoe Metrics Exporter artifacts (Docker mode only, opt-in via --enable-metrics-exporter)
+  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
+    status "Download Crusoe Metrics Exporter docker-compose file."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
+
+    status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
+    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
+  fi
+
+  if ! $HAS_NVIDIA_GPUS; then
      status "Copy CPU Vector config."
-     wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CPU_VM"
+     if $ENABLE_METRICS_EXPORTER; then
+       wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CME_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CME_CPU_VM"
+     else
+       wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CPU_VM"
+     fi
   fi
 
   # Download Vector docker-compose file (Docker mode only)
@@ -631,6 +660,17 @@ EOF
     systemctl start "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
   fi
 
+  # Start Crusoe Metrics Exporter after .env is ready
+  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
+    status "Enable and start systemd services for $DEFAULT_METRICS_EXPORTER_SERVICE_NAME."
+    echo "systemctl daemon-reload"
+    systemctl daemon-reload
+    echo "systemctl enable $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    systemctl enable "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    echo "systemctl start $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    systemctl start "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+  fi
+
   # Download the appropriate crusoe-watch-agent systemd unit
   if [[ "$INSTALL_MODE" == "docker" ]]; then
     status "Download crusoe-watch-agent.service."
@@ -655,6 +695,9 @@ EOF
   if $HAS_NVIDIA_GPUS; then
     echo "Check status of $DCGM_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DCGM_EXPORTER_SERVICE_NAME'"
     echo "Check status of $DEFAULT_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_LOG_COLLECTOR_SERVICE_NAME'"
+  fi
+  if $ENABLE_METRICS_EXPORTER; then
+    echo "Check status of $DEFAULT_METRICS_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DEFAULT_METRICS_EXPORTER_SERVICE_NAME'"
   fi
   echo "Check status of crusoe-watch-agent service: 'sudo systemctl status crusoe-watch-agent.service'"
   echo "Setup finished successfully!"
@@ -689,10 +732,17 @@ do_uninstall() {
     systemctl disable "crusoe-nvidia-log-collector.service" || true
   fi
 
+  status "Stopping and disabling Crusoe Metrics Exporter service if installed by this script."
+  if service_exists "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"; then
+    systemctl stop "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" || true
+    systemctl disable "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" || true
+  fi
+
   status "Removing systemd unit files."
   rm -f "$SYSTEMCTL_DIR/crusoe-watch-agent.service" || true
   rm -f "$SYSTEMCTL_DIR/$DCGM_EXPORTER_SERVICE_NAME" || true
   rm -f "$SYSTEMCTL_DIR/$DEFAULT_LOG_COLLECTOR_SERVICE_NAME" || true
+  rm -f "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" || true
   rm -f "$SYSTEMCTL_DIR/crusoe-nvidia-log-collector.service" || true  # Legacy name
   systemctl daemon-reload || true
 

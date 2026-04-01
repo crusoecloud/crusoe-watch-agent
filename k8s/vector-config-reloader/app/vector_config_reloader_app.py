@@ -37,6 +37,16 @@ SLURM_METRICS_TRANSFORM_SOURCE = LiteralStr("""
 .tags.crusoe_resource = "cmk"
 .tags.metrics_source = "slurm-metrics"
 """)
+CRUSOE_METRICS_EXPORTER_SOURCE_NAME = "crusoe_metrics_exporter_scrape"
+CRUSOE_METRICS_EXPORTER_TRANSFORM_NAME = "enrich_crusoe_metrics_exporter"
+CRUSOE_METRICS_EXPORTER_SINK_NAME = "crusoe_metrics_exporter_sink"
+CRUSOE_METRICS_EXPORTER_APP_LABEL = "crusoe-metrics-exporter"
+CRUSOE_METRICS_EXPORTER_TRANSFORM_SOURCE = LiteralStr("""
+.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
+.tags.project_id = "${CRUSOE_PROJECT_ID}"
+.tags.crusoe_resource = "vm_custom_infra"
+.tags.metrics_source = "crusoe-metrics-exporter"
+""")
 NODE_METRICS_VECTOR_TRANSFORM_NAME = "enrich_node_metrics"
 CUSTOM_METRICS_VECTOR_TRANSFORM_NAME = "enrich_custom_metrics"
 CUSTOM_METRICS_CONFIG_MAP_NAME = "crusoe-custom-metrics-config"
@@ -87,6 +97,11 @@ class VectorConfigReloader:
         self.slurm_paths = slurm_cfg.get("paths", ["/metrics/jobs", "/metrics/jobs-users-accts", "/metrics/nodes", "/metrics/partitions", "/metrics/scheduler"])
         self.slurm_scrape_interval = slurm_cfg.get("scrape_interval", 60)
         self.amd_manager = AmdExporterManager(reloader_cfg.get("amd_metrics", {}))
+        cme_cfg = reloader_cfg.get("crusoe_metrics_exporter", {})
+        self.cme_enabled = cme_cfg.get("enabled", True)
+        self.cme_port = cme_cfg.get("port", 9500)
+        self.cme_path = cme_cfg.get("path", "/metrics")
+        self.cme_scrape_interval = cme_cfg.get("scrape_interval", 60)
         self.custom_metrics_enabled = reloader_cfg["custom_metrics"].get("enabled", True)
         self.logs_enabled = reloader_cfg.get("logs", {}).get("enabled", True)
         self.default_custom_metrics_config = reloader_cfg["custom_metrics"]
@@ -135,10 +150,24 @@ class VectorConfigReloader:
             "tls": {"verify_certificate": True, "verify_hostname": True},
         }
 
+        self.crusoe_metrics_exporter_sink_config = {
+            "type": "prometheus_remote_write",
+            "inputs": [CRUSOE_METRICS_EXPORTER_TRANSFORM_NAME],
+            "endpoint": self.infra_sink_endpoint,
+            "tenant_id": "cri:vm/${VM_ID}",
+            "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
+            "healthcheck": {"enabled": False},
+            "compression": "snappy",
+            "request": {"concurrency": "adaptive"},
+            "batch": {"max_bytes": 500000},
+            "tls": {"verify_certificate": True, "verify_hostname": True},
+        }
+
         # set proxy if enabled
         if self.sink_proxy_cfg.get("enabled"):
             self.custom_metrics_sink_config["proxy"] = self.sink_proxy_cfg
             self.slurm_metrics_sink_config["proxy"] = self.sink_proxy_cfg
+            self.crusoe_metrics_exporter_sink_config["proxy"] = self.sink_proxy_cfg
 
         self.logs_ingest_endpoint = f'{reloader_cfg["sink"]["endpoint"]}/logs/ingest'
 
@@ -299,6 +328,11 @@ if exists(.level) {
         labels = pod.metadata.labels or {}
         return labels.get("app.kubernetes.io/name") == SLURM_METRICS_APP_LABEL
 
+    @staticmethod
+    def is_crusoe_metrics_exporter_pod(pod):
+        labels = pod.metadata.labels or {}
+        return labels.get("app.kubernetes.io/name") == CRUSOE_METRICS_EXPORTER_APP_LABEL
+
     def handle_sigterm(self, sig, frame):
         self.running = False
 
@@ -310,6 +344,9 @@ if exists(.level) {
 
     def get_slurm_metrics_scrape_endpoints(self, pod_ip) -> list:
         return [f"http://{pod_ip}:{self.slurm_port}{path}" for path in self.slurm_paths]
+
+    def get_crusoe_metrics_exporter_scrape_endpoint(self, pod_ip) -> str:
+        return f"http://{pod_ip}:{self.cme_port}{self.cme_path}"
 
     def get_deployment_metrics_config(self, deployment_name: str) -> dict:
         if not deployment_name:
@@ -518,6 +555,30 @@ if exists(.level) {
         vector_cfg.get("transforms", {}).pop(SLURM_METRICS_TRANSFORM_NAME, None)
         vector_cfg.get("sinks", {}).pop(SLURM_METRICS_SINK_NAME, None)
 
+    def set_crusoe_metrics_exporter_scrape_config(self, vector_cfg: dict, cme_scrape_endpoint: str):
+        if cme_scrape_endpoint is None:
+            return
+        if not self.cme_enabled:
+            LOG.info("Crusoe metrics exporter disabled, skipping scrape config")
+            return
+        vector_cfg.setdefault("sources", {})[CRUSOE_METRICS_EXPORTER_SOURCE_NAME] = {
+            "type": "prometheus_scrape",
+            "endpoints": [cme_scrape_endpoint],
+            "scrape_interval_secs": self.cme_scrape_interval,
+            "scrape_timeout_secs": int(self.cme_scrape_interval * SCRAPE_TIMEOUT_PERCENTAGE)
+        }
+        vector_cfg.setdefault("transforms", {})[CRUSOE_METRICS_EXPORTER_TRANSFORM_NAME] = {
+            "type": "remap",
+            "inputs": [CRUSOE_METRICS_EXPORTER_SOURCE_NAME],
+            "source": CRUSOE_METRICS_EXPORTER_TRANSFORM_SOURCE
+        }
+        vector_cfg.setdefault("sinks", {})[CRUSOE_METRICS_EXPORTER_SINK_NAME] = self.crusoe_metrics_exporter_sink_config
+
+    def remove_crusoe_metrics_exporter_scrape_config(self, vector_cfg: dict):
+        vector_cfg.get("sources", {}).pop(CRUSOE_METRICS_EXPORTER_SOURCE_NAME, None)
+        vector_cfg.get("transforms", {}).pop(CRUSOE_METRICS_EXPORTER_TRANSFORM_NAME, None)
+        vector_cfg.get("sinks", {}).pop(CRUSOE_METRICS_EXPORTER_SINK_NAME, None)
+
     def set_custom_metrics_scrape_config(self, vector_cfg: dict, custom_metrics_eps: list):
         if not custom_metrics_eps:
             return
@@ -607,6 +668,7 @@ if exists(.level) {
         amd_exporter_ep = None
         ksm_ep = None
         slurm_eps = None
+        cme_ep = None
         custom_metrics_eps = []
         for pod in self.k8s_api_client.list_pod_for_all_namespaces(field_selector=f"spec.nodeName={self.node_name},status.phase=Running").items:
             if VectorConfigReloader.is_custom_metrics_pod(pod):
@@ -617,6 +679,8 @@ if exists(.level) {
                 ksm_ep = self.get_kube_state_metrics_scrape_endpoint(pod.status.pod_ip)
             elif VectorConfigReloader.is_slurm_metrics_pod(pod):
                 slurm_eps = self.get_slurm_metrics_scrape_endpoints(pod.status.pod_ip)
+            elif VectorConfigReloader.is_crusoe_metrics_exporter_pod(pod):
+                cme_ep = self.get_crusoe_metrics_exporter_scrape_endpoint(pod.status.pod_ip)
             elif self.amd_manager.is_exporter_pod(pod):
                 amd_exporter_ep = self.amd_manager.build_endpoint(pod.status.pod_ip)
             else:
@@ -626,6 +690,7 @@ if exists(.level) {
         self.set_dcgm_exporter_scrape_config(base_cfg, dcgm_exporter_ep)
         self.set_kube_state_metrics_scrape_config(base_cfg, ksm_ep)
         self.set_slurm_metrics_scrape_config(base_cfg, slurm_eps)
+        self.set_crusoe_metrics_exporter_scrape_config(base_cfg, cme_ep)
         self.set_logs_config(base_cfg)
         if self.amd_manager.enabled and amd_exporter_ep:
             self.amd_manager.set_scrape(base_cfg, amd_exporter_ep, NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
@@ -677,6 +742,8 @@ if exists(.level) {
                 self.set_kube_state_metrics_scrape_config(current_vector_cfg, self.get_kube_state_metrics_scrape_endpoint(pod.status.pod_ip))
             elif VectorConfigReloader.is_slurm_metrics_pod(pod):
                 self.set_slurm_metrics_scrape_config(current_vector_cfg, self.get_slurm_metrics_scrape_endpoints(pod.status.pod_ip))
+            elif VectorConfigReloader.is_crusoe_metrics_exporter_pod(pod):
+                self.set_crusoe_metrics_exporter_scrape_config(current_vector_cfg, self.get_crusoe_metrics_exporter_scrape_endpoint(pod.status.pod_ip))
             elif self.amd_manager.is_exporter_pod(pod):
                 if self.amd_manager.enabled:
                     self.amd_manager.set_scrape(current_vector_cfg, self.amd_manager.build_endpoint(pod.status.pod_ip), NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
@@ -692,6 +759,8 @@ if exists(.level) {
                 self.remove_kube_state_metrics_scrape_config(current_vector_cfg)
             elif VectorConfigReloader.is_slurm_metrics_pod(pod):
                 self.remove_slurm_metrics_scrape_config(current_vector_cfg)
+            elif VectorConfigReloader.is_crusoe_metrics_exporter_pod(pod):
+                self.remove_crusoe_metrics_exporter_scrape_config(current_vector_cfg)
             elif self.amd_manager.is_exporter_pod(pod):
                 self.amd_manager.remove_scrape(current_vector_cfg, NODE_METRICS_VECTOR_TRANSFORM_NAME)
             else:

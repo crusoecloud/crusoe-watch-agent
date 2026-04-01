@@ -976,3 +976,48 @@ logCollector:
   securityContext:
     runAsUser: 0
     privileged: true
+
+# crusoe-metrics-exporter configuration
+crusoeMetricsExporter:
+  enabled: false
+  name: crusoe-metrics-exporter
+
+  image:
+    repository: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  port: 9500
+
+  env:
+    PORT: "9500"
+    DISKSTATS_PATH: "/host/proc/diskstats"
+    MOUNTSTATS_PATH: "/host/proc/self/mountstats"
+
+  nodeSelector: {}
+
+  tolerations:
+    - operator: Exists
+
+  affinity: {}
+
+  volumeMounts:
+    - name: proc
+      mountPath: /host/proc
+      readOnly: true
+
+  volumes:
+    - name: proc
+      hostPath:
+        path: /proc
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  securityContext:
+    privileged: true

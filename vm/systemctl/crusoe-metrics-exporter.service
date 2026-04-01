@@ -1,0 +1,24 @@
+[Unit]
+Description=Crusoe Metrics Exporter for VMs
+Documentation=https://github.com/crusoecloud/crusoe-watch-agent
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+TimeoutStartSec=0
+Restart=always
+RestartSec=10
+WorkingDirectory=/etc/crusoe/crusoe_watch_agent
+
+# Pull latest image before starting
+ExecStartPre=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-crusoe-metrics-exporter.yaml pull
+
+# Start the container
+ExecStart=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-crusoe-metrics-exporter.yaml up
+
+# Stop the container
+ExecStop=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-crusoe-metrics-exporter.yaml down
+
+[Install]
+WantedBy=multi-user.target
