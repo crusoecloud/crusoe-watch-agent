@@ -49,10 +49,13 @@ DEFAULT_LOG_COLLECTOR_SERVICE_NAME="crusoe-log-collector.service"
 DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=false
 
-# Versioning and upgrade helpers (shared version with k8s images)
-REMOTE_VERSION_FILE="k8s/vector-config-reloader/VERSION"
+# Versioning and upgrade helpers (vm agent has its own version)
+REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
 INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
+
+# Log collector container image version (update here when releasing new container builds)
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.12"
 
 # dcgm-exporter docker image version map
 declare -A -r DCGM_EXPORTER_VERSION_MAP=(
@@ -626,10 +629,6 @@ do_install() {
   status "Download VERSION file."
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
-  # Read agent version from VERSION file and prefix with v to match Docker tag
-  VERSION_NUMBER=$(tr -d '[:space:]' < "$INSTALLED_VERSION_FILE")
-  AGENT_VERSION="v${VERSION_NUMBER}"
-
   # Create .env file
   status "Creating .env file with VM_ID and DCGM_EXPORTER_PORT."
   cat <<EOF > "$ENV_FILE"
@@ -638,7 +637,7 @@ DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}'
 LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
-AGENT_VERSION='${AGENT_VERSION}'
+LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
 EOF
   [[ "$INSTALL_MODE" == "docker" ]] && echo "DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'" >> "$ENV_FILE"
   echo ".env file created at $ENV_FILE"

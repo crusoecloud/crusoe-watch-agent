@@ -1,6 +1,6 @@
 services:
   crusoe-amd-log-collector:
-    image: ghcr.io/crusoecloud/crusoe-watch-agent/amd-log-collector:${AGENT_VERSION:-latest}
+    image: ghcr.io/crusoecloud/crusoe-watch-agent/amd-log-collector:${LOG_COLLECTOR_IMAGE_VERSION}
     container_name: crusoe-amd-log-collector
     hostname: crusoe-amd-log-collector
 

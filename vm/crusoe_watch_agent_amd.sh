@@ -28,9 +28,12 @@ ENV_FILE="$CRUSOE_WATCH_AGENT_DIR/.env" # Define the .env file path
 CRUSOE_SECRETS_DIR="/etc/crusoe/secrets"
 CRUSOE_MONITORING_TOKEN_FILE="$CRUSOE_SECRETS_DIR/.monitoring-token"
 
-# Versioning and upgrade helpers (shared version with k8s images)
-REMOTE_VERSION_FILE="k8s/vector-config-reloader/VERSION"
+# Versioning and upgrade helpers (vm agent has its own version)
+REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
+
+# Log collector container image version (update here when releasing new container builds)
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.12"
 
 # Optional parameters with defaults
 DEFAULT_AMD_EXPORTER_SERVICE_NAME="crusoe-amd-exporter.service"
@@ -435,9 +438,6 @@ do_install() {
   status "Download VERSION file."
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
-  # Read agent version from VERSION file and prefix with v to match Docker tag
-  AGENT_VERSION="v$(tr -d '[:space:]' < "$INSTALLED_VERSION_FILE")"
-
   # Create .env file
   status "Creating .env file with VM_ID, GPU_TYPE, and AMD_EXPORTER_PORT."
   cat <<EOF > "$ENV_FILE"
@@ -446,7 +446,7 @@ GPU_TYPE='amd'
 AMD_EXPORTER_PORT='${AMD_EXPORTER_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
-AGENT_VERSION='${AGENT_VERSION}'
+LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
 EOF
   echo ".env file created at $ENV_FILE"
 
