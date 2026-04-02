@@ -1,0 +1,25 @@
+[Unit]
+Description=Crusoe AMD Log Collector for VMs
+Documentation=https://github.com/crusoecloud/crusoe-watch-agent
+After=docker.service crusoe-amd-exporter.service
+Requires=docker.service
+Wants=crusoe-amd-exporter.service
+
+[Service]
+Type=simple
+TimeoutStartSec=0
+Restart=always
+RestartSec=10
+WorkingDirectory=/etc/crusoe/crusoe_watch_agent
+
+# Pull latest image before starting
+ExecStartPre=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-amd-log-collector.yaml pull
+
+# Start the container
+ExecStart=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-amd-log-collector.yaml up
+
+# Stop the container
+ExecStop=/usr/bin/docker compose -f /etc/crusoe/crusoe_watch_agent/docker-compose-amd-log-collector.yaml down
+
+[Install]
+WantedBy=multi-user.target

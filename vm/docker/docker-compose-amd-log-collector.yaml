@@ -1,0 +1,25 @@
+services:
+  crusoe-amd-log-collector:
+    image: ghcr.io/crusoecloud/crusoe-watch-agent/amd-log-collector:${LOG_COLLECTOR_IMAGE_VERSION}
+    container_name: crusoe-amd-log-collector
+    hostname: crusoe-amd-log-collector
+
+    volumes:
+      # Persistent log storage on host
+      - /var/log/amd-bug-reports:/logs
+      # DMI information for VM ID detection
+      - /sys:/host/sys:ro
+      # ROCm device access
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+
+    env_file:
+      - ./.env
+      - /etc/crusoe/secrets/.monitoring-token
+
+    environment:
+      - GPU_TYPE=amd
+      - API_ENABLED=true
+
+    privileged: true
+    restart: always
