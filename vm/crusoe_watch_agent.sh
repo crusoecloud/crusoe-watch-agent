@@ -49,10 +49,13 @@ DEFAULT_LOG_COLLECTOR_SERVICE_NAME="crusoe-log-collector.service"
 DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=false
 
-# Versioning and upgrade helpers (use vm/VERSION)
+# Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
 INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
+
+# Log collector container image version (update here when releasing new container builds)
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.16"
 
 # dcgm-exporter docker image version map
 declare -A -r DCGM_EXPORTER_VERSION_MAP=(
@@ -309,11 +312,11 @@ install_log_collector_native() {
 
   # Download application files
   status "Downloading log collector application files."
-  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/vm/log-collector/app"
-  wget -q -O "$INSTALL_DIR/vm_log_collector_app.py" "$GITHUB_APP_BASE/vm_log_collector_app.py" || error_exit "Failed to download vm_log_collector_app.py"
+  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/common/log-collector/app"
+  wget -q -O "$INSTALL_DIR/log_collector.py" "$GITHUB_APP_BASE/log_collector.py" || error_exit "Failed to download log_collector.py"
 
   # Download and install requirements
-  local GITHUB_REQ="$GITHUB_RAW_BASE_URL/vm/log-collector/requirements.txt"
+  local GITHUB_REQ="$GITHUB_APP_BASE/requirements.txt"
   wget -q -O "/tmp/log-collector-requirements.txt" "$GITHUB_REQ" || error_exit "Failed to download requirements.txt"
 
   # Try with --break-system-packages first (pip >= 22.1), fall back without it for older pip
@@ -626,10 +629,6 @@ do_install() {
   status "Download VERSION file."
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
-  # Read agent version from VERSION file and prefix with vm-v to match Docker tag
-  VERSION_NUMBER=$(tr -d '[:space:]' < "$INSTALLED_VERSION_FILE")
-  AGENT_VERSION="vm-v${VERSION_NUMBER}"
-
   # Create .env file
   status "Creating .env file with VM_ID and DCGM_EXPORTER_PORT."
   cat <<EOF > "$ENV_FILE"
@@ -638,7 +637,8 @@ DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}'
 LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
-AGENT_VERSION='${AGENT_VERSION}'
+LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
+AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
 EOF
   [[ "$INSTALL_MODE" == "docker" ]] && echo "DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'" >> "$ENV_FILE"
   echo ".env file created at $ENV_FILE"

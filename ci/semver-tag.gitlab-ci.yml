@@ -8,42 +8,22 @@ semver-tag:config-reloader:
   extends: .semver-tag-base
   script:
     - |
-      VERSION=$(tr -d ' \n' < k8s/vector-config-reloader/VERSION)
-      TAG="v${VERSION}"
+      VERSION_FILE="k8s/vector-config-reloader/VERSION"
 
-      if git rev-parse "$TAG" >/dev/null 2>&1; then
-        echo "Tag $TAG already exists. Skipping."
-        exit 0
+      if git diff --name-only HEAD~1 HEAD | grep -q "^${VERSION_FILE}"; then
+        VERSION=$(tr -d ' \n' < ${VERSION_FILE})
+        TAG="v${VERSION}"
+
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "Tag $TAG already exists. Skipping."
+        else
+          git config user.name "gitlab-ci"
+          git config user.email "gitlab-ci@crusoe.ai"
+          git tag "$TAG"
+          git push "https://ci-push-token:${REPO_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG"
+        fi
+      else
+        echo "VERSION file not changed. Skipping."
       fi
-
-      git config user.name "gitlab-ci"
-      git config user.email "gitlab-ci@crusoe.ai"
-      git tag "$TAG"
-
-      git push "https://ci-push-token:${REPO_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-      changes:
-        - k8s/vector-config-reloader/VERSION
-
-semver-tag:vm-log-collector:
-  extends: .semver-tag-base
-  script:
-    - |
-      VERSION=$(tr -d ' \n' < vm/VERSION)
-      TAG="vm-v${VERSION}"
-
-      if git rev-parse "$TAG" >/dev/null 2>&1; then
-        echo "Tag $TAG already exists. Skipping."
-        exit 0
-      fi
-
-      git config user.name "gitlab-ci"
-      git config user.email "gitlab-ci@crusoe.ai"
-      git tag "$TAG"
-
-      git push "https://ci-push-token:${REPO_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG"
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      changes:
-        - vm/VERSION

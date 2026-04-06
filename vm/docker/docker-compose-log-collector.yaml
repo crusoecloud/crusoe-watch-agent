@@ -1,6 +1,6 @@
 services:
   crusoe-log-collector:
-    image: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector-vm:${AGENT_VERSION:-latest}
+    image: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector:${LOG_COLLECTOR_IMAGE_VERSION}
     container_name: crusoe-log-collector
     hostname: crusoe-log-collector
 

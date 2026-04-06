@@ -218,7 +218,7 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .host = get_hostname!()
 .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
 
-if .kubernetes.pod_labels.app == "crusoe-log-collector" { 
+if starts_with(string!(.kubernetes.pod_labels.app), "crusoe-log-collector") { 
     .log_source = "crusoe-log-collector"
 
     # Parse JSON log format (efficient, no regex needed)

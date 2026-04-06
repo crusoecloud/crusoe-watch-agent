@@ -14,8 +14,11 @@ CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
 REMOTE_VECTOR_CONFIG_AMD_GPU_VM="vm/config/vector_amd_gpu_vm.yaml"
 REMOTE_DOCKER_COMPOSE_VECTOR="vm/docker/docker-compose-vector.yaml"
 REMOTE_DOCKER_COMPOSE_AMD_EXPORTER="vm/docker/docker-compose-amd-exporter.yaml"
+REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR="vm/docker/docker-compose-amd-log-collector.yaml"
 REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_AMD_EXPORTER_SERVICE="vm/systemctl/crusoe-amd-exporter.service"
+REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-amd-log-collector.service"
+REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE="vm/systemctl/crusoe-amd-log-collector-native.service"
 REMOTE_AMD_METRICS_CONFIG="vm/config/amd_metrics_config.json"
 SYSTEMCTL_DIR="/etc/systemd/system"
 CRUSOE_WATCH_AGENT_DIR="/etc/crusoe/crusoe_watch_agent"
@@ -25,14 +28,19 @@ ENV_FILE="$CRUSOE_WATCH_AGENT_DIR/.env" # Define the .env file path
 CRUSOE_SECRETS_DIR="/etc/crusoe/secrets"
 CRUSOE_MONITORING_TOKEN_FILE="$CRUSOE_SECRETS_DIR/.monitoring-token"
 
-# Versioning and upgrade helpers
+# Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
+
+# Log collector container image version (update here when releasing new container builds)
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.16"
 
 # Optional parameters with defaults
 DEFAULT_AMD_EXPORTER_SERVICE_NAME="crusoe-amd-exporter.service"
 AMD_EXPORTER_SERVICE_NAME=$DEFAULT_AMD_EXPORTER_SERVICE_NAME
 AMD_EXPORTER_PORT="5000"
+DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME="crusoe-amd-log-collector.service"
+INSTALL_MODE="docker"  # docker or native
 
 LOGS_INGRESS_ENDPOINT=""
 
@@ -45,9 +53,11 @@ usage() {
   echo "  --ingress-url URL                         Specify CMS base URL (default: https://cms-monitoring.crusoecloud.com)"
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
+  echo "  --no-docker                               Install using native binaries instead of Docker (default: Docker)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "Examples:"
   echo "  $0 install --branch main"
+  echo "  $0 install --no-docker"
   echo "  $0 uninstall"
   echo "  $0 refresh-token"
   echo "  $0 upgrade -b main"
@@ -88,6 +98,8 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
+      --no-docker)
+        INSTALL_MODE="native"; shift ;;
       --logs-endpoint)
         if [[ -n "$2" ]]; then
           LOGS_INGRESS_ENDPOINT="$2"; shift 2
@@ -270,6 +282,58 @@ ensure_rocm_6_2_or_newer() {
   fi
 }
 
+install_amd_log_collector_native() {
+  status "Installing AMD log collector natively."
+
+  # Ensure required system packages
+  status "Ensuring required packages (python3, pip, dmidecode)."
+  if ! command_exists python3; then
+    apt-get update && apt-get install -y python3 python3-pip || error_exit "Failed to install python3"
+  fi
+  if ! command_exists dmidecode; then
+    apt-get install -y dmidecode || error_exit "Failed to install dmidecode."
+  fi
+
+  # Create installation directory
+  local INSTALL_DIR="/opt/crusoe-amd-log-collector"
+  mkdir -p "$INSTALL_DIR" || error_exit "Failed to create $INSTALL_DIR"
+
+  # Download application files
+  status "Downloading AMD log collector application files."
+  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/common/log-collector/app"
+  wget -q -O "$INSTALL_DIR/log_collector.py" "$GITHUB_APP_BASE/log_collector.py" || error_exit "Failed to download log_collector.py"
+  wget -q -O "$INSTALL_DIR/amd-bug-report.sh" "$GITHUB_APP_BASE/amd-bug-report.sh" || error_exit "Failed to download amd-bug-report.sh"
+
+  # Make amd-bug-report.sh executable and copy to /usr/bin
+  chmod +x "$INSTALL_DIR/amd-bug-report.sh"
+  cp "$INSTALL_DIR/amd-bug-report.sh" /usr/bin/amd-bug-report.sh || error_exit "Failed to install amd-bug-report.sh"
+
+  # Download and install Python requirements
+  local GITHUB_REQ="$GITHUB_APP_BASE/requirements.txt"
+  wget -q -O "/tmp/amd-log-collector-requirements.txt" "$GITHUB_REQ" || error_exit "Failed to download requirements.txt"
+
+  # Try with --break-system-packages first (pip >= 22.1), fall back without it for older pip
+  if ! pip3 install --break-system-packages -r /tmp/amd-log-collector-requirements.txt 2>/dev/null; then
+    pip3 install -r /tmp/amd-log-collector-requirements.txt || error_exit "Failed to install Python dependencies"
+  fi
+  rm -f /tmp/amd-log-collector-requirements.txt
+
+  # Ensure ROCm tools are available (rocm-smi, rocminfo)
+  if ! command_exists rocm-smi; then
+    status "rocm-smi not found. Installing ROCm SMI tools."
+    # ROCm repository should already be configured for AMD GPU VMs
+    apt-get update && apt-get install -y rocm-smi rocminfo || error_exit "Failed to install ROCm SMI tools"
+  else
+    local rocm_version=$(get_rocm_version)
+    status "ROCm tools already available (version $rocm_version)"
+  fi
+
+  # Ensure other system tools needed by amd-bug-report.sh
+  apt-get install -y lsb-release lshw pciutils dkms gzip 2>/dev/null || true
+
+  status "AMD log collector native installation complete."
+}
+
 
 
 do_install() {
@@ -318,6 +382,26 @@ do_install() {
 
     status "Install $AMD_EXPORTER_SERVICE_NAME systemd unit."
     wget -q -O "$SYSTEMCTL_DIR/$AMD_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_EXPORTER_SERVICE"
+
+    # Download AMD Log Collector artifacts
+    if [[ "$INSTALL_MODE" == "docker" ]]; then
+      status "Download AMD Log Collector docker-compose file."
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-amd-log-collector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR"
+
+      status "Download $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME systemd unit."
+      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE"
+    else
+      status "Installing AMD log collector natively."
+      install_amd_log_collector_native
+
+      status "Download $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME native systemd unit."
+      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE"
+    fi
+
+    # Create log directory for AMD log collector
+    status "Creating AMD log collection directory."
+    mkdir -p /var/log/amd-bug-reports
+    chmod 755 /var/log/amd-bug-reports
   else
     # CPU-only VM - use minimal vector config
     status "No AMD GPUs detected. Using CPU-only monitoring configuration."
@@ -354,17 +438,16 @@ do_install() {
   status "Download VERSION file."
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
-  # Read agent version from VERSION file
-  AGENT_VERSION=$(tr -d '[:space:]' < "$INSTALLED_VERSION_FILE")
-
   # Create .env file
-  status "Creating .env file with VM_ID and AMD_EXPORTER_PORT."
+  status "Creating .env file with VM_ID, GPU_TYPE, and AMD_EXPORTER_PORT."
   cat <<EOF > "$ENV_FILE"
 VM_ID='${CRUSOE_VM_ID}'
+GPU_TYPE='amd'
 AMD_EXPORTER_PORT='${AMD_EXPORTER_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
-AGENT_VERSION='${AGENT_VERSION}'
+LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
+AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
 EOF
   echo ".env file created at $ENV_FILE"
 
@@ -377,6 +460,14 @@ EOF
     systemctl enable "$AMD_EXPORTER_SERVICE_NAME"
     echo "systemctl start $AMD_EXPORTER_SERVICE_NAME"
     systemctl start "$AMD_EXPORTER_SERVICE_NAME"
+
+    # Start AMD log collector
+    status "Enable and start systemd services for $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME."
+    systemctl daemon-reload
+    echo "systemctl enable $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl enable "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    echo "systemctl start $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl start "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
   fi
 
   status "Download crusoe-watch-agent.service."
@@ -393,6 +484,7 @@ EOF
   status "Setup Complete!"
   if $HAS_AMD_GPUS; then
     echo "Check status of $AMD_EXPORTER_SERVICE_NAME: 'sudo systemctl status $AMD_EXPORTER_SERVICE_NAME'"
+    echo "Check status of $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME'"
   fi
   echo "Check status of crusoe-watch-agent service: 'sudo systemctl status crusoe-watch-agent.service'"
   echo "Setup finished successfully!"
@@ -412,13 +504,25 @@ do_uninstall() {
     systemctl disable "$DEFAULT_AMD_EXPORTER_SERVICE_NAME" || true
   fi
 
+  status "Stopping and disabling AMD Log Collector service if installed."
+  if service_exists "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"; then
+    systemctl stop "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" || true
+    systemctl disable "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" || true
+  fi
+
   status "Removing systemd unit files."
   rm -f "$SYSTEMCTL_DIR/crusoe-watch-agent.service" || true
   rm -f "$SYSTEMCTL_DIR/$AMD_EXPORTER_SERVICE_NAME" || true
+  rm -f "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" || true
   systemctl daemon-reload || true
 
   status "Removing crusoe_watch_agent directory."
   rm -rf "$CRUSOE_WATCH_AGENT_DIR" || true
+
+  status "Removing AMD log collector directory (if native install)."
+  if [[ -d "/opt/crusoe-amd-log-collector" ]]; then
+    rm -rf /opt/crusoe-amd-log-collector || true
+  fi
 
   status "Uninstall complete."
 }
