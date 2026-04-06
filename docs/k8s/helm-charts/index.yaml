@@ -2,7 +2,21 @@ apiVersion: v1
 entries:
   crusoe-watch-agent:
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.597775316Z"
+    created: "2026-04-06T20:25:55.919254901Z"
+    dependencies:
+    - name: vector
+      repository: https://helm.vector.dev
+      version: 0.45.0
+    description: Helm chart to deploy Crusoe Watch Agent, Crusoe Log Collector and
+      monitoring token job
+    digest: 8b7cf9c86f5afa95e7b4e9a37c8e6e5500f8bceaceae745c991b1a7d4a4aab7c
+    name: crusoe-watch-agent
+    type: application
+    urls:
+    - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.19.tgz
+    version: 0.3.19
+  - apiVersion: v2
+    created: "2026-04-06T20:25:55.915908533Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -16,7 +30,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.18.tgz
     version: 0.3.18
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.594375332Z"
+    created: "2026-04-06T20:25:55.912504091Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -30,7 +44,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.15.tgz
     version: 0.3.15
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.590993049Z"
+    created: "2026-04-06T20:25:55.908596153Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -44,7 +58,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.14.tgz
     version: 0.3.14
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.587101824Z"
+    created: "2026-04-06T20:25:55.905308629Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -58,7 +72,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.13.tgz
     version: 0.3.13
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.583794729Z"
+    created: "2026-04-06T20:25:55.901907746Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -72,7 +86,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.12.tgz
     version: 0.3.12
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.5799828Z"
+    created: "2026-04-06T20:25:55.896227768Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -86,7 +100,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.11.tgz
     version: 0.3.11
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.576630543Z"
+    created: "2026-04-06T20:25:55.890902315Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -100,7 +114,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.10.tgz
     version: 0.3.10
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.627037072Z"
+    created: "2026-04-06T20:25:55.94705503Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -114,7 +128,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.9.tgz
     version: 0.3.9
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.623725084Z"
+    created: "2026-04-06T20:25:55.943723669Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -128,7 +142,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.8.tgz
     version: 0.3.8
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.618609051Z"
+    created: "2026-04-06T20:25:55.94002803Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -142,7 +156,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.7.tgz
     version: 0.3.7
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.615343972Z"
+    created: "2026-04-06T20:25:55.936641321Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -156,7 +170,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.6.tgz
     version: 0.3.6
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.612048069Z"
+    created: "2026-04-06T20:25:55.933380008Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -170,7 +184,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.5.tgz
     version: 0.3.5
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.608287578Z"
+    created: "2026-04-06T20:25:55.929511326Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -183,7 +197,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.4.tgz
     version: 0.3.4
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.605033117Z"
+    created: "2026-04-06T20:25:55.926284635Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -196,7 +210,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.3.tgz
     version: 0.3.3
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.601743579Z"
+    created: "2026-04-06T20:25:55.92305681Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -209,7 +223,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.2.tgz
     version: 0.3.2
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.573238316Z"
+    created: "2026-04-06T20:25:55.885220782Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -222,7 +236,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.1.tgz
     version: 0.3.1
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.569319996Z"
+    created: "2026-04-06T20:25:55.88046981Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -235,7 +249,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.3.0.tgz
     version: 0.3.0
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.565921648Z"
+    created: "2026-04-06T20:25:55.87708585Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -248,7 +262,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.2.8.tgz
     version: 0.2.8
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.561764403Z"
+    created: "2026-04-06T20:25:55.872801009Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -261,7 +275,7 @@ entries:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.2.7.tgz
     version: 0.2.7
   - apiVersion: v2
-    created: "2026-04-03T21:47:02.558441955Z"
+    created: "2026-04-06T20:25:55.869476081Z"
     dependencies:
     - name: vector
       repository: https://helm.vector.dev
@@ -273,4 +287,4 @@ entries:
     urls:
     - https://crusoecloud.github.io/crusoe-watch-agent/k8s/helm-charts/crusoe-watch-agent-0.2.6.tgz
     version: 0.2.6
-generated: "2026-04-03T21:47:02.554897774Z"
+generated: "2026-04-06T20:25:55.865966141Z"
