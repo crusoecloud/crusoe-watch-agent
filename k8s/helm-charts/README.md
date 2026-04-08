@@ -24,34 +24,28 @@ helm install crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent --namespac
 
 ## Upgrading
 
-Update your local chart index, then upgrade:
+Check the latest available version and update your local chart index:
 
 ```bash
+helm search repo crusoe-watch-agent/crusoe-watch-agent --versions | head -n 2
 helm repo update
-
-helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent \
-  --namespace crusoe-system
 ```
 
-To preserve custom overrides during the upgrade, pass them explicitly:
+Upgrade to the latest version:
 
 ```bash
-helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent \
-  --namespace crusoe-system \
-  -f custom-values.yaml
+helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent --namespace crusoe-system
 ```
 
-To upgrade to a specific chart version, use `--version`:
+Verify the upgrade:
 
 ```bash
-helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent \
-  --namespace crusoe-system \
-  --version <chart-version>
+kubectl get pods -n crusoe-system
 ```
 
 ### Resetting to chart defaults
 
-If previously set values are stale or causing issues (e.g. container images not updating), use `--reset-values` to discard all previously set values and use only the chart defaults:
+If previously set values are causing issues (e.g. container images not updating), use `--reset-values` to discard all previously set values and use only the chart defaults:
 
 ```bash
 helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent \
