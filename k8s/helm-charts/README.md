@@ -21,3 +21,40 @@ helm repo update
 
 helm install crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent --namespace crusoe-system
 ```
+
+## Upgrading
+
+Update your local chart index, then upgrade:
+
+```bash
+helm repo update
+
+helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent \
+  --namespace crusoe-system
+```
+
+To preserve custom overrides during the upgrade, pass them explicitly:
+
+```bash
+helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent \
+  --namespace crusoe-system \
+  -f custom-values.yaml
+```
+
+To upgrade to a specific chart version, use `--version`:
+
+```bash
+helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent \
+  --namespace crusoe-system \
+  --version <chart-version>
+```
+
+### Resetting to chart defaults
+
+If previously set values are stale or causing issues (e.g. container images not updating), use `--reset-values` to discard all previously set values and use only the chart defaults:
+
+```bash
+helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent \
+  --namespace crusoe-system \
+  --reset-values
+```
