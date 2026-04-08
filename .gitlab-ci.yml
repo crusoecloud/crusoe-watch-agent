@@ -21,6 +21,7 @@ include:
   - local: ci/monitoring-token.gitlab-ci.yml
   - local: ci/helm-package.gitlab-ci.yml
   - local: ci/semver-tag.gitlab-ci.yml
+  - local: ci/script-signing.gitlab-ci.yml
 
 # Runs if we don't change files in the submodules to ensure that a pipeline is always created.
 # Attempts to track files that don't have an associated job.
