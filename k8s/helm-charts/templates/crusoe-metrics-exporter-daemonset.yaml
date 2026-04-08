@@ -19,6 +19,7 @@ spec:
       labels:
         app: {{ .Values.crusoeMetricsExporter.name }}
     spec:
+      hostPID: true
       serviceAccountName: {{ .Values.crusoeMetricsExporter.name }}
 
       {{- if .Values.crusoeMetricsExporter.nodeSelector }}
