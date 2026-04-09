@@ -41,12 +41,8 @@ CRUSOE_METRICS_EXPORTER_SOURCE_NAME = "crusoe_metrics_exporter_scrape"
 CRUSOE_METRICS_EXPORTER_TRANSFORM_NAME = "enrich_crusoe_metrics_exporter"
 CRUSOE_METRICS_EXPORTER_SINK_NAME = "crusoe_metrics_exporter_sink"
 CRUSOE_METRICS_EXPORTER_APP_LABEL = "crusoe-metrics-exporter"
-CRUSOE_METRICS_EXPORTER_TRANSFORM_SOURCE = LiteralStr("""
-.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
-.tags.project_id = "${CRUSOE_PROJECT_ID}"
-.tags.crusoe_resource = "vm_custom_infra"
-.tags.metrics_source = "crusoe-metrics-exporter"
-""")
+# CRUSOE_METRICS_EXPORTER_TRANSFORM_SOURCE is built dynamically in __init__
+# because it needs self.vm_id from the node labels.
 NODE_METRICS_VECTOR_TRANSFORM_NAME = "enrich_node_metrics"
 CUSTOM_METRICS_VECTOR_TRANSFORM_NAME = "enrich_custom_metrics"
 CUSTOM_METRICS_CONFIG_MAP_NAME = "crusoe-custom-metrics-config"
@@ -195,6 +191,14 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .tags.metrics_source = "node-metrics"
 """)
 
+        self.crusoe_metrics_exporter_transform_source = LiteralStr(f"""
+.tags.cluster_id = "${{CRUSOE_CLUSTER_ID}}"
+.tags.project_id = "${{CRUSOE_PROJECT_ID}}"
+.tags.vm_id = "{self.vm_id}"
+.tags.crusoe_resource = "vm_custom_infra"
+.tags.metrics_source = "crusoe-metrics-exporter"
+""")
+
         self.custom_metrics_vector_transform = {
             "type": "remap",
             "inputs": [],
@@ -218,7 +222,7 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .host = get_hostname!()
 .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
 
-if starts_with(string!(.kubernetes.pod_labels.app), "crusoe-log-collector") { 
+if exists(.kubernetes.pod_labels.app) && starts_with(string!(.kubernetes.pod_labels.app), "crusoe-log-collector") { 
     .log_source = "crusoe-log-collector"
 
     # Parse JSON log format (efficient, no regex needed)
@@ -570,7 +574,7 @@ if exists(.level) {
         vector_cfg.setdefault("transforms", {})[CRUSOE_METRICS_EXPORTER_TRANSFORM_NAME] = {
             "type": "remap",
             "inputs": [CRUSOE_METRICS_EXPORTER_SOURCE_NAME],
-            "source": CRUSOE_METRICS_EXPORTER_TRANSFORM_SOURCE
+            "source": self.crusoe_metrics_exporter_transform_source
         }
         vector_cfg.setdefault("sinks", {})[CRUSOE_METRICS_EXPORTER_SINK_NAME] = self.crusoe_metrics_exporter_sink_config
 
