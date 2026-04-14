@@ -573,7 +573,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.16
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.17
       env:
         - name: NODE_NAME
           valueFrom:
@@ -883,7 +883,7 @@ vector:
 # Log Collector configuration
 logCollector:
   # Shared defaults (applied to both NVIDIA and AMD unless overridden per-vendor)
-  imageTag: v0.2.16
+  imageTag: v0.2.17
   pullPolicy: IfNotPresent
 
   env:
@@ -934,7 +934,7 @@ crusoeMetricsExporter:
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter
-    tag: "0.1.0"
+    tag: "0.1.1"
     pullPolicy: IfNotPresent
 
   port: 9500

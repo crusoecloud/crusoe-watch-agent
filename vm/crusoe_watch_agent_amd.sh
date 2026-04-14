@@ -33,7 +33,7 @@ REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
 
 # Log collector container image version (update here when releasing new container builds)
-LOG_COLLECTOR_IMAGE_VERSION="v0.2.16"
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.17"
 
 # Optional parameters with defaults
 DEFAULT_AMD_EXPORTER_SERVICE_NAME="crusoe-amd-exporter.service"

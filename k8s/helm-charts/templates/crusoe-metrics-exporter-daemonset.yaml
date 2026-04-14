@@ -18,6 +18,7 @@ spec:
     metadata:
       labels:
         app: {{ .Values.crusoeMetricsExporter.name }}
+        app.kubernetes.io/name: {{ .Values.crusoeMetricsExporter.name }}
     spec:
       hostPID: true
       serviceAccountName: {{ .Values.crusoeMetricsExporter.name }}
