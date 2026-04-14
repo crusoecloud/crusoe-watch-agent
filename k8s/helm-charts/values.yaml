@@ -46,7 +46,7 @@ metricsExporter:
   defaultSlurmMetricsPort: 6817
   defaultScrapeInterval: 60
 
-logLevel: INFO
+logLevel: WARNING
 
 
 # CPU profile for Vector subchart
@@ -196,7 +196,7 @@ vector:
 
   # podLabels -- Set labels on Vector Pods.
   podLabels:
-    vector.dev/exclude: "true"
+    vector.dev/exclude: "false"
 
   # podPriorityClassName -- Set the [priorityClassName](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/#priorityclass)
   # on Vector Pods.
@@ -573,7 +573,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.17
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.18
       env:
         - name: NODE_NAME
           valueFrom:

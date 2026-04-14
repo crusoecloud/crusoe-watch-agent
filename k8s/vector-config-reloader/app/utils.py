@@ -1,8 +1,28 @@
 import os
 import tempfile
 import yaml
+import json
+import logging
+from datetime import datetime, timezone
 
 class LiteralStr(str): pass
+
+
+class JSONFormatter(logging.Formatter):
+    """JSON formatter for structured logging - efficient and no parsing needed."""
+
+    def format(self, record):
+        log_data = {
+            "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat().replace('+00:00', 'Z'),
+            "level": record.levelname.lower(),
+            "message": record.getMessage(),
+        }
+
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+
+        return json.dumps(log_data)
+
 
 def literal_str_representer(dumper, data):
     return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")

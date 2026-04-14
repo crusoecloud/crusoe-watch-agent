@@ -1,7 +1,6 @@
 import os, signal, re, logging, threading, sys
-
 from kubernetes import client, config, watch
-from utils import LiteralStr, YamlUtils
+from utils import LiteralStr, YamlUtils, JSONFormatter
 from amd_exporter import AmdExporterManager
 
 CUSTOM_METRICS_CM_NAMESPACE = "crusoe-monitoring"
@@ -16,8 +15,10 @@ DCGM_EXPORTER_APP_LABEL = "nvidia-dcgm-exporter"
 CRUSOE_INGEST_SINK_NAME = "crusoe_ingest"
 ENRICH_LOGS_TRANSFORM_NAME = "enrich_logs"
 FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME = "filter_crusoe_log_collector_logs"
+FILTER_VECTOR_CONFIG_RELOADER_LOGS_TRANSFORM_NAME = "filter_vector_config_reloader_logs"
 JOURNALD_LOGS_SOURCE_NAME = "journald_logs"
 KUBERNETES_LOGS_SOURCE_NAME = "kubernetes_logs"
+VECTOR_INTERNAL_LOGS_SOURCE_NAME = "vector_internal_logs"
 KUBE_STATE_METRICS_SOURCE_NAME = "kube_state_metrics_scrape"
 KUBE_STATE_METRICS_TRANSFORM_NAME = "enrich_kube_state_metrics"
 KUBE_STATE_METRICS_SINK_NAME = "kube_state_metrics_sink"
@@ -58,10 +59,12 @@ SCRAPE_INTERVAL_MIN_THRESHOLD = 5
 SCRAPE_TIMEOUT_PERCENTAGE = 0.7
 MAX_EVENT_WATCHER_RETRIES = 5
 
+# Logging setup
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(JSONFormatter())
 logging.basicConfig(
     level=logging.INFO,  # overridden later by config's log_level
-    format="%(asctime)s %(levelname)s: %(message)s",
-    stream=sys.stdout,
+    handlers=[handler]
 )
 LOG = logging.getLogger(__name__)
 
@@ -218,12 +221,16 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .kubernetes.pod_namespace == "crusoe-system" && starts_with(string!(.kubernetes.pod_name), "crusoe-log-collector")
 ''')
 
+        self.filter_vector_config_reloader_logs_transform_source = LiteralStr('''
+.kubernetes.pod_namespace == "crusoe-system" && starts_with(string!(.kubernetes.pod_name), "crusoe-watch-agent") && .kubernetes.container_name == "vector-config-reloader"
+''')
+
         self.enrich_logs_transform_source = LiteralStr('''
 .agent = "crusoe-watch-agent"
 .host = get_hostname!()
 .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
 
-if exists(.kubernetes.pod_labels.app) && starts_with(string!(.kubernetes.pod_labels.app), "crusoe-log-collector") { 
+if exists(.kubernetes.pod_labels.app) && starts_with(string!(.kubernetes.pod_labels.app), "crusoe-log-collector") {
     .log_source = "crusoe-log-collector"
 
     # Parse JSON log format (efficient, no regex needed)
@@ -240,6 +247,37 @@ if exists(.kubernetes.pod_labels.app) && starts_with(string!(.kubernetes.pod_lab
             }
             # Note: parsed.timestamp exists but we use kubernetes timestamp
         }
+    }
+}
+
+if (to_string(.kubernetes.container_name) ?? "") == "vector-config-reloader" {
+    .log_source = "cwa-config-reloader"
+
+    # Parse JSON log format (efficient, no regex needed)
+    if exists(.message) {
+        parsed, err = parse_json(string!(.message))
+
+        if err == null {
+            # Extract level and message from JSON
+            if exists(parsed.level) {
+                .level = string!(parsed.level)
+            }
+            if exists(parsed.message) {
+                .message = string!(parsed.message)
+            }
+            # Note: parsed.timestamp exists but we use kubernetes timestamp
+        }
+    }
+}
+
+if .source_type == "internal_logs" {
+    .log_source = "crusoe-watch-agent"
+
+    # Vector internal_logs puts level in metadata.level
+    if exists(.metadata.level) {
+        .level = downcase(string!(.metadata.level))
+    } else {
+        .level = "undefined"
     }
 }
 
@@ -473,7 +511,7 @@ if exists(.level) {
         vector_cfg.setdefault("sinks", {})[KUBE_STATE_METRICS_SINK_NAME] = self.kube_state_metrics_sink_config
 
     def set_logs_config(self, vector_cfg: dict):
-        """Set log sources, transforms, and sink for journald and dmesg logs."""
+        """Set log sources, transforms, and sink for journald and agent logs."""
         if not self.logs_enabled:
             LOG.info("Logs disabled, skipping logs config")
             return
@@ -489,8 +527,17 @@ if exists(.level) {
         }
 
         # Add kubernetes logs source
+        # Exclude only the vector container logs, allow vector-config-reloader logs
         sources[KUBERNETES_LOGS_SOURCE_NAME] = {
-            "type": "kubernetes_logs"
+            "type": "kubernetes_logs",
+            "exclude_paths_glob_patterns": [
+                "/var/log/pods/crusoe-system_crusoe-watch-agent-*_*/vector/*.log"
+            ]
+        }
+
+        # Add vector internal_logs source
+        sources[VECTOR_INTERNAL_LOGS_SOURCE_NAME] = {
+            "type": "internal_logs"
         }
 
         # Add crusoe log collector log filter
@@ -503,10 +550,25 @@ if exists(.level) {
             }
         }
 
-        # Add enrich_logs transform
+        # Add vector-config-reloader log filter
+        transforms[FILTER_VECTOR_CONFIG_RELOADER_LOGS_TRANSFORM_NAME] = {
+            "type": "filter",
+            "inputs": [KUBERNETES_LOGS_SOURCE_NAME],
+            "condition": {
+                "type": "vrl",
+                "source": self.filter_vector_config_reloader_logs_transform_source
+            }
+        }
+
+        # Add enrich_logs transform with all log inputs
         transforms[ENRICH_LOGS_TRANSFORM_NAME] = {
             "type": "remap",
-            "inputs": [JOURNALD_LOGS_SOURCE_NAME, FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME],
+            "inputs": [
+                JOURNALD_LOGS_SOURCE_NAME,
+                FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME,
+                FILTER_VECTOR_CONFIG_RELOADER_LOGS_TRANSFORM_NAME,
+                VECTOR_INTERNAL_LOGS_SOURCE_NAME
+            ],
             "source": self.enrich_logs_transform_source
         }
 
@@ -529,7 +591,7 @@ if exists(.level) {
             sink_config["proxy"] = self.sink_proxy_cfg
         sinks[CRUSOE_INGEST_SINK_NAME] = sink_config
 
-        LOG.info("Logs config set for journald and kubernetes log sources")
+        LOG.info("Logs config set for all log sources (journald, kubernetes, vector internal)")
 
     def remove_kube_state_metrics_scrape_config(self, vector_cfg: dict):
         vector_cfg.get("sources", {}).pop(KUBE_STATE_METRICS_SOURCE_NAME, None)
