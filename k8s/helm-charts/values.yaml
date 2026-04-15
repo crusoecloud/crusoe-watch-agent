@@ -220,7 +220,7 @@ vector:
   command: [
     "/bin/sh",
     "-c",
-    "export VM_ID=$(cat /host/sys/class/dmi/id/product_uuid) && /usr/bin/vector --config /etc/vector/vector.yaml --watch-config --watch-config-method poll --watch-config-poll-interval-seconds 30"
+    "cp /etc/vector-base/vector.yaml /etc/vector/vector.yaml && export VM_ID=$(cat /host/sys/class/dmi/id/product_uuid) && /usr/bin/vector --config /etc/vector/vector.yaml --watch-config --watch-config-method poll --watch-config-poll-interval-seconds 30"
   ]
 
   # args -- Override Vector's default arguments.
@@ -405,6 +405,12 @@ vector:
       internal_metrics:
         type: internal_metrics
         scrape_interval_secs: 60
+      vcr_metrics:
+        type: prometheus_scrape
+        endpoints:
+          - http://localhost:9091/metrics
+        scrape_interval_secs: 60
+        scrape_timeout_secs: 50
 
     transforms:
       enrich_node_metrics:
@@ -459,6 +465,7 @@ vector:
         type: remap
         inputs:
             - filter_internal_metrics
+            - vcr_metrics
         source: |
             .tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
             .tags.vm_id = "${VM_ID}"
@@ -573,7 +580,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.18
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.19
       env:
         - name: NODE_NAME
           valueFrom:

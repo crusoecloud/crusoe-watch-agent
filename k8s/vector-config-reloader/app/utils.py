@@ -4,6 +4,7 @@ import yaml
 import json
 import logging
 from datetime import datetime, timezone
+from prometheus_client import Counter, start_http_server
 
 class LiteralStr(str): pass
 
@@ -49,3 +50,11 @@ class YamlUtils:
             yaml.safe_dump(cfg, f)
             temp_path = f.name
         os.rename(temp_path, path)
+
+
+# Prometheus metrics for VCR (common labels added by Vector transform)
+errors_total = Counter(
+    'vcr_errors_total',
+    'Total VCR errors by type',
+    ['error_type']
+)

@@ -1,6 +1,7 @@
 import yaml
 import pytest
 import types
+from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
 
 from vector_config_reloader_app import (
     VectorConfigReloader,
@@ -56,6 +57,8 @@ def _isolate_env(monkeypatch, tmp_path):
     monkeypatch.setattr("vector_config_reloader_app.client.CoreV1Api", _DummyCoreV1Api)
     monkeypatch.setattr("vector_config_reloader_app.watch.Watch", lambda: _DummyWatch())
     monkeypatch.setattr("vector_config_reloader_app.config.load_incluster_config", lambda: None)
+    # Patch start_http_server to prevent actually starting server in tests
+    monkeypatch.setattr("vector_config_reloader_app.start_http_server", lambda port: None)
 
     # Provide temp files for config paths
     reloader_cfg = {
@@ -232,3 +235,68 @@ def test_slurm_metrics_disabled_skips_config(monkeypatch):
     assert "slurm_metrics_scrape" not in vector_cfg["sources"]
     assert "enrich_slurm_metrics" not in vector_cfg["transforms"]
     assert "slurm_metrics_sink" not in vector_cfg["sinks"]
+
+
+def test_init_fails_immediately_on_read_node_error(monkeypatch):
+    """__init__ should fail immediately on K8s API errors (no retries)."""
+    call_count = 0
+
+    class _FailingApi:
+        def __init__(self):
+            self._pods = []
+
+        def read_node(self, name):
+            nonlocal call_count
+            call_count += 1
+            raise MaxRetryError(
+                pool=None, url=f"/api/v1/nodes/{name}",
+                reason=ConnectTimeoutError(None, "Connection timed out")
+            )
+
+        def list_pod_for_all_namespaces(self, **kwargs):
+            return types.SimpleNamespace(items=self._pods)
+
+    monkeypatch.setattr("vector_config_reloader_app.client.CoreV1Api", _FailingApi)
+    with pytest.raises(SystemExit) as exc_info:
+        VectorConfigReloader()
+    assert exc_info.value.code == 1
+    # Should only call once (no retries)
+    assert call_count == 1
+
+
+def test_init_exits_when_read_node_fails(monkeypatch):
+    """__init__ should sys.exit(1) on K8s API failure (no retries)."""
+    call_count = 0
+
+    class _DeadApi:
+        def read_node(self, name):
+            nonlocal call_count
+            call_count += 1
+            raise MaxRetryError(pool=None, url="/api", reason="timeout")
+
+        def list_pod_for_all_namespaces(self, **kwargs):
+            return types.SimpleNamespace(items=[])
+
+    monkeypatch.setattr("vector_config_reloader_app.client.CoreV1Api", _DeadApi)
+    with pytest.raises(SystemExit) as exc_info:
+        VectorConfigReloader()
+    assert exc_info.value.code == 1
+    # Should only call once (no retries)
+    assert call_count == 1
+
+
+def test_bootstrap_config_fails_immediately_on_list_pods_error(monkeypatch):
+    """bootstrap_config should fail immediately on K8s API errors (no retries), using graceful degradation."""
+    r = VectorConfigReloader()
+
+    call_count = 0
+
+    def failing_list(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise ConnectionError("API unreachable")
+
+    r.k8s_api_client.list_pod_for_all_namespaces = failing_list
+    r.bootstrap_config()  # should not raise - graceful degradation
+    # Should only call once (no retries)
+    assert call_count == 1

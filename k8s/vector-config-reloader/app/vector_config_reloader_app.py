@@ -1,6 +1,13 @@
-import os, signal, re, logging, threading, sys
+import os, signal, re, logging, threading, sys, time
+from pathlib import Path
 from kubernetes import client, config, watch
-from utils import LiteralStr, YamlUtils, JSONFormatter
+from utils import (
+    LiteralStr,
+    YamlUtils,
+    JSONFormatter,
+    errors_total,
+    start_http_server,
+)
 from amd_exporter import AmdExporterManager
 
 CUSTOM_METRICS_CM_NAMESPACE = "crusoe-monitoring"
@@ -180,8 +187,15 @@ class VectorConfigReloader:
             self.pod_id = labels.get("crusoe.ai/pod.id", None)
             self.project_id = labels.get("crusoe.ai/project.id", None)
             self.hostname = labels.get("kubernetes.io/hostname", None)
-        except client.exceptions.ApiException as e:
-            LOG.error(f"Failed to fetch node labels: {e}. Exiting!")
+        except Exception as e:
+            cluster_id = os.environ.get('CRUSOE_CLUSTER_ID', 'unknown')
+            vm_id = os.environ.get('VM_ID', 'unknown')
+            project_id = os.environ.get('CRUSOE_PROJECT_ID', 'unknown')
+            errors_total.labels(error_type="k8s_api_fetch_node_labels").inc()
+            LOG.error(
+                f"Fetch node labels failed. "
+                f"cluster_id={cluster_id} vm_id={vm_id} project_id={project_id} error={str(e)}"
+            )
             sys.exit(1)
 
         self.node_metrics_vector_transform_source = LiteralStr(f"""
@@ -729,51 +743,90 @@ if exists(.level) {
         LOG.info("Custom metrics config refreshed from ConfigMap")
 
     def bootstrap_config(self):
-        base_cfg = YamlUtils.load_yaml_config(VECTOR_BASE_CONFIG_PATH)
+        try:
+            base_cfg = YamlUtils.load_yaml_config(VECTOR_BASE_CONFIG_PATH)
 
-        dcgm_exporter_ep = None
-        amd_exporter_ep = None
-        ksm_ep = None
-        slurm_eps = None
-        cme_ep = None
-        custom_metrics_eps = []
-        for pod in self.k8s_api_client.list_pod_for_all_namespaces(field_selector=f"spec.nodeName={self.node_name},status.phase=Running").items:
-            if VectorConfigReloader.is_custom_metrics_pod(pod):
-                custom_metrics_eps.append(self.get_custom_metrics_endpoint_cfg(pod))
-            elif VectorConfigReloader.is_dcgm_exporter_pod(pod):
-                dcgm_exporter_ep = self.get_dcgm_exporter_scrape_endpoint(pod.status.pod_ip)
-            elif VectorConfigReloader.is_kube_state_metrics_pod(pod):
-                ksm_ep = self.get_kube_state_metrics_scrape_endpoint(pod.status.pod_ip)
-            elif VectorConfigReloader.is_slurm_metrics_pod(pod):
-                slurm_eps = self.get_slurm_metrics_scrape_endpoints(pod.status.pod_ip)
-            elif VectorConfigReloader.is_crusoe_metrics_exporter_pod(pod):
-                cme_ep = self.get_crusoe_metrics_exporter_scrape_endpoint(pod.status.pod_ip)
-            elif self.amd_manager.is_exporter_pod(pod):
-                amd_exporter_ep = self.amd_manager.build_endpoint(pod.status.pod_ip)
+            try:
+                pods = self.k8s_api_client.list_pod_for_all_namespaces(
+                    field_selector=f"spec.nodeName={self.node_name},status.phase=Running"
+                ).items
+            except Exception as e:
+                cluster_id = os.environ.get('CRUSOE_CLUSTER_ID', 'unknown')
+                vm_id = os.environ.get('VM_ID', 'unknown')
+                project_id = os.environ.get('CRUSOE_PROJECT_ID', 'unknown')
+                errors_total.labels(error_type="k8s_api_list_pods").inc()
+                LOG.error(
+                    f"List pods for bootstrap failed. "
+                    f"cluster_id={cluster_id} vm_id={vm_id} project_id={project_id} error={str(e)}"
+                )
+                raise
+
+            dcgm_exporter_ep = None
+            amd_exporter_ep = None
+            ksm_ep = None
+            slurm_eps = None
+            cme_ep = None
+            custom_metrics_eps = []
+            for pod in pods:
+                if VectorConfigReloader.is_custom_metrics_pod(pod):
+                    custom_metrics_eps.append(self.get_custom_metrics_endpoint_cfg(pod))
+                elif VectorConfigReloader.is_dcgm_exporter_pod(pod):
+                    dcgm_exporter_ep = self.get_dcgm_exporter_scrape_endpoint(pod.status.pod_ip)
+                elif VectorConfigReloader.is_kube_state_metrics_pod(pod):
+                    ksm_ep = self.get_kube_state_metrics_scrape_endpoint(pod.status.pod_ip)
+                elif VectorConfigReloader.is_slurm_metrics_pod(pod):
+                    slurm_eps = self.get_slurm_metrics_scrape_endpoints(pod.status.pod_ip)
+                elif VectorConfigReloader.is_crusoe_metrics_exporter_pod(pod):
+                    cme_ep = self.get_crusoe_metrics_exporter_scrape_endpoint(pod.status.pod_ip)
+                elif self.amd_manager.is_exporter_pod(pod):
+                    amd_exporter_ep = self.amd_manager.build_endpoint(pod.status.pod_ip)
+                else:
+                    LOG.info(f"Pod {pod.metadata.name} is not a relevant metrics exporter.")
+
+            self.set_custom_metrics_scrape_config(base_cfg, custom_metrics_eps)
+            self.set_dcgm_exporter_scrape_config(base_cfg, dcgm_exporter_ep)
+            self.set_kube_state_metrics_scrape_config(base_cfg, ksm_ep)
+            self.set_slurm_metrics_scrape_config(base_cfg, slurm_eps)
+            self.set_crusoe_metrics_exporter_scrape_config(base_cfg, cme_ep)
+            self.set_logs_config(base_cfg)
+            if self.amd_manager.enabled and amd_exporter_ep:
+                self.amd_manager.set_scrape(base_cfg, amd_exporter_ep, NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
+
+            # set endpoint as per env
+            base_cfg["sinks"]["cms_gateway_node_metrics"]["endpoint"] = self.infra_sink_endpoint
+
+            # set proxy config if enabled in reloader config
+            if self.sink_proxy_cfg.get("enabled"):
+                base_cfg["sinks"]["cms_gateway_node_metrics"]["proxy"] = self.sink_proxy_cfg
+
+            LOG.debug(f"Writing vector config {str(base_cfg)}")
+            # always update the node metrics transform source to handle LiteralStr issue
+            base_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = self.node_metrics_vector_transform_source
+            YamlUtils.save_yaml(VECTOR_CONFIG_PATH, base_cfg)
+            LOG.info(f"Vector config bootstrapped!")
+
+        except Exception as e:
+            # Bootstrap failed - use graceful degradation
+            cluster_id = os.environ.get('CRUSOE_CLUSTER_ID', 'unknown')
+            vm_id = self.vm_id or os.environ.get('VM_ID', 'unknown')
+            project_id = os.environ.get('CRUSOE_PROJECT_ID', 'unknown')
+
+            errors_total.labels(error_type="bootstrap").inc()
+
+            if Path(VECTOR_CONFIG_PATH).exists():
+                # Keep existing config
+                LOG.warning(
+                    f"Bootstrap failed, keeping existing Vector config. "
+                    f"cluster_id={cluster_id} vm_id={vm_id} project_id={project_id} error={str(e)}"
+                )
             else:
-                LOG.info(f"Pod {pod.metadata.name} is not a relevant metrics exporter.")
-
-        self.set_custom_metrics_scrape_config(base_cfg, custom_metrics_eps)
-        self.set_dcgm_exporter_scrape_config(base_cfg, dcgm_exporter_ep)
-        self.set_kube_state_metrics_scrape_config(base_cfg, ksm_ep)
-        self.set_slurm_metrics_scrape_config(base_cfg, slurm_eps)
-        self.set_crusoe_metrics_exporter_scrape_config(base_cfg, cme_ep)
-        self.set_logs_config(base_cfg)
-        if self.amd_manager.enabled and amd_exporter_ep:
-            self.amd_manager.set_scrape(base_cfg, amd_exporter_ep, NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
-
-        # set endpoint as per env
-        base_cfg["sinks"]["cms_gateway_node_metrics"]["endpoint"] = self.infra_sink_endpoint
-
-        # set proxy config if enabled in reloader config
-        if self.sink_proxy_cfg.get("enabled"):
-            base_cfg["sinks"]["cms_gateway_node_metrics"]["proxy"] = self.sink_proxy_cfg
-
-        LOG.debug(f"Writing vector config {str(base_cfg)}")
-        # always update the node metrics transform source to handle LiteralStr issue
-        base_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = self.node_metrics_vector_transform_source
-        YamlUtils.save_yaml(VECTOR_CONFIG_PATH, base_cfg)
-        LOG.info(f"Vector config bootstrapped!")
+                # No existing config - copy base config as fallback
+                LOG.error(
+                    f"Bootstrap failed with no existing config, using base config as fallback. "
+                    f"cluster_id={cluster_id} vm_id={vm_id} project_id={project_id} error={str(e)}"
+                )
+                import shutil
+                shutil.copy(VECTOR_BASE_CONFIG_PATH, VECTOR_CONFIG_PATH)
 
     def handle_custom_metrics_config_map_event(self, event):
         custom_metrics_config_map = event["object"]
@@ -840,43 +893,82 @@ if exists(.level) {
         YamlUtils.save_yaml(VECTOR_CONFIG_PATH, current_vector_cfg)
         LOG.info(f"Vector config reloaded!")
 
+    def _run_event_watcher(self, name, stream_fn, stream_kwargs, event_handler, bootstrap_on_reconnect=False):
+        retries = 0
+
+        while self.running and retries < MAX_EVENT_WATCHER_RETRIES:
+            should_bootstrap = False
+            try:
+                LOG.info(f"Starting {name} event watcher...")
+                watcher = watch.Watch()
+                events_processed = False
+
+                for event in watcher.stream(stream_fn, **stream_kwargs, _request_timeout=0):
+                    events_processed = True
+                    try:
+                        event_handler(event)
+                    except Exception as e:
+                        LOG.error(f"Failed to handle {name} event: {e}")
+                    if not self.running:
+                        watcher.stop()
+                        return
+
+                # Stream ended naturally
+                if events_processed:
+                    LOG.warning(f"{name} event watcher stream ended, reconnecting...")
+                    retries = 0
+                    should_bootstrap = True
+                else:
+                    retries += 1
+                    LOG.warning(f"{name} event watcher stream ended without processing events, reconnecting (consecutive failures: {retries}/{MAX_EVENT_WATCHER_RETRIES})...")
+
+            except client.ApiException as e:
+                if e.status == 410:
+                    LOG.warning(f"{name} event watcher received 410 Gone, reconnecting...")
+                    retries = 0
+                    should_bootstrap = True
+                else:
+                    retries += 1
+                    LOG.error(f"{name} event watcher error ({retries}/{MAX_EVENT_WATCHER_RETRIES}): {e}")
+
+            except Exception as e:
+                retries += 1
+                LOG.error(f"Unexpected {name} event watcher error ({retries}/{MAX_EVENT_WATCHER_RETRIES}): {e}")
+
+            if bootstrap_on_reconnect and should_bootstrap:
+                self.bootstrap_config()
+
+        if retries >= MAX_EVENT_WATCHER_RETRIES:
+            errors_total.labels(error_type=f"event_watcher_{name}").inc()
+            LOG.error(f"{name} event watcher exceeded max retries ({MAX_EVENT_WATCHER_RETRIES}), exiting thread")
+            return  # Exit thread gracefully instead of crashing entire process
+
     def run_pod_event_handler(self):
-        try:
-            stream = self.k8s_pod_event_watcher.stream(
-                self.k8s_api_client.list_pod_for_all_namespaces,
-                field_selector=f"spec.nodeName={self.node_name}",
-                _request_timeout=0
-            )
-            for event in stream:
-                try:
-                    self.handle_pod_event(event)
-                except Exception as e:
-                    LOG.error(f"Failed to handle pod event: {e}")
-                if not self.running:
-                    self.k8s_pod_event_watcher.stop()
-                    break
-        except client.ApiException as e:
-            LOG.error(f"k8s pod event watcher error: {e}")
+        self._run_event_watcher(
+            name="pod",
+            stream_fn=self.k8s_api_client.list_pod_for_all_namespaces,
+            stream_kwargs={"field_selector": f"spec.nodeName={self.node_name}"},
+            event_handler=self.handle_pod_event,
+            bootstrap_on_reconnect=True,
+        )
 
     def run_config_map_event_handler(self):
-        try:
-            stream = self.k8s_config_map_event_watcher.stream(
-                self.k8s_api_client.list_namespaced_config_map,
-                namespace=CUSTOM_METRICS_CM_NAMESPACE,
-                _request_timeout=0
-            )
-            for event in stream:
-                try:
-                    self.handle_custom_metrics_config_map_event(event)
-                except Exception as e:
-                    LOG.error(f"Failed to handle pod event: {e}")
-                if not self.running:
-                    self.k8s_config_map_event_watcher.stop()
-                    break
-        except client.ApiException as e:
-            LOG.error(f"k8s config_map event watcher error: {e}")
+        self._run_event_watcher(
+            name="config map",
+            stream_fn=self.k8s_api_client.list_namespaced_config_map,
+            stream_kwargs={"namespace": CUSTOM_METRICS_CM_NAMESPACE},
+            event_handler=self.handle_custom_metrics_config_map_event,
+        )
 
     def execute(self):
+        # Start Prometheus metrics HTTP server
+        metrics_port = int(os.environ.get('VCR_METRICS_PORT', '9091'))
+        try:
+            start_http_server(metrics_port)
+            LOG.info(f"Started Prometheus metrics server on port {metrics_port}")
+        except Exception as e:
+            LOG.warning(f"Failed to start metrics server on port {metrics_port}: {e}")
+
         signal.signal(signal.SIGINT, self.handle_sigterm)
         signal.signal(signal.SIGTERM, self.handle_sigterm)
 
