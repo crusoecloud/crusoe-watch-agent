@@ -89,7 +89,7 @@ usage() {
 }
 
 parse_args() {
-  COMMAND="install"  # default for backward compatibility
+  COMMAND="install"  # Default for backward compatibility
   while [[ $# -gt 0 ]]; do
     case "$1" in
       install|uninstall|refresh-token|upgrade|help)
@@ -109,7 +109,7 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
-      # this is a hidden option to be used for internal testing
+      # This is a hidden option to be used for internal testing
       --branch|-b)
         if [[ -n "$2" ]]; then
           GITHUB_BRANCH="$2"; shift 2
