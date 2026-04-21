@@ -30,7 +30,7 @@ script-signing:sign:
 
         echo "Verifying signature for ${SCRIPT}..."
         cosign verify-blob \
-          --key /tmp/cosign.key \
+          --key vm/cosign.pub \
           --signature "${SCRIPT}.sig" \
           "${SCRIPT}"
         echo "Signature verified for ${SCRIPT}"

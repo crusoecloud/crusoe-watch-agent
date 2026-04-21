@@ -64,7 +64,7 @@ usage() {
 }
 
 parse_args() {
-  COMMAND="install"  # default for backward compatibility
+  COMMAND="install"  # Default for backward compatibility
   while [[ $# -gt 0 ]]; do
     case "$1" in
       install|uninstall|refresh-token|upgrade|help)
