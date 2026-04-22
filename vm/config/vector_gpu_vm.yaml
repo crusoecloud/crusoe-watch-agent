@@ -157,6 +157,7 @@ sinks:
         request:
             headers:
                 X-Crusoe-Vm-Id: "${VM_ID}"
+                User-Agent: "CrusoeWatchAgent/${AGENT_VERSION}"
         auth:
             strategy: bearer
             token: "${CRUSOE_AUTH_TOKEN}"
@@ -179,6 +180,8 @@ sinks:
             enabled: false
         request:
             concurrency: adaptive
+            headers:
+                User-Agent: "CrusoeWatchAgent/${AGENT_VERSION}"
         batch:
             max_bytes: 500000 # ~500KB
         compression: snappy
