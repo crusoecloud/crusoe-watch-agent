@@ -126,7 +126,7 @@ class VectorConfigReloader:
             "compression": "snappy",
             "request": {"concurrency": "adaptive"},
             "batch": {"max_bytes": 500000},
-            "tls": {"verify_certificate": True, "verify_hostname": True},
+            "tls": {"verify_certificate": True, "verify_hostname": True, "alpn_protocols": ["h2", "http/1.1"]},
         }
 
         LOG.setLevel(reloader_cfg["log_level"])
@@ -141,7 +141,7 @@ class VectorConfigReloader:
             "compression": "snappy",
             "request": {"concurrency": "adaptive"},
             "batch": {"max_bytes": 500000},
-            "tls": {"verify_certificate": True, "verify_hostname": True},
+            "tls": {"verify_certificate": True, "verify_hostname": True, "alpn_protocols": ["h2", "http/1.1"]},
         }
 
         self.slurm_metrics_sink_config = {
@@ -154,7 +154,7 @@ class VectorConfigReloader:
             "compression": "snappy",
             "request": {"concurrency": "adaptive"},
             "batch": {"max_bytes": 500000},
-            "tls": {"verify_certificate": True, "verify_hostname": True},
+            "tls": {"verify_certificate": True, "verify_hostname": True, "alpn_protocols": ["h2", "http/1.1"]},
         }
 
         self.crusoe_metrics_exporter_sink_config = {
@@ -167,7 +167,7 @@ class VectorConfigReloader:
             "compression": "snappy",
             "request": {"concurrency": "adaptive"},
             "batch": {"max_bytes": 500000},
-            "tls": {"verify_certificate": True, "verify_hostname": True},
+            "tls": {"verify_certificate": True, "verify_hostname": True, "alpn_protocols": ["h2", "http/1.1"]},
         }
 
         # set proxy if enabled
@@ -599,7 +599,8 @@ if exists(.level) {
             },
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "encoding": {"codec": "json"},
-            "batch": {"max_bytes": 100000}
+            "batch": {"max_bytes": 100000},
+            "tls": {"verify_certificate": True, "verify_hostname": True, "alpn_protocols": ["h2", "http/1.1"]}
         }
         if self.sink_proxy_cfg.get("enabled"):
             sink_config["proxy"] = self.sink_proxy_cfg

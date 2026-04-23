@@ -180,6 +180,10 @@ sinks:
             codec: json
         batch:
             max_bytes: 100000
+        tls:
+            verify_certificate: true
+            verify_hostname: true
+            alpn_protocols: ["h2", "http/1.1"]
 
     cms_gateway:
         type: prometheus_remote_write
@@ -201,6 +205,7 @@ sinks:
         tls:
             verify_certificate: true
             verify_hostname: true
+            alpn_protocols: ["h2", "http/1.1"]
 
     cms_gateway_cme:
         type: prometheus_remote_write
@@ -221,3 +226,4 @@ sinks:
         tls:
             verify_certificate: true
             verify_hostname: true
+            alpn_protocols: ["h2", "http/1.1"]

@@ -494,6 +494,7 @@ vector:
         tls:
           verify_certificate: true
           verify_hostname: true
+          alpn_protocols: ["h2", "http/1.1"]
   # defaultVolumes -- Default volumes that are mounted into pods. In most cases, these should not be changed.
   # Use `extraVolumes`/`extraVolumeMounts` for additional custom volumes.
   # @default -- See `values.yaml`
@@ -580,7 +581,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.19
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.20
       env:
         - name: NODE_NAME
           valueFrom:
