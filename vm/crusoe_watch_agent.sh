@@ -48,6 +48,7 @@ EXISTING_DCGM_EXPORTER_SERVICE="dcgm-exporter"
 DEFAULT_LOG_COLLECTOR_SERVICE_NAME="crusoe-log-collector.service"
 DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=false
+REGION=""
 
 # Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
@@ -73,7 +74,8 @@ usage() {
   echo "  --dcgm-exporter-service-name NAME         Specify custom DCGM exporter service name"
   echo "  --dcgm-exporter-service-port PORT         Specify custom DCGM exporter port"
   echo "  --replace-dcgm-exporter [SERVICE_NAME]    Replace pre-installed dcgm-exporter systemd service with Crusoe version for full metrics collection."
-  echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter"
+  echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter (requires --region)"
+  echo "  --region REGION                           Crusoe region (e.g. us-east1-a, eu-iceland1-a); used to derive OBJSTORE_ENDPOINT_FQDN"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "                                            Optional SERVICE_NAME defaults to dcgm-exporter"
   echo "Defaults: NAME=crusoe-dcgm-exporter, PORT=9400, MODE=docker"
@@ -82,7 +84,7 @@ usage() {
   echo "  $0 install --no-docker"
   echo "  $0 install --replace-dcgm-exporter"
   echo "  $0 install --replace-dcgm-exporter my-dcgm-exporter"
-  echo "  $0 install --enable-metrics-exporter"
+  echo "  $0 install --enable-metrics-exporter --region \$REGION"
   echo "  $0 uninstall"
   echo "  $0 refresh-token"
   echo "  $0 upgrade -b main"
@@ -135,6 +137,13 @@ parse_args() {
         ;;
       --enable-metrics-exporter)
         ENABLE_METRICS_EXPORTER=true; shift ;;
+      --region)
+        if [[ -n "$2" ]]; then
+          REGION="$2"; shift 2
+        else
+          error_exit "Missing value for $1"
+        fi
+        ;;
       --replace-dcgm-exporter)
         REPLACE_DCGM_EXPORTER=true
         shift
@@ -151,6 +160,12 @@ parse_args() {
         echo "Unknown option or command: $1"; usage; exit 1;;
     esac
   done
+
+  # --region is required when --enable-metrics-exporter is set, so that
+  # OBJSTORE_ENDPOINT_FQDN can be derived for the crusoe-metrics-exporter.
+  if $ENABLE_METRICS_EXPORTER && [[ -z "$REGION" ]]; then
+    error_exit "--enable-metrics-exporter requires --region (e.g. 'eu-iceland1-a')"
+  fi
 }
 
 # Check if a systemd unit exists (anywhere on the systemd path)
@@ -641,6 +656,9 @@ LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
 AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
 EOF
   [[ "$INSTALL_MODE" == "docker" ]] && echo "DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'" >> "$ENV_FILE"
+  if [[ -n "$REGION" ]]; then
+    echo "OBJSTORE_ENDPOINT_FQDN='object.${REGION}.crusoecloudcompute.com'" >> "$ENV_FILE"
+  fi
   echo ".env file created at $ENV_FILE"
 
   # Start DCGM exporter after .env is ready

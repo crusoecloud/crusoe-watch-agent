@@ -17,8 +17,10 @@ services:
 
     environment:
       - PORT=9500
-      - DISKSTATS_PATH=/host/proc/diskstats
-      - MOUNTSTATS_PATH=/host/proc/self/mountstats
+      - DISKSTATS_PATH=/proc/diskstats
+      - MOUNTSTATS_PATH=/proc/self/mountstats
+      # OBJSTORE_ENDPOINT_FQDN is sourced from .env (set by the install script's --region flag)
+      - OBJSTORE_ENDPOINT_FQDN=${OBJSTORE_ENDPOINT_FQDN:-}
 
     ports:
       - "${CRUSOE_METRICS_EXPORTER_PORT:-9500}:9500"

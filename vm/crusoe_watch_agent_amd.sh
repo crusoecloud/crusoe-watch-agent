@@ -20,6 +20,8 @@ REMOTE_CRUSOE_AMD_EXPORTER_SERVICE="vm/systemctl/crusoe-amd-exporter.service"
 REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-amd-log-collector.service"
 REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE="vm/systemctl/crusoe-amd-log-collector-native.service"
 REMOTE_AMD_METRICS_CONFIG="vm/config/amd_metrics_config.json"
+REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER="vm/docker/docker-compose-crusoe-metrics-exporter.yaml"
+REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE="vm/systemctl/crusoe-metrics-exporter.service"
 SYSTEMCTL_DIR="/etc/systemd/system"
 CRUSOE_WATCH_AGENT_DIR="/etc/crusoe/crusoe_watch_agent"
 CRUSOE_AUTH_TOKEN_LENGTH=82
@@ -40,9 +42,12 @@ DEFAULT_AMD_EXPORTER_SERVICE_NAME="crusoe-amd-exporter.service"
 AMD_EXPORTER_SERVICE_NAME=$DEFAULT_AMD_EXPORTER_SERVICE_NAME
 AMD_EXPORTER_PORT="5000"
 DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME="crusoe-amd-log-collector.service"
+DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
+ENABLE_METRICS_EXPORTER=false
 INSTALL_MODE="docker"  # docker or native
 
 LOGS_INGRESS_ENDPOINT=""
+REGION=""
 
 # CLI args parsing
 usage() {
@@ -55,6 +60,8 @@ usage() {
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
   echo "  --no-docker                               Install using native binaries instead of Docker (default: Docker)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
+  echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter (requires --region)"
+  echo "  --region REGION                           Crusoe region (e.g. us-east1-a, eu-iceland1-a); used to derive OBJSTORE_ENDPOINT_FQDN"
   echo "Examples:"
   echo "  $0 install --branch main"
   echo "  $0 install --no-docker"
@@ -107,12 +114,27 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
+      --region)
+        if [[ -n "$2" ]]; then
+          REGION="$2"; shift 2
+        else
+          error_exit "Missing value for $1"
+        fi
+        ;;
+      --enable-metrics-exporter)
+        ENABLE_METRICS_EXPORTER=true; shift ;;
       --help|-h)
         usage; exit 0;;
       *)
         echo "Unknown option or command: $1"; usage; exit 1;;
     esac
   done
+
+  # --region is required when --enable-metrics-exporter is set, so that
+  # OBJSTORE_ENDPOINT_FQDN can be derived for the crusoe-metrics-exporter.
+  if $ENABLE_METRICS_EXPORTER && [[ -z "$REGION" ]]; then
+    error_exit "--enable-metrics-exporter requires --region (e.g. 'eu-iceland1-a')"
+  fi
 }
 
 # --- Helper Functions ---
@@ -414,6 +436,15 @@ do_install() {
   status "Download Vector docker-compose file."
   wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
 
+  # Download Crusoe Metrics Exporter artifacts (Docker mode only, opt-in via --enable-metrics-exporter)
+  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
+    status "Download Crusoe Metrics Exporter docker-compose file."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
+
+    status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
+    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
+  fi
+
   status "Ensuring Crusoe auth token in secrets."
   if [[ -n "$CRUSOE_AUTH_TOKEN" ]] && validate_token "$CRUSOE_AUTH_TOKEN"; then
     # Env var provided; write/overwrite secrets store
@@ -449,6 +480,9 @@ LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
 AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
 EOF
+  if [[ -n "$REGION" ]]; then
+    echo "OBJSTORE_ENDPOINT_FQDN='object.${REGION}.crusoecloudcompute.com'" >> "$ENV_FILE"
+  fi
   echo ".env file created at $ENV_FILE"
 
   # Start AMD exporter after .env is ready
@@ -470,6 +504,17 @@ EOF
     systemctl start "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
   fi
 
+  # Start Crusoe Metrics Exporter after .env is ready
+  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
+    status "Enable and start systemd services for $DEFAULT_METRICS_EXPORTER_SERVICE_NAME."
+    echo "systemctl daemon-reload"
+    systemctl daemon-reload
+    echo "systemctl enable $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    systemctl enable "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    echo "systemctl start $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    systemctl start "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+  fi
+
   status "Download crusoe-watch-agent.service."
   wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_SERVICE"
 
@@ -485,6 +530,9 @@ EOF
   if $HAS_AMD_GPUS; then
     echo "Check status of $AMD_EXPORTER_SERVICE_NAME: 'sudo systemctl status $AMD_EXPORTER_SERVICE_NAME'"
     echo "Check status of $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME'"
+  fi
+  if $ENABLE_METRICS_EXPORTER; then
+    echo "Check status of $DEFAULT_METRICS_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DEFAULT_METRICS_EXPORTER_SERVICE_NAME'"
   fi
   echo "Check status of crusoe-watch-agent service: 'sudo systemctl status crusoe-watch-agent.service'"
   echo "Setup finished successfully!"
@@ -510,10 +558,17 @@ do_uninstall() {
     systemctl disable "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" || true
   fi
 
+  status "Stopping and disabling Crusoe Metrics Exporter service if installed."
+  if service_exists "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"; then
+    systemctl stop "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" || true
+    systemctl disable "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" || true
+  fi
+
   status "Removing systemd unit files."
   rm -f "$SYSTEMCTL_DIR/crusoe-watch-agent.service" || true
   rm -f "$SYSTEMCTL_DIR/$AMD_EXPORTER_SERVICE_NAME" || true
   rm -f "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" || true
+  rm -f "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" || true
   systemctl daemon-reload || true
 
   status "Removing crusoe_watch_agent directory."

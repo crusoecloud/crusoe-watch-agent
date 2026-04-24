@@ -1,6 +1,11 @@
 namespace: crusoe-system
 ingressEndpoint: "https://cms-monitoring.crusoecloud.com"
 
+# Crusoe region (e.g. "us-east1-a", "eu-norway1-b", "eu-iceland1-a").
+# When set, OBJSTORE_ENDPOINT_FQDN is derived as
+# "object.<region>.crusoecloudcompute.com" and passed to the metrics exporter.
+region: ""
+
 proxy:
   enabled: false
   url: "internal.cms-monitoring.crusoecloud.com"

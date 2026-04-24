@@ -1,4 +1,7 @@
 {{- if .Values.crusoeMetricsExporter.enabled }}
+{{- if not .Values.region }}
+{{- fail "crusoeMetricsExporter.enabled is true but .Values.region is not set. Set region (e.g. 'eu-iceland1-a') so OBJSTORE_ENDPOINT_FQDN can be derived." }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -58,6 +61,8 @@ spec:
             secretKeyRef:
               name: crusoe-monitoring-token
               key: CRUSOE_MONITORING_TOKEN
+        - name: OBJSTORE_ENDPOINT_FQDN
+          value: {{ printf "object.%s.crusoecloudcompute.com" .Values.region | quote }}
         {{- range $key, $value := .Values.crusoeMetricsExporter.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
