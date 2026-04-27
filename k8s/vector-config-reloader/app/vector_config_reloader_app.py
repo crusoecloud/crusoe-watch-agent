@@ -541,11 +541,12 @@ if exists(.level) {
         }
 
         # Add kubernetes logs source
-        # Exclude only the vector container logs, allow vector-config-reloader logs
+        # Only collect logs from specific crusoe-system pods
         sources[KUBERNETES_LOGS_SOURCE_NAME] = {
             "type": "kubernetes_logs",
-            "exclude_paths_glob_patterns": [
-                "/var/log/pods/crusoe-system_crusoe-watch-agent-*_*/vector/*.log"
+            "include_paths_glob_patterns": [
+                "/var/log/pods/crusoe-system_crusoe-log-collector-*/*/*.log",
+                "/var/log/pods/crusoe-system_crusoe-watch-agent-*/vector-config-reloader/*.log"  # exclude vector container
             ]
         }
 
