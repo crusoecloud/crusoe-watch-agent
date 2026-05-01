@@ -4,8 +4,9 @@
 UBUNTU_OS_VERSION=$(lsb_release -r -s)
 CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 
-# GitHub branch (optional override via CLI, defaults to main)
-GITHUB_BRANCH="main"
+# GitHub ref (tag or branch). Pinned to the current release tag so that
+# new VMs always pull a validated version.  Override with --branch for testing.
+AGENT_VERSION="v1.0.6"
 
 # CMS base URL (optional, defaults to prod)
 CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
@@ -53,6 +54,8 @@ REGION=""
 # Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
+LATEST_VERSION_URL="https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/VERSION"
+LATEST_SCRIPT_URL="https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent.sh"
 INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
 
 # Log collector container image version (update here when releasing new container builds)
@@ -114,7 +117,7 @@ parse_args() {
       # This is a hidden option to be used for internal testing
       --branch|-b)
         if [[ -n "$2" ]]; then
-          GITHUB_BRANCH="$2"; shift 2
+          AGENT_VERSION="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -448,7 +451,7 @@ normalize_version() {
 }
 
 get_remote_version() {
-  normalize_version "$(curl -fsSL "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE")"
+  normalize_version "$(curl -fsSL "$LATEST_VERSION_URL")"
 }
 
 get_installed_version() {
@@ -811,22 +814,29 @@ do_upgrade() {
   local remote_ver installed_ver
   remote_ver=$(get_remote_version)
   if [[ -z "$remote_ver" ]]; then
-    error_exit "Failed to determine remote version from $REMOTE_VERSION_FILE on branch $GITHUB_BRANCH."
+    error_exit "Failed to determine remote version."
   fi
   installed_ver=$(get_installed_version)
 
   if [[ -z "$installed_ver" ]]; then
     status "No installed version detected. Performing clean install of $remote_ver."
-    do_uninstall
-    do_install
-    return
   elif version_lt "$installed_ver" "$remote_ver"; then
     status "Upgrading agent from $installed_ver to $remote_ver."
-    do_uninstall
-    do_install
   else
     echo "Installed version ($installed_ver) is up-to-date (remote: $remote_ver). No upgrade performed."
+    return
   fi
+
+  # Download the latest script and hand off install
+  local new_script
+  new_script=$(mktemp)
+  curl -fsSL "$LATEST_SCRIPT_URL" -o "$new_script" || error_exit "Failed to download latest script."
+  chmod +x "$new_script"
+  do_uninstall
+  local install_args="install"
+  [[ "$INSTALL_MODE" == "native" ]] && install_args="install --no-docker"
+  bash "$new_script" $install_args
+  rm -f "$new_script"
 }
 
 check_os_support() {
@@ -894,8 +904,8 @@ upgrade_dcgm() {
 # Parse command line arguments
 parse_args "$@"
 
-# Update base URL to reflect chosen branch
-GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${GITHUB_BRANCH}"
+# Update base URL to reflect chosen version (or branch override)
+GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${AGENT_VERSION}"
 
 # --- Main Script ---
 

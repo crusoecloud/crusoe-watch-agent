@@ -1,5 +1,6 @@
 helm:package:
   stage: publish
+  resource_group: push-to-main
   image: alpine/helm:3.14.0
   before_script:
     - apk add --no-cache git openssh-client
