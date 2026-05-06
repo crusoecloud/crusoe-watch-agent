@@ -4,8 +4,9 @@
 UBUNTU_OS_VERSION=$(lsb_release -r -s)
 CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 
-# GitHub branch (optional override via CLI, defaults to main)
-GITHUB_BRANCH="main"
+# GitHub ref (tag or branch). Defaults to "main" for backward compatibility.
+# Published scripts in docs/vm/ have this pinned to a release tag by CI.
+AGENT_VERSION="main"
 
 # CMS base URL (optional, defaults to prod)
 CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
@@ -53,7 +54,10 @@ REGION=""
 # Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
+LATEST_VERSION_URL="https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/VERSION"
+LATEST_SCRIPT_URL="https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent.sh"
 INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
+INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 
 # Log collector container image version (update here when releasing new container builds)
 LOG_COLLECTOR_IMAGE_VERSION="v0.2.17"
@@ -114,7 +118,7 @@ parse_args() {
       # This is a hidden option to be used for internal testing
       --branch|-b)
         if [[ -n "$2" ]]; then
-          GITHUB_BRANCH="$2"; shift 2
+          AGENT_VERSION="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -448,7 +452,7 @@ normalize_version() {
 }
 
 get_remote_version() {
-  normalize_version "$(curl -fsSL "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE")"
+  normalize_version "$(curl -fsSL "$LATEST_VERSION_URL")"
 }
 
 get_installed_version() {
@@ -706,8 +710,9 @@ EOF
   echo "systemctl start crusoe-watch-agent.service"
   systemctl start crusoe-watch-agent.service
 
-  # Persist the install mode for upgrade/uninstall
+  # Persist the install mode and original CLI args for upgrade/uninstall
   write_install_mode
+  printf '%s\n' "${ORIGINAL_ARGS[@]}" > "$INSTALL_ARGS_FILE"
 
   status "Setup Complete! (mode: $INSTALL_MODE)"
   if $HAS_NVIDIA_GPUS; then
@@ -772,6 +777,7 @@ do_uninstall() {
   status "Removing crusoe_watch_agent directory."
   rm -rf "$CRUSOE_WATCH_AGENT_DIR" || true
   rm -f "$INSTALL_MODE_FILE" || true
+  rm -f "$INSTALL_ARGS_FILE" || true
 
   status "Uninstall complete."
 }
@@ -811,22 +817,36 @@ do_upgrade() {
   local remote_ver installed_ver
   remote_ver=$(get_remote_version)
   if [[ -z "$remote_ver" ]]; then
-    error_exit "Failed to determine remote version from $REMOTE_VERSION_FILE on branch $GITHUB_BRANCH."
+    error_exit "Failed to determine remote version."
   fi
   installed_ver=$(get_installed_version)
 
   if [[ -z "$installed_ver" ]]; then
     status "No installed version detected. Performing clean install of $remote_ver."
-    do_uninstall
-    do_install
-    return
   elif version_lt "$installed_ver" "$remote_ver"; then
     status "Upgrading agent from $installed_ver to $remote_ver."
-    do_uninstall
-    do_install
   else
     echo "Installed version ($installed_ver) is up-to-date (remote: $remote_ver). No upgrade performed."
+    return
   fi
+
+  # Read saved install args
+  local saved_args=()
+  if [[ -f "$INSTALL_ARGS_FILE" ]]; then
+    mapfile -t saved_args < "$INSTALL_ARGS_FILE"
+  else
+    # Fallback for installs that predate args persistence
+    saved_args=(install)
+    [[ "$INSTALL_MODE" == "native" ]] && saved_args+=(--no-docker)
+  fi
+
+  # Download the latest script and re-run install
+  local new_script
+  new_script=$(mktemp)
+  curl -fsSL "$LATEST_SCRIPT_URL" -o "$new_script" || error_exit "Failed to download latest script."
+  chmod +x "$new_script"
+  bash "$new_script" "${saved_args[@]}"
+  rm -f "$new_script"
 }
 
 check_os_support() {
@@ -891,11 +911,14 @@ upgrade_dcgm() {
   fi
 }
 
+# Capture raw args before parsing consumes them
+ORIGINAL_ARGS=("$@")
+
 # Parse command line arguments
 parse_args "$@"
 
-# Update base URL to reflect chosen branch
-GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${GITHUB_BRANCH}"
+# Update base URL to reflect chosen version (or branch override)
+GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${AGENT_VERSION}"
 
 # --- Main Script ---
 

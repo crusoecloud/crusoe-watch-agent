@@ -1,6 +1,7 @@
 script-signing:sign:
   stage: publish
   image: alpine:3.19
+  resource_group: push-to-main
   # Requires protected CI/CD variables: COSIGN_PRIVATE_KEY_B64, COSIGN_PASSWORD, SSH_PRIVATE_KEY
   before_script:
     - apk add --no-cache cosign git openssh-client
