@@ -1,0 +1,74 @@
+# Changelog
+
+## 1.0.7 (2026-05-06)
+
+- Pin VM installer to a validated release version ([1c6d17d](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/1c6d17d))
+
+
+## 1.0.6 (2026-04-25)
+
+**Features**
+- Add region selection to the installer; region is required when the metrics exporter is enabled ([a8b1266](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/a8b1266))
+- Add metrics-exporter support to the AMD installer ([a8b1266](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/a8b1266))
+
+**Improvements**
+- Enable HTTP/2 for Vector sink connections ([772573c](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/772573c))
+- Add four new DCGM metrics: `DCGM_FI_DEV_CLOCKS_EVENT_REASONS`, `DCGM_FI_DEV_FAN_SPEED`, `DCGM_FI_DEV_PCIE_LINK_GEN`, `DCGM_FI_DEV_PCIE_LINK_WIDTH` ([db16b11](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/db16b11))
+
+**Bug Fixes**
+- Fix installer failure caused by inaccessible script signature files ([4c0ae2d](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/4c0ae2d))
+- Fix crash when log entries are missing pod labels ([583c02d](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/583c02d))
+- Fix NFS metrics collection by running the metrics-exporter container with host PID namespace ([39157f8](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/39157f8))
+
+
+## 1.0.5 (2026-04-06)
+
+- Add AMD GPU support: `crusoe_watch_agent_amd.sh` installs monitoring on AMD GPU VMs via Docker or native mode, and collects ROCm diagnostics, amd-smi metrics, and firmware info ([2b2fb6c](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/2b2fb6c))
+- Add Crusoe metrics exporter integration ([f31e40a](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/f31e40a))
+
+
+## 1.0.4 (2026-03-26)
+
+- Scrape journald logs from the current time on startup rather than from the beginning of the journal ([598168d](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/598168d))
+
+
+## 1.0.3 (2026-03-18)
+
+- Add AMD GPU metrics collection ([a44f472](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/a44f472))
+- Fix log severity levels to use standard mappings ([f4e70f6](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/f4e70f6))
+
+
+## 1.0.2 (2026-03-13)
+
+- Fix log collector failing to pull the correct container image during installation ([71503a7](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/71503a7))
+
+
+## 1.0.1 (2026-03-13)
+
+**Features**
+
+- Add native binary installation mode via `--no-docker` flag, enabling deployment without Docker ([3bb4d1d](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/3bb4d1d))
+- Add AMD GPU monitoring with metrics and log collection for VM deployments ([03423fe](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/03423fe), [8c2fe91](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/8c2fe91))
+- Add NVIDIA GPU bug report collection for VM deployments ([9861d48](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/9861d48))
+- Collect journald logs from VMs ([3d3e95b](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/3d3e95b))
+- Add host process metrics collection ([ff885db](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/ff885db))
+
+**Improvements**
+
+- Rename agent from `crusoe-watch` to `crusoe-watch-agent` ([c646813](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/c646813))
+- Send `cri:resource-type/resource-id` as tenant ID for correct resource routing ([91edc06](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/91edc06))
+- Filter internal metrics from telemetry output ([1a34f0a](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/1a34f0a))
+
+**Bug Fixes**
+
+- Fix malformed token refresh ([1165d24](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/1165d24))
+- Fix NVLink metrics config file path ([16a5a1a](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/16a5a1a))
+- Fix file reference errors in installer ([6b72246](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/6b72246))
+
+
+## 1.0.0 (2025-12-17)
+
+- Add VM installer script for deploying the Crusoe Watch Agent on Linux VMs ([766ae9a](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/766ae9a))
+- Support Docker-based deployment with systemd service management for Vector and DCGM Exporter ([766ae9a](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/766ae9a))
+- Collect GPU metrics via DCGM Exporter on GPU VMs ([766ae9a](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/766ae9a))
+- Forward metrics to Crusoe monitoring backend using token-based authentication ([766ae9a](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/766ae9a))

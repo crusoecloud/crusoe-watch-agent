@@ -9,14 +9,14 @@ Best for a quick, one-time installation.
 
 **For NVIDIA GPUs or CPU-only VMs:**
 ```
-wget https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/refs/heads/main/vm/crusoe_watch_agent.sh
+wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent.sh
 chmod +x crusoe_watch_agent.sh
 sudo ./crusoe_watch_agent.sh install
 ```
 
 **For AMD GPUs:**
 ```
-wget https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/refs/heads/main/vm/crusoe_watch_agent_amd.sh
+wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent_amd.sh
 chmod +x crusoe_watch_agent_amd.sh
 sudo ./crusoe_watch_agent_amd.sh install
 ```
@@ -28,7 +28,7 @@ Sets up the script as a global command for easier upgrades and management.
 
 **For NVIDIA GPUs or CPU-only VMs:**
 ```
-wget https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/refs/heads/main/vm/crusoe_watch_agent.sh
+wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent.sh
 sudo mkdir -p /etc/crusoe/crusoe_watch_agent
 sudo mv crusoe_watch_agent.sh /etc/crusoe/crusoe_watch_agent/.
 sudo chmod +x /etc/crusoe/crusoe_watch_agent/crusoe_watch_agent.sh
@@ -37,7 +37,7 @@ sudo ln -sf "/etc/crusoe/crusoe_watch_agent/crusoe_watch_agent.sh" "/usr/bin/cru
 
 **For AMD GPUs:**
 ```
-wget https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/refs/heads/main/vm/crusoe_watch_agent_amd.sh
+wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent_amd.sh
 sudo mkdir -p /etc/crusoe/crusoe_watch_agent
 sudo mv crusoe_watch_agent_amd.sh /etc/crusoe/crusoe_watch_agent/.
 sudo chmod +x /etc/crusoe/crusoe_watch_agent/crusoe_watch_agent_amd.sh
