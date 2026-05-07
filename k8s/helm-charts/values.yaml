@@ -22,7 +22,7 @@ kubeStateMetrics:
   enabled: false
 
 slurmMetrics:
-  enabled: true
+  enabled: false
   paths:
     - /metrics/jobs
     - /metrics/jobs-users-accts
