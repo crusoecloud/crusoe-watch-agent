@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.8 (2026-05-08)
+
+- Update crusoe-metrics-exporter to 0.2.0, adding new metrics
+
 ## 1.0.7 (2026-05-06)
 
 - Pin VM installer to a validated release version ([1c6d17d](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/1c6d17d))

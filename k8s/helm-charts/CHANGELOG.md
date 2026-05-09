@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.22 (2026-05-08)
+
+- Update crusoe-metrics-exporter to 0.2.0, adding new metrics
+
 ## 0.3.21 (2026-04-23)
 
 **Features**

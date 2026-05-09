@@ -947,7 +947,7 @@ crusoeMetricsExporter:
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter
-    tag: "0.1.1"
+    tag: "0.2.1"
     pullPolicy: IfNotPresent
 
   port: 9500
