@@ -20,6 +20,7 @@ REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_AMD_EXPORTER_SERVICE="vm/systemctl/crusoe-amd-exporter.service"
 REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-amd-log-collector.service"
 REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE="vm/systemctl/crusoe-amd-log-collector-native.service"
+REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE="vm/systemctl/crusoe-watch-agent-native.service"
 REMOTE_AMD_METRICS_CONFIG="vm/config/amd_metrics_config.json"
 REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER="vm/docker/docker-compose-crusoe-metrics-exporter.yaml"
 REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE="vm/systemctl/crusoe-metrics-exporter.service"
@@ -30,6 +31,7 @@ ENV_FILE="$CRUSOE_WATCH_AGENT_DIR/.env" # Define the .env file path
 # Secrets location for persisted monitoring token
 CRUSOE_SECRETS_DIR="/etc/crusoe/secrets"
 CRUSOE_MONITORING_TOKEN_FILE="$CRUSOE_SECRETS_DIR/.monitoring-token"
+INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
 
 # Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
@@ -40,6 +42,10 @@ INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 
 # Log collector container image version (update here when releasing new container builds)
 LOG_COLLECTOR_IMAGE_VERSION="v0.2.17"
+
+# Crusoe Metrics Exporter version (used for native binary download)
+CRUSOE_METRICS_EXPORTER_VERSION="0.2.1"
+CRUSOE_METRICS_EXPORTER_BIN="/usr/local/bin/crusoe-metrics-exporter"
 
 # Optional parameters with defaults
 DEFAULT_AMD_EXPORTER_SERVICE_NAME="crusoe-amd-exporter.service"
@@ -143,6 +149,26 @@ parse_args() {
 
 # --- Helper Functions ---
 
+# Check if a systemd unit exists (anywhere on the systemd path)
+service_exists() {
+  systemctl cat "$1" >/dev/null 2>&1
+}
+
+# Stop and disable a systemd service if it exists
+stop_and_disable_service() {
+  local service_name="$1"
+  if service_exists "$service_name"; then
+    echo "Found $service_name."
+    systemctl stop "$service_name" || echo "Warning: Failed to stop $service_name"
+    systemctl disable "$service_name" || echo "Warning: Failed to disable $service_name"
+    echo "$service_name has been stopped and disabled."
+    return 0
+  else
+    echo "No $service_name found."
+    return 1
+  fi
+}
+
 command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -180,34 +206,54 @@ check_root() {
   fi
 }
 
-# Check if a systemd unit exists (anywhere on the systemd path)
-service_exists() {
-  systemctl cat "$1" >/dev/null 2>&1
+# --- Install Mode Persistence ---
+
+write_install_mode() {
+  echo "$INSTALL_MODE" > "$INSTALL_MODE_FILE"
 }
 
-# Stop and disable a systemd service if it exists
-stop_and_disable_service() {
-  local service_name="$1"
-  if service_exists "$service_name"; then
-    echo "Found $service_name."
-    systemctl stop "$service_name" || echo "Warning: Failed to stop $service_name"
-    systemctl disable "$service_name" || echo "Warning: Failed to disable $service_name"
-    echo "$service_name has been stopped and disabled."
-    return 0
+read_install_mode() {
+  if [[ -f "$INSTALL_MODE_FILE" ]]; then
+    INSTALL_MODE=$(cat "$INSTALL_MODE_FILE")
   else
-    echo "No $service_name found."
-    return 1
+    echo "Warning: No install mode file found at $INSTALL_MODE_FILE. Defaulting to '$INSTALL_MODE'."
   fi
 }
 
 # --- Token & Version/Lifecycle Helpers ---
 
+uninstall_native() {
+  status "Removing native packages."
+  if command_exists vector; then
+    apt-get remove -y vector || true
+  fi
+  if [[ -e $CRUSOE_METRICS_EXPORTER_BIN ]]; then
+    rm -f $CRUSOE_METRICS_EXPORTER_BIN || true
+  fi
+  # Remove AMD log collector
+  if [[ -d "/opt/crusoe-amd-log-collector" ]]; then
+    status "Removing AMD log collector files."
+    rm -rf /opt/crusoe-amd-log-collector || true
+  fi
+  rm -f /usr/bin/amd-bug-report.sh || true
+}
 write_token_to_secrets() {
   local token="$1"
   mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  # Escape dollar signs to prevent variable expansion in docker-compose/vector
-  local escaped_token="${token//\$/\$\$}"
-  echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
+  # The token file is consumed differently depending on install mode:
+  #   * Docker mode: read by docker-compose via env_file. Compose v2.24+
+  #     interpolates env_file values by default -- a literal '$' followed
+  #     by a valid identifier (e.g. '$EQeyUik...' in a bcrypt token) gets
+  #     expanded to empty, silently truncating the token. Escape '$' as
+  #     '$$' here; compose un-escapes '$$' back to '$' on interpolation.
+  #   * Native mode: read by systemd's EnvironmentFile=, which does NOT
+  #     interpolate. Write the token verbatim.
+  if [[ "$INSTALL_MODE" == "docker" ]]; then
+    local escaped_token="${token//\$/\$\$}"
+    echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
+  else
+    echo "CRUSOE_AUTH_TOKEN=${token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
+  fi
   chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
 }
 
@@ -253,8 +299,65 @@ check_os_support() {
   fi
 }
 
+install_vector_native() {
+  if command_exists vector; then
+    echo "Vector is already installed."
+  else
+    status "Installing Vector via APT."
+    bash -c "$(curl -L https://setup.vector.dev)" || error_exit "Failed to add Vector APT repository."
+    apt-get install -y vector || error_exit "Failed to install Vector."
+  fi
+  # Disable the default vector.service; we use our own custom unit
+  systemctl disable vector.service 2>/dev/null || true
+  systemctl stop vector.service 2>/dev/null || true
+}
+
 install_docker() {
   curl -fsSL https://get.docker.com | sh
+}
+
+# Install the crusoe-metrics-exporter binary from the GitHub release tarball.
+# Downloads the tarball for the current architecture, verifies the checksum,
+# and installs the binary + systemd unit.
+install_metrics_exporter_native() {
+  local arch
+  arch=$(dpkg --print-architecture)  # amd64 or arm64
+  local tarball="crusoe-metrics-exporter-${CRUSOE_METRICS_EXPORTER_VERSION}-linux-${arch}.tar.gz"
+  local url="https://github.com/crusoecloud/crusoe-metrics-exporter/releases/download/v${CRUSOE_METRICS_EXPORTER_VERSION}/${tarball}"
+  local sha_url="https://github.com/crusoecloud/crusoe-metrics-exporter/releases/download/v${CRUSOE_METRICS_EXPORTER_VERSION}/SHA256SUMS"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  status "Downloading crusoe-metrics-exporter v${CRUSOE_METRICS_EXPORTER_VERSION} (${arch})."
+  wget -q -O "${tmpdir}/${tarball}" "$url" || error_exit "Failed to download ${url}"
+  wget -q -O "${tmpdir}/SHA256SUMS" "$sha_url" || error_exit "Failed to download ${sha_url}"
+
+  status "Verifying checksum."
+  grep "${tarball}" "${tmpdir}/SHA256SUMS" > "${tmpdir}/${tarball}.sha256"
+  (cd "$tmpdir" && sha256sum -c "${tarball}.sha256") || error_exit "Checksum verification failed for ${tarball}"
+
+  status "Installing crusoe-metrics-exporter binary and systemd unit."
+  tar -xzf "${tmpdir}/${tarball}" -C "$tmpdir"
+  local stage="${tmpdir}/crusoe-metrics-exporter-${CRUSOE_METRICS_EXPORTER_VERSION}-linux-${arch}"
+  install -m 0755 "${stage}/crusoe-metrics-exporter" "$CRUSOE_METRICS_EXPORTER_BIN"
+  install -m 0644 "${stage}/crusoe-metrics-exporter.service" "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+
+  rm -rf "$tmpdir"
+}
+
+# Ensure the docker.io package is installed and docker.service is running.
+# Used by --enable-metrics-exporter so the crusoe-metrics-exporter container
+# can run even when the agent itself is installed in native (non-docker) mode.
+ensure_docker_running() {
+  if ! command_exists docker; then
+    status "Installing docker.io package."
+    apt-get update || error_exit "apt-get update failed."
+    apt-get install -y docker.io || error_exit "Failed to install docker.io."
+  fi
+  if ! systemctl is-active --quiet docker; then
+    status "Enabling and starting docker.service."
+    systemctl enable --now docker || error_exit "Failed to start docker.service."
+  fi
 }
 
 # Compare semantic versions a.b.c >= x.y.z
@@ -367,12 +470,18 @@ do_install() {
   check_root
   check_os_support
 
-  status "Ensure docker installation."
-  if command_exists docker; then
-    echo "Docker is already installed."
+  # Install runtime dependencies based on mode
+  if [[ "$INSTALL_MODE" == "docker" ]]; then
+    status "Ensure docker installation."
+    if command_exists docker; then
+      echo "Docker is already installed."
+    else
+      echo "Installing Docker."
+      install_docker
+    fi
   else
-    echo "Installing Docker."
-    install_docker
+    status "Installing Vector natively via APT."
+    install_vector_native
   fi
 
   # Ensure wget is installed
@@ -440,13 +549,19 @@ do_install() {
   status "Download Vector docker-compose file."
   wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
 
-  # Download Crusoe Metrics Exporter artifacts (Docker mode only, opt-in via --enable-metrics-exporter)
-  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
-    status "Download Crusoe Metrics Exporter docker-compose file."
-    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
+  # Download/install Crusoe Metrics Exporter (opt-in via --enable-metrics-exporter).
+  if $ENABLE_METRICS_EXPORTER; then
+    if [[ "$INSTALL_MODE" == "docker" ]]; then
+      ensure_docker_running
 
-    status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
-    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
+      status "Download Crusoe Metrics Exporter docker-compose file."
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
+
+      status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
+      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
+    else
+      install_metrics_exporter_native
+    fi
   fi
 
   status "Ensuring Crusoe auth token in secrets."
@@ -509,7 +624,7 @@ EOF
   fi
 
   # Start Crusoe Metrics Exporter after .env is ready
-  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
+  if $ENABLE_METRICS_EXPORTER; then
     status "Enable and start systemd services for $DEFAULT_METRICS_EXPORTER_SERVICE_NAME."
     echo "systemctl daemon-reload"
     systemctl daemon-reload
@@ -519,8 +634,14 @@ EOF
     systemctl start "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
   fi
 
-  status "Download crusoe-watch-agent.service."
-  wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_SERVICE"
+  # Download the appropriate crusoe-watch-agent systemd unit
+  if [[ "$INSTALL_MODE" == "docker" ]]; then
+    status "Download crusoe-watch-agent.service."
+    wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_SERVICE"
+  else
+    status "Download crusoe-watch-agent.service (native)."
+    wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE"
+  fi
 
   status "Enable and start systemd services for crusoe-watch-agent."
   echo "systemctl daemon-reload"
@@ -530,10 +651,11 @@ EOF
   echo "systemctl start crusoe-watch-agent.service"
   systemctl start crusoe-watch-agent.service
 
-  # Persist original CLI args for upgrade
+  # Persist the install mode for upgrade/uninstall
+  write_install_mode
   printf '%s\n' "${ORIGINAL_ARGS[@]}" > "$INSTALL_ARGS_FILE"
-
-  status "Setup Complete!"
+  status "Setup Complete! (mode: $INSTALL_MODE)"
+>>
   if $HAS_AMD_GPUS; then
     echo "Check status of $AMD_EXPORTER_SERVICE_NAME: 'sudo systemctl status $AMD_EXPORTER_SERVICE_NAME'"
     echo "Check status of $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME'"
@@ -547,6 +669,9 @@ EOF
 
 do_uninstall() {
   check_root
+  # Read persisted install mode so we clean up correctly
+  read_install_mode
+
   status "Stopping and disabling crusoe-watch-agent service."
   if service_exists "crusoe-watch-agent.service"; then
     systemctl stop crusoe-watch-agent.service || true
@@ -581,12 +706,18 @@ do_uninstall() {
   status "Removing crusoe_watch_agent directory."
   rm -rf "$CRUSOE_WATCH_AGENT_DIR" || true
 
-  status "Removing AMD log collector directory (if native install)."
-  if [[ -d "/opt/crusoe-amd-log-collector" ]]; then
-    rm -rf /opt/crusoe-amd-log-collector || true
+  # Remove native binaries if installed in native mode
+  if [[ "$INSTALL_MODE" == "native" ]]; then
+    uninstall_native
   fi
 
+<<<<<<< HEAD
   rm -f "$INSTALL_ARGS_FILE" || true
+=======
+  # Remove native metrics-exporter binary if present (installed in both modes)
+>>>>>>> a239360 (Make the scripts more reliable and consistent)
+  rm -f "$CRUSOE_METRICS_EXPORTER_BIN" || true
+  rm -f "$INSTALL_MODE_FILE" || true
 
   status "Uninstall complete."
 }
@@ -605,11 +736,7 @@ do_refresh_token() {
     error_exit "NEW_CRUSOE_AUTH_TOKEN is invalid. Please provide a valid token."
   fi
   status "Writing token to secrets store at $CRUSOE_MONITORING_TOKEN_FILE..."
-  mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  # Escape dollar signs to prevent variable expansion in docker-compose/vector
-  local escaped_token="${NEW_CRUSOE_AUTH_TOKEN//\$/\$\$}"
-  echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
-  chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
+  write_token_to_secrets "$NEW_CRUSOE_AUTH_TOKEN"
   status "Token refresh complete."
   echo "CRUSOE_AUTH_TOKEN has been updated in $CRUSOE_MONITORING_TOKEN_FILE."
   echo "For the changes to take effect, you may need to restart the crusoe-watch-agent service:"
