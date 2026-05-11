@@ -19,8 +19,6 @@ REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR="vm/docker/docker-compose-amd-log-collec
 REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_AMD_EXPORTER_SERVICE="vm/systemctl/crusoe-amd-exporter.service"
 REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-amd-log-collector.service"
-REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE="vm/systemctl/crusoe-amd-log-collector-native.service"
-REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE="vm/systemctl/crusoe-watch-agent-native.service"
 REMOTE_AMD_METRICS_CONFIG="vm/config/amd_metrics_config.json"
 REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER="vm/docker/docker-compose-crusoe-metrics-exporter.yaml"
 REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE="vm/systemctl/crusoe-metrics-exporter.service"
@@ -54,7 +52,6 @@ AMD_EXPORTER_PORT="5000"
 DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME="crusoe-amd-log-collector.service"
 DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=false
-INSTALL_MODE="docker"  # docker or native
 
 LOGS_INGRESS_ENDPOINT=""
 REGION=""
@@ -68,13 +65,11 @@ usage() {
   echo "  --ingress-url URL                         Specify CMS base URL (default: https://cms-monitoring.crusoecloud.com)"
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
-  echo "  --no-docker                               Install using native binaries instead of Docker (default: Docker)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter (requires --region)"
   echo "  --region REGION                           Crusoe region (e.g. us-east1-a, eu-iceland1-a); used to derive OBJSTORE_ENDPOINT_FQDN"
   echo "Examples:"
   echo "  $0 install --branch main"
-  echo "  $0 install --no-docker"
   echo "  $0 uninstall"
   echo "  $0 refresh-token"
   echo "  $0 upgrade -b main"
@@ -116,7 +111,7 @@ parse_args() {
         fi
         ;;
       --no-docker)
-        INSTALL_MODE="native"; shift ;;
+        error_exit "Native mode (--no-docker) is not supported for AMD. The AMD installer requires Docker." ;;
       --logs-endpoint)
         if [[ -n "$2" ]]; then
           LOGS_INGRESS_ENDPOINT="$2"; shift 2
@@ -411,60 +406,6 @@ ensure_rocm_6_2_or_newer() {
   fi
 }
 
-install_amd_log_collector_native() {
-  status "Installing AMD log collector natively."
-
-  # Ensure required system packages
-  status "Ensuring required packages (python3, pip, dmidecode)."
-  if ! command_exists python3; then
-    apt-get update && apt-get install -y python3 python3-pip || error_exit "Failed to install python3"
-  fi
-  if ! command_exists dmidecode; then
-    apt-get install -y dmidecode || error_exit "Failed to install dmidecode."
-  fi
-
-  # Create installation directory
-  local INSTALL_DIR="/opt/crusoe-amd-log-collector"
-  mkdir -p "$INSTALL_DIR" || error_exit "Failed to create $INSTALL_DIR"
-
-  # Download application files
-  status "Downloading AMD log collector application files."
-  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/common/log-collector/app"
-  wget -q -O "$INSTALL_DIR/log_collector.py" "$GITHUB_APP_BASE/log_collector.py" || error_exit "Failed to download log_collector.py"
-  wget -q -O "$INSTALL_DIR/amd-bug-report.sh" "$GITHUB_APP_BASE/amd-bug-report.sh" || error_exit "Failed to download amd-bug-report.sh"
-
-  # Make amd-bug-report.sh executable and copy to /usr/bin
-  chmod +x "$INSTALL_DIR/amd-bug-report.sh"
-  cp "$INSTALL_DIR/amd-bug-report.sh" /usr/bin/amd-bug-report.sh || error_exit "Failed to install amd-bug-report.sh"
-
-  # Download and install Python requirements
-  local GITHUB_REQ="$GITHUB_APP_BASE/requirements.txt"
-  wget -q -O "/tmp/amd-log-collector-requirements.txt" "$GITHUB_REQ" || error_exit "Failed to download requirements.txt"
-
-  # Try with --break-system-packages first (pip >= 22.1), fall back without it for older pip
-  if ! pip3 install --break-system-packages -r /tmp/amd-log-collector-requirements.txt 2>/dev/null; then
-    pip3 install -r /tmp/amd-log-collector-requirements.txt || error_exit "Failed to install Python dependencies"
-  fi
-  rm -f /tmp/amd-log-collector-requirements.txt
-
-  # Ensure ROCm tools are available (rocm-smi, rocminfo)
-  if ! command_exists rocm-smi; then
-    status "rocm-smi not found. Installing ROCm SMI tools."
-    # ROCm repository should already be configured for AMD GPU VMs
-    apt-get update && apt-get install -y rocm-smi rocminfo || error_exit "Failed to install ROCm SMI tools"
-  else
-    local rocm_version=$(get_rocm_version)
-    status "ROCm tools already available (version $rocm_version)"
-  fi
-
-  # Ensure other system tools needed by amd-bug-report.sh
-  apt-get install -y lsb-release lshw pciutils dkms gzip 2>/dev/null || true
-
-  status "AMD log collector native installation complete."
-}
-
-
-
 do_install() {
   # Ensure the script is run as root.
   check_root
@@ -519,19 +460,11 @@ do_install() {
     wget -q -O "$SYSTEMCTL_DIR/$AMD_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_EXPORTER_SERVICE"
 
     # Download AMD Log Collector artifacts
-    if [[ "$INSTALL_MODE" == "docker" ]]; then
-      status "Download AMD Log Collector docker-compose file."
-      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-amd-log-collector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR"
+    status "Download AMD Log Collector docker-compose file."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-amd-log-collector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR"
 
-      status "Download $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME systemd unit."
-      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE"
-    else
-      status "Installing AMD log collector natively."
-      install_amd_log_collector_native
-
-      status "Download $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME native systemd unit."
-      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE"
-    fi
+    status "Download $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME systemd unit."
+    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE"
 
     # Create log directory for AMD log collector
     status "Creating AMD log collection directory."
@@ -549,11 +482,7 @@ do_install() {
   status "Download Vector docker-compose file."
   wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
 
-  # Download/install Crusoe Metrics Exporter (opt-in via --enable-metrics-exporter).
   if $ENABLE_METRICS_EXPORTER; then
-    if [[ "$INSTALL_MODE" == "docker" ]]; then
-      ensure_docker_running
-
       status "Download Crusoe Metrics Exporter docker-compose file."
       wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
 
@@ -706,12 +635,6 @@ do_uninstall() {
   status "Removing crusoe_watch_agent directory."
   rm -rf "$CRUSOE_WATCH_AGENT_DIR" || true
 
-  # Remove native binaries if installed in native mode
-  if [[ "$INSTALL_MODE" == "native" ]]; then
-    uninstall_native
-  fi
-
-<<<<<<< HEAD
   rm -f "$INSTALL_ARGS_FILE" || true
 =======
   # Remove native metrics-exporter binary if present (installed in both modes)
@@ -769,7 +692,6 @@ do_upgrade() {
   else
     # Fallback for installs that predate args persistence
     saved_args=(install)
-    [[ "$INSTALL_MODE" == "native" ]] && saved_args+=(--no-docker)
   fi
 
   # Download the latest script and re-run install (idempotent)
