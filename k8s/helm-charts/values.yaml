@@ -51,7 +51,11 @@ metricsExporter:
   defaultSlurmMetricsPort: 6817
   defaultScrapeInterval: 60
 
-logLevel: WARNING
+# Log level for vector-config-reloader. INFO surfaces per-cycle reconcile
+# decisions ("no changes" / "reload triggered: pod set changed") which are the
+# primary signal that the reloader is healthy. Set to WARNING to suppress
+# steady-state output, or DEBUG for verbose pod-listing details.
+logLevel: INFO
 
 
 # CPU profile for Vector subchart
@@ -586,7 +590,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.21
+      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.22
       env:
         - name: NODE_NAME
           valueFrom:

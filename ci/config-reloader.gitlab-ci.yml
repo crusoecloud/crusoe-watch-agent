@@ -10,11 +10,11 @@ config-reloader:test:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
-        - k8s/vector-config-reloader/**
+        - k8s/vector-config-reloader/**/*
         - vm/docker/docker-compose-crusoe-metrics-exporter.yaml
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
-        - k8s/vector-config-reloader/**
+        - k8s/vector-config-reloader/**/*
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
 
 config-reloader:build:
@@ -57,9 +57,9 @@ config-reloader:build:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
-        - k8s/vector-config-reloader/**
+        - k8s/vector-config-reloader/**/*
         - vm/docker/docker-compose-crusoe-metrics-exporter.yaml
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
-        - k8s/vector-config-reloader/**
+        - k8s/vector-config-reloader/**/*
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'

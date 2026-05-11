@@ -56,6 +56,7 @@ spec:
         crusoe.ai/scrape: "true"
         crusoe.ai/port: "8080"
         crusoe.ai/path: "/metrics"
+        crusoe.ai/app_id: "test_6ch4sl"
     spec:
       containers:
         - name: metrics-server
