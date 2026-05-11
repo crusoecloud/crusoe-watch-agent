@@ -62,6 +62,10 @@ INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 # Log collector container image version (update here when releasing new container builds)
 LOG_COLLECTOR_IMAGE_VERSION="v0.2.17"
 
+# Crusoe Metrics Exporter version (used for native binary download)
+CRUSOE_METRICS_EXPORTER_VERSION="0.2.1"
+CRUSOE_METRICS_EXPORTER_BIN="/usr/local/bin/crusoe-metrics-exporter"
+
 # dcgm-exporter docker image version map
 declare -A -r DCGM_EXPORTER_VERSION_MAP=(
   ["20.04"]="4.3.1-4.4.0-ubi9"
@@ -429,12 +433,19 @@ install_dcgm() {
 write_token_to_secrets() {
   local token="$1"
   mkdir -p "$CRUSOE_SECRETS_DIR" || true
+  # The token file is consumed differently depending on install mode:
+  #   * Docker mode: read by docker-compose via env_file. Compose v2.24+
+  #     interpolates env_file values by default -- a literal '$' followed
+  #     by a valid identifier (e.g. '$EQeyUik...' in a bcrypt token) gets
+  #     expanded to empty, silently truncating the token. Escape '$' as
+  #     '$$' here; compose un-escapes '$$' back to '$' on interpolation.
+  #   * Native mode: read by systemd's EnvironmentFile=, which does NOT
+  #     interpolate. Write the token verbatim. This applies to both the
+  #     agent and the metrics-exporter when running as a native binary.
   if [[ "$INSTALL_MODE" == "docker" ]]; then
-    # Escape dollar signs to prevent variable expansion in docker-compose
     local escaped_token="${token//\$/\$\$}"
     echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
   else
-    # Native mode: systemd EnvironmentFile reads raw values
     echo "CRUSOE_AUTH_TOKEN=${token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
   fi
   chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
@@ -478,6 +489,7 @@ write_installed_version() {
 do_install() {
   # Ensure the script is run as root.
   check_root
+  check_os_support
 
   # Install runtime dependencies based on mode
   if [[ "$INSTALL_MODE" == "docker" ]]; then
@@ -600,13 +612,19 @@ do_install() {
     chmod 755 /var/log/nvidia-bug-reports
   fi
 
-  # Download Crusoe Metrics Exporter artifacts (Docker mode only, opt-in via --enable-metrics-exporter)
-  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
-    status "Download Crusoe Metrics Exporter docker-compose file."
-    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
+  # Download/install Crusoe Metrics Exporter (opt-in via --enable-metrics-exporter).
+  if $ENABLE_METRICS_EXPORTER; then
+    if [[ "$INSTALL_MODE" == "docker" ]]; then
+      ensure_docker_running
 
-    status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
-    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
+      status "Download Crusoe Metrics Exporter docker-compose file."
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
+
+      status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
+      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
+    else
+      install_metrics_exporter_native
+    fi
   fi
 
   if ! $HAS_NVIDIA_GPUS; then
@@ -683,7 +701,7 @@ EOF
   fi
 
   # Start Crusoe Metrics Exporter after .env is ready
-  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
+  if $ENABLE_METRICS_EXPORTER; then
     status "Enable and start systemd services for $DEFAULT_METRICS_EXPORTER_SERVICE_NAME."
     echo "systemctl daemon-reload"
     systemctl daemon-reload
@@ -713,8 +731,8 @@ EOF
   # Persist the install mode and original CLI args for upgrade/uninstall
   write_install_mode
   printf '%s\n' "${ORIGINAL_ARGS[@]}" > "$INSTALL_ARGS_FILE"
-
   status "Setup Complete! (mode: $INSTALL_MODE)"
+
   if $HAS_NVIDIA_GPUS; then
     echo "Check status of $DCGM_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DCGM_EXPORTER_SERVICE_NAME'"
     echo "Check status of $DEFAULT_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_LOG_COLLECTOR_SERVICE_NAME'"
@@ -769,9 +787,10 @@ do_uninstall() {
   rm -f "$SYSTEMCTL_DIR/crusoe-nvidia-log-collector.service" || true  # Legacy name
   systemctl daemon-reload || true
 
-  # Remove native packages if installed in native mode
+  # Remove native binaries if installed in native mode
   if [[ "$INSTALL_MODE" == "native" ]]; then
     uninstall_native
+    rm -f "$CRUSOE_METRICS_EXPORTER_BIN" || true
   fi
 
   status "Removing crusoe_watch_agent directory."
@@ -866,6 +885,50 @@ check_os_support() {
 
 install_docker() {
   curl -fsSL https://get.docker.com | sh
+}
+
+# Install the crusoe-metrics-exporter binary from the GitHub release tarball.
+# Downloads the tarball for the current architecture, verifies the checksum,
+# and installs the binary + systemd unit.
+install_metrics_exporter_native() {
+  local arch
+  arch=$(dpkg --print-architecture)  # amd64 or arm64
+  local tarball="crusoe-metrics-exporter-${CRUSOE_METRICS_EXPORTER_VERSION}-linux-${arch}.tar.gz"
+  local url="https://github.com/crusoecloud/crusoe-metrics-exporter/releases/download/v${CRUSOE_METRICS_EXPORTER_VERSION}/${tarball}"
+  local sha_url="https://github.com/crusoecloud/crusoe-metrics-exporter/releases/download/v${CRUSOE_METRICS_EXPORTER_VERSION}/SHA256SUMS"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  status "Downloading crusoe-metrics-exporter v${CRUSOE_METRICS_EXPORTER_VERSION} (${arch})."
+  wget -q -O "${tmpdir}/${tarball}" "$url" || error_exit "Failed to download ${url}"
+  wget -q -O "${tmpdir}/SHA256SUMS" "$sha_url" || error_exit "Failed to download ${sha_url}"
+
+  status "Verifying checksum."
+  grep "${tarball}" "${tmpdir}/SHA256SUMS" > "${tmpdir}/${tarball}.sha256"
+  (cd "$tmpdir" && sha256sum -c "${tarball}.sha256") || error_exit "Checksum verification failed for ${tarball}"
+
+  status "Installing crusoe-metrics-exporter binary and systemd unit."
+  tar -xzf "${tmpdir}/${tarball}" -C "$tmpdir"
+  local stage="${tmpdir}/crusoe-metrics-exporter-${CRUSOE_METRICS_EXPORTER_VERSION}-linux-${arch}"
+  install -m 0755 "${stage}/crusoe-metrics-exporter" "$CRUSOE_METRICS_EXPORTER_BIN"
+  install -m 0644 "${stage}/crusoe-metrics-exporter.service" "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+
+  rm -rf "$tmpdir"
+}
+
+# Ensure the docker.io package is installed and docker.service is running.
+# Used by --enable-metrics-exporter so the crusoe-metrics-exporter container
+# can run even when the agent itself is installed in native (non-docker) mode.
+ensure_docker_running() {
+  if ! command_exists docker; then
+    status "Installing docker.io package."
+    apt-get update || error_exit "apt-get update failed."
+    apt-get install -y docker.io || error_exit "Failed to install docker.io."
+  fi
+  if ! systemctl is-active --quiet docker; then
+    status "Enabling and starting docker.service."
+    systemctl enable --now docker || error_exit "Failed to start docker.service."
+  fi
 }
 
 # Function to check and upgrade DCGM version
