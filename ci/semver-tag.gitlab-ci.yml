@@ -48,6 +48,12 @@ semver-tag:vm:
         TAG="vm${VERSION}"
         SCRIPTS="crusoe_watch_agent.sh crusoe_watch_agent_amd.sh"
 
+        # Skip if this version was already published
+        if [ -d "docs/vm/v${VERSION}" ]; then
+          echo "docs/vm/v${VERSION} already exists. Version not actually changed. Skipping."
+          exit 0
+        fi
+
         git config user.name "gitlab-ci"
         git config user.email "gitlab-ci@crusoe.ai"
 

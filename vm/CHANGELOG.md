@@ -1,8 +1,18 @@
 # Changelog
 
+## 1.0.9 (2026-05-11)
+
+**Features**
+- Support `crusoe-metrics-exporter` in native (`--no-docker`) install mode ([c88112d](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/c88112d))
+
+**Bug Fixes**
+- Remove unsupported `--no-docker` option from AMD installer ([b78e114](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/b78e114))
+
+
 ## 1.0.8 (2026-05-08)
 
 - Update crusoe-metrics-exporter to 0.2.0, adding new metrics
+
 
 ## 1.0.7 (2026-05-06)
 

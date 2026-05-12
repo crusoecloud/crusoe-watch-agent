@@ -41,7 +41,9 @@ lint:mr:
         exit 1
       fi
 
-      if ! echo "$CI_MERGE_REQUEST_TITLE $CI_MERGE_REQUEST_DESCRIPTION" | grep -qE 'CRUSOE-[0-9]+'; then
+      if echo "$CI_MERGE_REQUEST_TITLE" | grep -qE '^chore:'; then
+        echo "Skipping Jira ticket check for chore MR"
+      elif ! echo "$CI_MERGE_REQUEST_TITLE $CI_MERGE_REQUEST_DESCRIPTION" | grep -qE 'CRUSOE-[0-9]+'; then
         echo "ERROR: MR must reference a Jira ticket (e.g. CRUSOE-12345) in the title or description"
         exit 1
       fi
