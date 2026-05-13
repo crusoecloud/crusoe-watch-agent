@@ -648,6 +648,15 @@ do_install() {
     write_token_to_secrets "$CRUSOE_AUTH_TOKEN"
   elif [[ -s "$CRUSOE_MONITORING_TOKEN_FILE" ]]; then
     echo "Detected existing token file at $CRUSOE_MONITORING_TOKEN_FILE"
+    # The token file may have been written by a previous Docker install,
+    # which escapes '$' as '$$' for docker-compose. If the token is longer
+    # than expected, try un-escaping '$$' → '$' to recover the raw value.
+    local existing_token
+    existing_token=$(sed 's/^CRUSOE_AUTH_TOKEN=//' "$CRUSOE_MONITORING_TOKEN_FILE")
+    if ! validate_token "$existing_token"; then
+      existing_token="${existing_token//\$\$/\$}"
+    fi
+    write_token_to_secrets "$existing_token"
   else
     echo "Command: crusoe monitoring tokens create"
     echo "Please enter the crusoe monitoring token:"
