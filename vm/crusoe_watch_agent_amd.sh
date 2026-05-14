@@ -29,7 +29,6 @@ ENV_FILE="$CRUSOE_WATCH_AGENT_DIR/.env" # Define the .env file path
 # Secrets location for persisted monitoring token
 CRUSOE_SECRETS_DIR="/etc/crusoe/secrets"
 CRUSOE_MONITORING_TOKEN_FILE="$CRUSOE_SECRETS_DIR/.monitoring-token"
-INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
 
 # Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
@@ -41,8 +40,6 @@ INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 # Log collector container image version (update here when releasing new container builds)
 LOG_COLLECTOR_IMAGE_VERSION="v0.2.17"
 
-# Crusoe Metrics Exporter version (used for native binary download)
-CRUSOE_METRICS_EXPORTER_VERSION="0.2.1"
 CRUSOE_METRICS_EXPORTER_BIN="/usr/local/bin/crusoe-metrics-exporter"
 
 # Optional parameters with defaults
@@ -201,54 +198,17 @@ check_root() {
   fi
 }
 
-# --- Install Mode Persistence ---
-
-write_install_mode() {
-  echo "$INSTALL_MODE" > "$INSTALL_MODE_FILE"
-}
-
-read_install_mode() {
-  if [[ -f "$INSTALL_MODE_FILE" ]]; then
-    INSTALL_MODE=$(cat "$INSTALL_MODE_FILE")
-  else
-    echo "Warning: No install mode file found at $INSTALL_MODE_FILE. Defaulting to '$INSTALL_MODE'."
-  fi
-}
-
 # --- Token & Version/Lifecycle Helpers ---
 
-uninstall_native() {
-  status "Removing native packages."
-  if command_exists vector; then
-    apt-get remove -y vector || true
-  fi
-  if [[ -e $CRUSOE_METRICS_EXPORTER_BIN ]]; then
-    rm -f $CRUSOE_METRICS_EXPORTER_BIN || true
-  fi
-  # Remove AMD log collector
-  if [[ -d "/opt/crusoe-amd-log-collector" ]]; then
-    status "Removing AMD log collector files."
-    rm -rf /opt/crusoe-amd-log-collector || true
-  fi
-  rm -f /usr/bin/amd-bug-report.sh || true
-}
 write_token_to_secrets() {
   local token="$1"
   mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  # The token file is consumed differently depending on install mode:
-  #   * Docker mode: read by docker-compose via env_file. Compose v2.24+
-  #     interpolates env_file values by default -- a literal '$' followed
-  #     by a valid identifier (e.g. '$EQeyUik...' in a bcrypt token) gets
-  #     expanded to empty, silently truncating the token. Escape '$' as
-  #     '$$' here; compose un-escapes '$$' back to '$' on interpolation.
-  #   * Native mode: read by systemd's EnvironmentFile=, which does NOT
-  #     interpolate. Write the token verbatim.
-  if [[ "$INSTALL_MODE" == "docker" ]]; then
-    local escaped_token="${token//\$/\$\$}"
-    echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
-  else
-    echo "CRUSOE_AUTH_TOKEN=${token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
-  fi
+  # Docker-compose v2.24+ interpolates env_file values by default -- a
+  # literal '$' followed by a valid identifier (e.g. '$EQeyUik...' in a
+  # bcrypt token) gets expanded to empty, silently truncating the token.
+  # Escape '$' as '$$'; compose un-escapes '$$' back to '$' on interpolation.
+  local escaped_token="${token//\$/\$\$}"
+  echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
   chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
 }
 
@@ -294,66 +254,10 @@ check_os_support() {
   fi
 }
 
-install_vector_native() {
-  if command_exists vector; then
-    echo "Vector is already installed."
-  else
-    status "Installing Vector via APT."
-    bash -c "$(curl -L https://setup.vector.dev)" || error_exit "Failed to add Vector APT repository."
-    apt-get install -y vector || error_exit "Failed to install Vector."
-  fi
-  # Disable the default vector.service; we use our own custom unit
-  systemctl disable vector.service 2>/dev/null || true
-  systemctl stop vector.service 2>/dev/null || true
-}
-
 install_docker() {
   curl -fsSL https://get.docker.com | sh
 }
 
-# Install the crusoe-metrics-exporter binary from the GitHub release tarball.
-# Downloads the tarball for the current architecture, verifies the checksum,
-# and installs the binary + systemd unit.
-install_metrics_exporter_native() {
-  local arch
-  arch=$(dpkg --print-architecture)  # amd64 or arm64
-  local tarball="crusoe-metrics-exporter-${CRUSOE_METRICS_EXPORTER_VERSION}-linux-${arch}.tar.gz"
-  local url="https://github.com/crusoecloud/crusoe-metrics-exporter/releases/download/v${CRUSOE_METRICS_EXPORTER_VERSION}/${tarball}"
-  local sha_url="https://github.com/crusoecloud/crusoe-metrics-exporter/releases/download/v${CRUSOE_METRICS_EXPORTER_VERSION}/SHA256SUMS"
-  local tmpdir
-  tmpdir=$(mktemp -d)
-
-  status "Downloading crusoe-metrics-exporter v${CRUSOE_METRICS_EXPORTER_VERSION} (${arch})."
-  wget -q -O "${tmpdir}/${tarball}" "$url" || error_exit "Failed to download ${url}"
-  wget -q -O "${tmpdir}/SHA256SUMS" "$sha_url" || error_exit "Failed to download ${sha_url}"
-
-  status "Verifying checksum."
-  grep "${tarball}" "${tmpdir}/SHA256SUMS" > "${tmpdir}/${tarball}.sha256"
-  (cd "$tmpdir" && sha256sum -c "${tarball}.sha256") || error_exit "Checksum verification failed for ${tarball}"
-
-  status "Installing crusoe-metrics-exporter binary and systemd unit."
-  tar -xzf "${tmpdir}/${tarball}" -C "$tmpdir"
-  local stage="${tmpdir}/crusoe-metrics-exporter-${CRUSOE_METRICS_EXPORTER_VERSION}-linux-${arch}"
-  install -m 0755 "${stage}/crusoe-metrics-exporter" "$CRUSOE_METRICS_EXPORTER_BIN"
-  install -m 0644 "${stage}/crusoe-metrics-exporter.service" "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
-
-  rm -rf "$tmpdir"
-}
-
-# Ensure the docker.io package is installed and docker.service is running.
-# Used by --enable-metrics-exporter so the crusoe-metrics-exporter container
-# can run even when the agent itself is installed in native (non-docker) mode.
-ensure_docker_running() {
-  if ! command_exists docker; then
-    status "Installing docker.io package."
-    apt-get update || error_exit "apt-get update failed."
-    apt-get install -y docker.io || error_exit "Failed to install docker.io."
-  fi
-  if ! systemctl is-active --quiet docker; then
-    status "Enabling and starting docker.service."
-    systemctl enable --now docker || error_exit "Failed to start docker.service."
-  fi
-}
 
 # Compare semantic versions a.b.c >= x.y.z
 version_ge() {
@@ -411,18 +315,12 @@ do_install() {
   check_root
   check_os_support
 
-  # Install runtime dependencies based on mode
-  if [[ "$INSTALL_MODE" == "docker" ]]; then
-    status "Ensure docker installation."
-    if command_exists docker; then
-      echo "Docker is already installed."
-    else
-      echo "Installing Docker."
-      install_docker
-    fi
+  status "Ensure docker installation."
+  if command_exists docker; then
+    echo "Docker is already installed."
   else
-    status "Installing Vector natively via APT."
-    install_vector_native
+    echo "Installing Docker."
+    install_docker
   fi
 
   # Ensure wget is installed
@@ -483,14 +381,11 @@ do_install() {
   wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
 
   if $ENABLE_METRICS_EXPORTER; then
-      status "Download Crusoe Metrics Exporter docker-compose file."
-      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
+    status "Download Crusoe Metrics Exporter docker-compose file."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
 
-      status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
-      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
-    else
-      install_metrics_exporter_native
-    fi
+    status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
+    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
   fi
 
   status "Ensuring Crusoe auth token in secrets."
@@ -540,16 +435,16 @@ EOF
     systemctl daemon-reload
     echo "systemctl enable $AMD_EXPORTER_SERVICE_NAME"
     systemctl enable "$AMD_EXPORTER_SERVICE_NAME"
-    echo "systemctl start $AMD_EXPORTER_SERVICE_NAME"
-    systemctl start "$AMD_EXPORTER_SERVICE_NAME"
+    echo "systemctl restart $AMD_EXPORTER_SERVICE_NAME"
+    systemctl restart "$AMD_EXPORTER_SERVICE_NAME"
 
     # Start AMD log collector
     status "Enable and start systemd services for $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME."
     systemctl daemon-reload
     echo "systemctl enable $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
     systemctl enable "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
-    echo "systemctl start $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
-    systemctl start "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    echo "systemctl restart $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl restart "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
   fi
 
   # Start Crusoe Metrics Exporter after .env is ready
@@ -559,32 +454,24 @@ EOF
     systemctl daemon-reload
     echo "systemctl enable $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
     systemctl enable "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
-    echo "systemctl start $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
-    systemctl start "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    echo "systemctl restart $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    systemctl restart "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
   fi
 
-  # Download the appropriate crusoe-watch-agent systemd unit
-  if [[ "$INSTALL_MODE" == "docker" ]]; then
-    status "Download crusoe-watch-agent.service."
-    wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_SERVICE"
-  else
-    status "Download crusoe-watch-agent.service (native)."
-    wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE"
-  fi
+  status "Download crusoe-watch-agent.service."
+  wget -q -O "$SYSTEMCTL_DIR/crusoe-watch-agent.service" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_WATCH_AGENT_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_WATCH_AGENT_SERVICE"
 
   status "Enable and start systemd services for crusoe-watch-agent."
   echo "systemctl daemon-reload"
   systemctl daemon-reload
   echo "systemctl enable crusoe-watch-agent.service"
   systemctl enable crusoe-watch-agent.service
-  echo "systemctl start crusoe-watch-agent.service"
-  systemctl start crusoe-watch-agent.service
+  echo "systemctl restart crusoe-watch-agent.service"
+  systemctl restart crusoe-watch-agent.service
 
-  # Persist the install mode for upgrade/uninstall
-  write_install_mode
   printf '%s\n' "${ORIGINAL_ARGS[@]}" > "$INSTALL_ARGS_FILE"
-  status "Setup Complete! (mode: $INSTALL_MODE)"
->>
+  status "Setup Complete!"
+
   if $HAS_AMD_GPUS; then
     echo "Check status of $AMD_EXPORTER_SERVICE_NAME: 'sudo systemctl status $AMD_EXPORTER_SERVICE_NAME'"
     echo "Check status of $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME'"
@@ -598,8 +485,6 @@ EOF
 
 do_uninstall() {
   check_root
-  # Read persisted install mode so we clean up correctly
-  read_install_mode
 
   status "Stopping and disabling crusoe-watch-agent service."
   if service_exists "crusoe-watch-agent.service"; then
@@ -636,11 +521,7 @@ do_uninstall() {
   rm -rf "$CRUSOE_WATCH_AGENT_DIR" || true
 
   rm -f "$INSTALL_ARGS_FILE" || true
-=======
-  # Remove native metrics-exporter binary if present (installed in both modes)
->>>>>>> a239360 (Make the scripts more reliable and consistent)
   rm -f "$CRUSOE_METRICS_EXPORTER_BIN" || true
-  rm -f "$INSTALL_MODE_FILE" || true
 
   status "Uninstall complete."
 }

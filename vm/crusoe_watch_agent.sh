@@ -699,14 +699,14 @@ EOF
     systemctl daemon-reload
     echo "systemctl enable $DCGM_EXPORTER_SERVICE_NAME"
     systemctl enable "$DCGM_EXPORTER_SERVICE_NAME"
-    echo "systemctl start $DCGM_EXPORTER_SERVICE_NAME"
-    systemctl start "$DCGM_EXPORTER_SERVICE_NAME"
+    echo "systemctl restart $DCGM_EXPORTER_SERVICE_NAME"
+    systemctl restart "$DCGM_EXPORTER_SERVICE_NAME"
 
     status "Enable and start systemd services for $DEFAULT_LOG_COLLECTOR_SERVICE_NAME."
     echo "systemctl enable $DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
     systemctl enable "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
-    echo "systemctl start $DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
-    systemctl start "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
+    echo "systemctl restart $DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl restart "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
   fi
 
   # Start Crusoe Metrics Exporter after .env is ready
@@ -716,8 +716,8 @@ EOF
     systemctl daemon-reload
     echo "systemctl enable $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
     systemctl enable "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
-    echo "systemctl start $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
-    systemctl start "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    echo "systemctl restart $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    systemctl restart "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
   fi
 
   # Download the appropriate crusoe-watch-agent systemd unit
@@ -734,8 +734,8 @@ EOF
   systemctl daemon-reload
   echo "systemctl enable crusoe-watch-agent.service"
   systemctl enable crusoe-watch-agent.service
-  echo "systemctl start crusoe-watch-agent.service"
-  systemctl start crusoe-watch-agent.service
+  echo "systemctl restart crusoe-watch-agent.service"
+  systemctl restart crusoe-watch-agent.service
 
   # Persist the install mode and original CLI args for upgrade/uninstall
   write_install_mode
