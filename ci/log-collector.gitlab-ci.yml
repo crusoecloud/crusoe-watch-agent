@@ -10,10 +10,10 @@ log-collector:test:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
-        - common/log-collector/**
+        - common/log-collector/**/*
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
-        - common/log-collector/**
+        - common/log-collector/**/*
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
 
 log-collector:build:
@@ -63,8 +63,8 @@ log-collector:build:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
-        - common/log-collector/**
+        - common/log-collector/**/*
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
-        - common/log-collector/**
+        - common/log-collector/**/*
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
