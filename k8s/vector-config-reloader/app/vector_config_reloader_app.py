@@ -21,8 +21,12 @@ DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
 # Log sources and pipeline constants (each is referenced from multiple places
 # inside set_logs_config to wire the source -> filter -> transform -> sink graph)
 ENRICH_LOGS_TRANSFORM_NAME = "enrich_logs"
+PARSE_JOURNALD_LOGS_TRANSFORM_NAME = "parse_journald_logs"
+PARSE_CRUSOE_CONTAINER_LOGS_TRANSFORM_NAME = "parse_crusoe_container_logs"
+PARSE_INTERNAL_LOGS_TRANSFORM_NAME = "parse_internal_logs"
 FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME = "filter_crusoe_log_collector_logs"
 FILTER_VECTOR_CONFIG_RELOADER_LOGS_TRANSFORM_NAME = "filter_vector_config_reloader_logs"
+FILTER_JOURNALD_NOISE_TRANSFORM_NAME = "filter_journald_noise"
 JOURNALD_LOGS_SOURCE_NAME = "journald_logs"
 KUBERNETES_LOGS_SOURCE_NAME = "kubernetes_logs"
 VECTOR_INTERNAL_LOGS_SOURCE_NAME = "vector_internal_logs"
@@ -270,11 +274,164 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .kubernetes.pod_namespace == "crusoe-system" && starts_with(string!(.kubernetes.pod_name), "crusoe-watch-agent") && .kubernetes.container_name == "vector-config-reloader"
 ''')
 
+        # Drop containerd's harmless `max 0` cgroup-parse spam from hugetlb.events.
+        # Misleadingly tagged level=error and unactionable from outside containerd.
+        self.filter_journald_noise_transform_source = LiteralStr('''
+!((string(.SYSLOG_IDENTIFIER) ?? "") == "containerd" && contains(string(.message) ?? "", "as a uint from Cgroup file"))
+''')
+
         self.enrich_logs_transform_source = LiteralStr('''
 .agent = "crusoe-watch-agent"
+.chart_version = "${CHART_VERSION}"
 .host = get_hostname!()
 .crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
 
+del(.source_type)
+
+# Fallback _time if not set
+if !exists(._time) {
+    if exists(.__REALTIME_TIMESTAMP) {
+        ._time = .__REALTIME_TIMESTAMP
+    } else if exists(.timestamp) {
+        ._time = .timestamp
+    }
+}
+
+# Fallback _msg if not set
+if !exists(._msg) {
+    if exists(.message) {
+        ._msg = del(.message)
+    }
+}
+
+# Normalize level to canonical enum (mirrors GCP Cloud Logging SEVERITY_TRANSLATIONS):
+#   emergency, alert, critical, error, warning, notice, info, debug
+# Unrecognized values are dropped; missing levels stay absent.
+level_synonyms = {
+    "emergency": "emergency", "emerg": "emergency",
+    "alert": "alert", "a": "alert",
+    "critical": "critical", "crit": "critical", "fatal": "critical", "c": "critical", "f": "critical",
+    "error": "error", "err": "error", "severe": "error", "e": "error",
+    "warning": "warning", "warn": "warning", "w": "warning",
+    "notice": "notice", "n": "notice",
+    "info": "info", "information": "info", "i": "info",
+    "debug": "debug", "trace": "debug", "trace_int": "debug",
+    "fine": "debug", "finer": "debug", "finest": "debug", "config": "debug", "d": "debug"
+}
+if exists(.level) {
+    lvl = downcase(string!(.level))
+    normalized = get(level_synonyms, [lvl]) ?? null
+    if normalized != null {
+        .level = normalized
+    } else {
+        del(.level)
+    }
+}
+''')
+
+        self.parse_journald_logs_transform_source = LiteralStr('''
+.log_source = "journald"
+
+# Infallible bind — events without MESSAGE would otherwise abort the transform.
+msg = string(.message) ?? ""
+
+# Map syslog PRIORITY to a canonical level. enrich_logs runs the final
+# normalize-or-drop pass against the level_synonyms map.
+# Coerce defensively: journald emits PRIORITY as a string, but other
+# upstreams (e.g. forwarded syslog) may not.
+priority = to_string(.PRIORITY) ?? ""
+if priority == "0" {
+    .level = "emergency"
+} else if priority == "1" {
+    .level = "alert"
+} else if priority == "2" {
+    .level = "critical"
+} else if priority == "3" {
+    .level = "error"
+} else if priority == "4" {
+    .level = "warning"
+} else if priority == "5" {
+    .level = "notice"
+} else if priority == "6" {
+    .level = "info"
+} else if priority == "7" {
+    .level = "debug"
+}
+
+# Default: preserve MESSAGE verbatim. The whitelist below may override
+# _msg / level / _time if it extracts cleaner values from real logfmt.
+._msg = msg
+
+# Narrow logfmt whitelist. parse_logfmt is intentionally permissive
+# (see vector#6418), so we only run it on identifiers known to emit
+# real logfmt-shaped MESSAGE, gate on a `^\\S+=` sniff, and validate
+# extracted keys are proper identifiers. Everything else (sshd, sudo,
+# systemd, kernel, etc.) keeps its raw _msg and natively-promoted
+# journald fields; consumers can use LogsQL's unpack_logfmt at query
+# time for fields we don't materialize at ingest.
+logfmt_emitters = ["containerd", "dockerd", "etcd"]
+syslog_id = string(.SYSLOG_IDENTIFIER) ?? ""
+
+if includes(logfmt_emitters, syslog_id) && match(msg, r'^\\S+=') {
+    parsed, err = parse_logfmt(msg)
+    if err == null && is_object(parsed) {
+        structured_fields = {}
+        for_each(object(parsed)) -> |key, value| {
+            # Skip bare tokens (no `=`) and mangled keys (non-identifier shape).
+            is_bare = (value == true) || (value == "true")
+            if !is_bare && match(key, r'^[a-zA-Z_][a-zA-Z0-9_.-]*$') {
+                structured_fields = set!(structured_fields, [key], value)
+            }
+        }
+
+        if length(structured_fields) > 0 {
+            if exists(structured_fields.msg) {
+                ._msg = string!(structured_fields.msg)
+            }
+            if exists(structured_fields.time) {
+                parsed_time, ts_err = parse_timestamp(string!(structured_fields.time), format: "%+")
+                if ts_err == null {
+                    ._time = parsed_time
+                }
+            }
+            if exists(structured_fields.level) {
+                .level = downcase(string!(structured_fields.level))
+            }
+            for_each(structured_fields) -> |key, value| {
+                if key != "msg" && key != "time" && key != "level" {
+                    . = set!(., [key], value)
+                }
+            }
+        }
+    }
+}
+
+# klog prefix parser. Without this, kubelet stdout is always level=info
+# (journald PRIORITY is fixed at 6); parse_klog reads the leading severity
+# letter and leaves the payload verbatim.
+klog_emitters = ["kubelet", "kube-proxy"]
+if includes(klog_emitters, syslog_id) {
+    parsed_klog, klog_err = parse_klog(msg)
+    if klog_err == null && is_object(parsed_klog) {
+        for_each(object(parsed_klog)) -> |key, value| {
+            if key == "message" {
+                ._msg = string!(value)
+            } else if key == "level" {
+                .level = string!(value)
+            } else if key == "timestamp" {
+                ._time = value
+            } else {
+                . = set!(., [key], value)
+            }
+        }
+    }
+}
+
+del(.message)
+del(.timestamp)
+''')
+
+        self.parse_crusoe_container_logs_transform_source = LiteralStr('''
 if exists(.kubernetes.pod_labels.app) && starts_with(string!(.kubernetes.pod_labels.app), "crusoe-log-collector") {
     .log_source = "crusoe-log-collector"
 
@@ -314,72 +471,13 @@ if (to_string(.kubernetes.container_name) ?? "") == "vector-config-reloader" {
         }
     }
 }
+''')
 
-if .source_type == "internal_logs" {
-    .log_source = "crusoe-watch-agent"
+        self.parse_internal_logs_transform_source = LiteralStr('''
+.log_source = "crusoe-watch-agent"
 
-    # Vector internal_logs puts level in metadata.level
-    if exists(.metadata.level) {
-        .level = downcase(string!(.metadata.level))
-    } else {
-        .level = "undefined"
-    }
-}
-
-if .source_type == "journald" {
-    .log_source = "journald"
-    if .PRIORITY == "0" {
-        .level = "emergency"
-    } else if .PRIORITY == "1" {
-        .level = "alert"
-    } else if .PRIORITY == "2" {
-        .level = "critical"
-    } else if .PRIORITY == "3" {
-        .level = "error"
-    } else if .PRIORITY == "4" {
-        .level = "warning"
-    } else if .PRIORITY == "5" {
-        .level = "notice"
-    } else if .PRIORITY == "6" {
-        .level = "info"
-    } else if .PRIORITY == "7" {
-        .level = "debug"
-    } else {
-        .level = "undefined"
-    }
-
-    parsed, err = parse_key_value(string!(.message))
-    if err == null {
-        .log = parsed
-        if exists(parsed.msg) {
-            ._msg = string!(parsed.msg)
-            del(.message)
-        } else {
-            ._msg = del(.message)
-        }
-    }
-} else if .source_type == "file" {
-    .log_source = "generic_file"
-}
-del(.source_type)
-
-if exists(.__REALTIME_TIMESTAMP) {
-    ._time = .__REALTIME_TIMESTAMP
-} else if exists(.timestamp) {
-    ._time = .timestamp
-}
-
-if !exists(._msg) {
-    if exists(.message) {
-        ._msg = del(.message)
-    }
-}
-
-# Normalize level to lowercase
-if exists(.level) {
-  .level = downcase(string!(.level))
-} else {
-  .level = "undefined"
+if exists(.metadata.level) {
+    .level = downcase(string!(.metadata.level))
 }
 ''')
 
@@ -605,13 +703,45 @@ if exists(.level) {
             }
         }
 
+        transforms[FILTER_JOURNALD_NOISE_TRANSFORM_NAME] = {
+            "type": "filter",
+            "inputs": [JOURNALD_LOGS_SOURCE_NAME],
+            "condition": {
+                "type": "vrl",
+                "source": self.filter_journald_noise_transform_source
+            }
+        }
+
+        # Parallel branches: each parser takes only its source(s). Then enrich_logs
+        # converges all parsers, adds common fields (.agent/.host/.cluster_id), and runs
+        # common cleanup (source_type, _time/_msg fallbacks, level normalization).
+        transforms[PARSE_JOURNALD_LOGS_TRANSFORM_NAME] = {
+            "type": "remap",
+            "inputs": [FILTER_JOURNALD_NOISE_TRANSFORM_NAME],
+            "source": self.parse_journald_logs_transform_source
+        }
+
+        transforms[PARSE_CRUSOE_CONTAINER_LOGS_TRANSFORM_NAME] = {
+            "type": "remap",
+            "inputs": [
+                FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME,
+                FILTER_VECTOR_CONFIG_RELOADER_LOGS_TRANSFORM_NAME,
+            ],
+            "source": self.parse_crusoe_container_logs_transform_source
+        }
+
+        transforms[PARSE_INTERNAL_LOGS_TRANSFORM_NAME] = {
+            "type": "remap",
+            "inputs": [VECTOR_INTERNAL_LOGS_SOURCE_NAME],
+            "source": self.parse_internal_logs_transform_source
+        }
+
         transforms[ENRICH_LOGS_TRANSFORM_NAME] = {
             "type": "remap",
             "inputs": [
-                JOURNALD_LOGS_SOURCE_NAME,
-                FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME,
-                FILTER_VECTOR_CONFIG_RELOADER_LOGS_TRANSFORM_NAME,
-                VECTOR_INTERNAL_LOGS_SOURCE_NAME
+                PARSE_JOURNALD_LOGS_TRANSFORM_NAME,
+                PARSE_CRUSOE_CONTAINER_LOGS_TRANSFORM_NAME,
+                PARSE_INTERNAL_LOGS_TRANSFORM_NAME,
             ],
             "source": self.enrich_logs_transform_source
         }
