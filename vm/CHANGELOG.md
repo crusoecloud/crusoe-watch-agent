@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.10 (2026-05-15)
+
+**Features**
+
+- Add `agent_version` field to all collected logs ([fe138ed](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/fe138ed))
+
+**Improvements**
+
+- Add structured error codes to bug report collection for programmatic diagnostics ([4efaee6](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/4efaee6))
+
+**Bug Fixes**
+
+- Fix JournalD and containerd log parsing that produced spurious fields like `log.ip` and `log.100` ([fe138ed](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/fe138ed))
+- Fix agent upgrades not restarting Vector, leaving new configuration and binaries inactive ([e9c2cb7](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/e9c2cb7))
+- Fix monitoring token corruption when reinstalling with a different installation method ([5c3a606](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/5c3a606))
+
+
 ## 1.0.9 (2026-05-11)
 
 **Features**

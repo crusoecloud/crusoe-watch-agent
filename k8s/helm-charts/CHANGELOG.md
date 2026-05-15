@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.23 (2026-05-15)
+
+**Bug Fixes**
+- Fix log parsing for JournalD and Kubelet logs that produced spurious structured fields such as `log.ip` and `log.100` ([fe138ed](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/fe138ed))
+- Fix scrape configs failing to update when pods were added, removed, or restarted on a node ([16460a6](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/16460a6))
+
+**Improvements**
+- Add `chart_version` fields to all collected logs ([fe138ed](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/fe138ed))
+- Filter containerd hugetlb cgroup noise from JournalD log collection ([fe138ed](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/fe138ed))
+- Add structured error codes to bug report collection for programmatic failure diagnosis ([4efaee6](https://gitlab.com/crusoeenergy/island/managed-platform-services/crusoe-watch-agent/-/commit/4efaee6))
+
+
 ## 0.3.22 (2026-05-08)
 
 - Update crusoe-metrics-exporter to 0.2.0, adding new metrics
