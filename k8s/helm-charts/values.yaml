@@ -106,7 +106,7 @@ vector:
     pullSecrets: [ ]
     # image.tag -- The tag to use for Vector's image.
     # @default -- Derived from the Chart's appVersion.
-    tag: "nightly-debian"
+    tag: "0.55.0-debian"
     # image.sha -- The SHA to use for Vector's image.
     sha: ""
     # image.base -- The base distribution to use for vector. If set, then the base in appVersion will be replaced with this base alongside the version.

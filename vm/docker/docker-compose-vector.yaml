@@ -1,6 +1,6 @@
 services:
   crusoe-vector:
-    image: timberio/vector:0.50.0-debian
+    image: timberio/vector:0.55.0-debian
     container_name: crusoe-vector
     hostname: crusoe-vector
     volumes:

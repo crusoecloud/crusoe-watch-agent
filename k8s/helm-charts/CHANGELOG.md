@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.24 (2026-05-18)
+
+**Improvements**
+- Upgrade Vector to `0.55.0-debian` (chart dep `0.45.0` → `0.52.0`) and pin the image tag, replacing the previous floating `nightly-debian` tag ([CRUSOE-69677](https://crusoe.atlassian.net/browse/CRUSOE-69677))
+
+
 ## 0.3.23 (2026-05-15)
 
 **Bug Fixes**

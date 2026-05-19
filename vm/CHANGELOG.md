@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.11 (2026-05-18)
+
+**Improvements**
+- Upgrade Vector docker image from `0.50.0-debian` to `0.55.0-debian`. ([CRUSOE-69677](https://crusoe.atlassian.net/browse/CRUSOE-69677))
+- Pin Vector native (`--no-docker`) install to `vector=0.55.0-1` (previously installed as unpinned APT `latest`). Existing VMs with Vector already installed are not auto-upgraded. ([CRUSOE-69677](https://crusoe.atlassian.net/browse/CRUSOE-69677))
+- `crusoe_watch_agent.sh upgrade` now converges Vector to the pinned version on native installs (older versions are upgraded; never downgraded). Plain `install` re-runs remain idempotent — existing Vector is left untouched. ([CRUSOE-69677](https://crusoe.atlassian.net/browse/CRUSOE-69677))
+
+
 ## 1.0.10 (2026-05-15)
 
 **Features**

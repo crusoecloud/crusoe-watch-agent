@@ -14,6 +14,11 @@ CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
 # Installation mode: "docker" (default) or "native" (--no-docker)
 INSTALL_MODE="docker"
 
+# Vector version pinned across all install modes. Keep this in sync with
+# vm/docker/docker-compose-vector.yaml (image tag) and
+# k8s/helm-charts/Chart.yaml (vector helm dependency).
+VECTOR_VERSION="0.55.0"
+
 # Define paths for config files within the GitHub repository (vm subdir)
 REMOTE_VECTOR_CONFIG_GPU_VM="vm/config/vector_gpu_vm.yaml"
 REMOTE_VECTOR_CONFIG_CPU_VM="vm/config/vector_cpu_vm.yaml"
@@ -252,12 +257,28 @@ read_install_mode() {
 # --- Native Installation Functions ---
 
 install_vector_native() {
+  # `install` is idempotent: existing vector is left alone. `upgrade` sets
+  # CWA_UPGRADE=1 to converge vector to $VECTOR_VERSION (never downgrades).
   if command_exists vector; then
-    echo "Vector is already installed."
+    if [[ "${CWA_UPGRADE:-}" == "1" ]]; then
+      local installed_ver
+      installed_ver=$(vector --version 2>/dev/null | awk '/^vector / {print $2}')
+      if [[ "$installed_ver" == "$VECTOR_VERSION" ]]; then
+        echo "Vector $VECTOR_VERSION is already installed."
+      elif [[ -n "$installed_ver" ]] && version_lt "$VECTOR_VERSION" "$installed_ver"; then
+        echo "Vector $installed_ver is newer than pinned $VECTOR_VERSION; not downgrading."
+      else
+        status "Upgrading Vector ${installed_ver:-unknown} -> $VECTOR_VERSION via APT."
+        bash -c "$(curl -L https://setup.vector.dev)" || error_exit "Failed to add Vector APT repository."
+        apt-get install -y "vector=${VECTOR_VERSION}-1" || error_exit "Failed to install Vector ${VECTOR_VERSION}-1."
+      fi
+    else
+      echo "Vector is already installed."
+    fi
   else
-    status "Installing Vector via APT."
+    status "Installing Vector $VECTOR_VERSION via APT."
     bash -c "$(curl -L https://setup.vector.dev)" || error_exit "Failed to add Vector APT repository."
-    apt-get install -y vector || error_exit "Failed to install Vector."
+    apt-get install -y "vector=${VECTOR_VERSION}-1" || error_exit "Failed to install Vector ${VECTOR_VERSION}-1."
   fi
   # Disable the default vector.service; we use our own custom unit
   systemctl disable vector.service 2>/dev/null || true
@@ -868,12 +889,16 @@ do_upgrade() {
     [[ "$INSTALL_MODE" == "native" ]] && saved_args+=(--no-docker)
   fi
 
-  # Download the latest script and re-run install
+  # Download the latest script and re-run install.
+  # CWA_UPGRADE=1 signals to install_vector_native (and any future helper that
+  # cares) that this is the upgrade path, so it can converge vector to the
+  # pinned version instead of preserving the idempotent skip-on-existing
+  # behavior used during a plain `install`.
   local new_script
   new_script=$(mktemp)
   curl -fsSL "$LATEST_SCRIPT_URL" -o "$new_script" || error_exit "Failed to download latest script."
   chmod +x "$new_script"
-  bash "$new_script" "${saved_args[@]}"
+  CWA_UPGRADE=1 bash "$new_script" "${saved_args[@]}"
   rm -f "$new_script"
 }
 
