@@ -52,3 +52,28 @@ helm upgrade crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent \
   --namespace crusoe-system \
   --reset-values
 ```
+
+## Troubleshooting
+
+### Checking installed versions
+
+Show the installed chart and app version:
+
+```bash
+helm list --namespace crusoe-system --filter '^crusoe-watch-agent$'
+```
+
+The `CHART` column shows the chart version (e.g. `crusoe-watch-agent-0.4.2`) and `APP VERSION` shows the agent version.
+
+Show the container images actually running on the cluster (resolves any `kubectl set image` / overlay pins):
+
+```bash
+kubectl get ds crusoe-watch-agent --namespace crusoe-system \
+  -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\t"}{.image}{"\n"}{end}'
+```
+
+Show the full rendered values currently in use:
+
+```bash
+helm get values crusoe-watch-agent --namespace crusoe-system --all
+```
