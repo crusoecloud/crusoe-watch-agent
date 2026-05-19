@@ -4,6 +4,7 @@ sources:
         collectors:
             - cpu
             - disk
+            - host
             - memory
             - network
             - process
