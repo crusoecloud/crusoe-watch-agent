@@ -7,9 +7,9 @@ set -euo pipefail
 # Component configuration lives in ci/scripts/release-notes-<component>.conf.
 #
 # Usage:
-#   ./ci/scripts/generate-release-notes.sh <component> [--dry-run]                        # Add missing versions to changelog
-#   ./ci/scripts/generate-release-notes.sh <component> <start_ver> <end_ver> [--dry-run]  # Generate for specific range
-#   ./ci/scripts/generate-release-notes.sh --list                                         # List configured components
+#   ./ci/scripts/generate-release-notes.sh <component> [--dry-run] [--force]                        # Add missing versions to changelog
+#   ./ci/scripts/generate-release-notes.sh <component> <start_ver> <end_ver> [--dry-run] [--force]  # Generate for specific range
+#   ./ci/scripts/generate-release-notes.sh --list                                                   # List configured components
 #
 # Requirements:
 #   - claude CLI (claude.ai/code) must be installed and authenticated
@@ -40,6 +40,7 @@ SOURCE_PATHS=""  # space-separated directories to scope commits to (e.g. "vm/ co
 DIFF_EXCLUDE=""
 COMMIT_SKIP=""
 MR_SOURCE=""  # "gitlab", "github", or "" (disabled)
+COMMIT_URL_BASE=""  # Override commit link base URL (e.g. for a GitHub mirror)
 
 load_component_config() {
   local component="$1"
@@ -56,6 +57,7 @@ Run with --list to see configured components."
   DIFF_EXCLUDE=""
   COMMIT_SKIP=""
   MR_SOURCE=""
+  COMMIT_URL_BASE=""
 
   # shellcheck source=/dev/null
   source "$config_file"
@@ -133,6 +135,52 @@ resolve_ref() {
 
 # --- Data collection ---
 
+# Verify the current branch only touches version/changelog files.
+# Prevents running the changelog script in an MR that also contains code changes,
+# which would cause those unmerged changes to leak into the generated notes.
+check_branch_clean() {
+  local current_branch
+  current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || return 0
+
+  # Skip check on main — the script is meant to run there too
+  [[ "$current_branch" != "main" && "$current_branch" != "master" ]] || return 0
+
+  # Get all files changed vs main: committed on the branch, staged, and unstaged
+  local changed_files
+  changed_files=$(
+    git diff --name-only origin/main...HEAD 2>/dev/null
+    git diff --name-only 2>/dev/null
+    git diff --name-only --cached 2>/dev/null
+  ) || return 0
+  # Deduplicate
+  changed_files=$(echo "$changed_files" | sort -u)
+  [[ -n "$changed_files" ]] || return 0
+
+  local bad_files=()
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    # Allow version files, changelogs, and this script itself
+    case "$file" in
+      */VERSION|*/Chart.yaml|*/CHANGELOG.md|ci/scripts/release-notes*|ci/scripts/generate-release-notes.sh|CLAUDE.md) ;;
+      *) bad_files+=("$file") ;;
+    esac
+  done <<< "$changed_files"
+
+  if [[ ${#bad_files[@]} -gt 0 ]]; then
+    echo "" >&2
+    echo "WARNING: This branch contains non-release files changed vs main:" >&2
+    for f in "${bad_files[@]}"; do
+      echo "  - $f" >&2
+    done
+    echo "" >&2
+    echo "Version bumps and changelog generation should be in a dedicated MR," >&2
+    echo "separate from code changes, to avoid linking unmerged work in the notes." >&2
+    echo "" >&2
+    echo "To proceed anyway, re-run with --force." >&2
+    exit 1
+  fi
+}
+
 check_deps() {
   for cmd in git claude; do
     command -v "$cmd" >/dev/null || die "$cmd is required but not found"
@@ -162,9 +210,15 @@ _PROJECT_PATH=""
 # Base URL for commit links (computed once).
 _COMMIT_BASE_URL=""
 
-# Get the base URL for linking to commits (e.g. https://gitlab.com/group/project/-/commit/).
+# Get the base URL for linking to commits (e.g. https://github.com/org/repo/commit/).
+# Uses COMMIT_URL_BASE from config if set, otherwise derives from git remote.
 commit_base_url() {
   if [[ -n "$_COMMIT_BASE_URL" ]]; then
+    echo "$_COMMIT_BASE_URL"
+    return
+  fi
+  if [[ -n "$COMMIT_URL_BASE" ]]; then
+    _COMMIT_BASE_URL="$COMMIT_URL_BASE"
     echo "$_COMMIT_BASE_URL"
     return
   fi
@@ -537,9 +591,9 @@ do_update() {
 
 usage() {
   echo "Usage:" >&2
-  echo "  $0 <component> [--dry-run]                          Add missing versions to changelog" >&2
-  echo "  $0 <component> <start_ver> <end_ver> [--dry-run]    Generate notes for specific range" >&2
-  echo "  $0 --list                                           List configured components" >&2
+  echo "  $0 <component> [--dry-run] [--force]                       Add missing versions to changelog" >&2
+  echo "  $0 <component> <start_ver> <end_ver> [--dry-run] [--force] Generate notes for specific range" >&2
+  echo "  $0 --list                                                  List configured components" >&2
   echo "" >&2
   echo "Components are configured via ci/scripts/release-notes-<name>.conf." >&2
   if [[ -d "$SCRIPT_DIR" ]]; then
@@ -554,13 +608,14 @@ main() {
   check_deps
 
   local dry_run="false"
+  local force="false"
   local args=()
   for arg in "$@"; do
-    if [[ "$arg" == "--dry-run" ]]; then
-      dry_run="true"
-    else
-      args+=("$arg")
-    fi
+    case "$arg" in
+      --dry-run) dry_run="true" ;;
+      --force)   force="true" ;;
+      *)         args+=("$arg") ;;
+    esac
   done
 
   if [[ ${#args[@]} -eq 0 ]]; then
@@ -573,11 +628,15 @@ main() {
     exit 0
   fi
 
+  load_component_config "${args[0]}"
+
+  if [[ "$force" != "true" ]]; then
+    check_branch_clean
+  fi
+
   if [[ ${#args[@]} -ge 3 ]]; then
-    load_component_config "${args[0]}"
     do_single "${args[1]}" "${args[2]}" "$dry_run"
   elif [[ ${#args[@]} -eq 1 ]]; then
-    load_component_config "${args[0]}"
     do_update "$dry_run"
   else
     usage
