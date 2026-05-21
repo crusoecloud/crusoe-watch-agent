@@ -7,41 +7,25 @@ Choose one of the following methods to install crusoe-watch-agent on your VM.
 ### Simple Download
 Best for a quick, one-time installation.
 
-**For NVIDIA GPUs or CPU-only VMs:**
+`crusoe_watch_agent.sh` auto-detects your VM type (NVIDIA, AMD, or CPU-only) and installs the appropriate stack.
+
 ```
 wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent.sh
 chmod +x crusoe_watch_agent.sh
 sudo ./crusoe_watch_agent.sh install
 ```
 
-**For AMD GPUs:**
-```
-wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent_amd.sh
-chmod +x crusoe_watch_agent_amd.sh
-sudo ./crusoe_watch_agent_amd.sh install
-```
-
-> **Note:** For AMD GPU VMs, use `crusoe_watch_agent_amd.sh` script. All commands (`install`, `uninstall`, `upgrade`, `refresh-token`, `help`) work the same way for both scripts.
+> **Note:** The legacy `crusoe_watch_agent_amd.sh` script remains available for existing AMD installs. New installs should use `crusoe_watch_agent.sh` for all GPU types.
 
 ### Symlink Installation
 Sets up the script as a global command for easier upgrades and management.
 
-**For NVIDIA GPUs or CPU-only VMs:**
 ```
 wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent.sh
 sudo mkdir -p /etc/crusoe/crusoe_watch_agent
 sudo mv crusoe_watch_agent.sh /etc/crusoe/crusoe_watch_agent/.
 sudo chmod +x /etc/crusoe/crusoe_watch_agent/crusoe_watch_agent.sh
 sudo ln -sf "/etc/crusoe/crusoe_watch_agent/crusoe_watch_agent.sh" "/usr/bin/crusoe-watch-agent"
-```
-
-**For AMD GPUs:**
-```
-wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent_amd.sh
-sudo mkdir -p /etc/crusoe/crusoe_watch_agent
-sudo mv crusoe_watch_agent_amd.sh /etc/crusoe/crusoe_watch_agent/.
-sudo chmod +x /etc/crusoe/crusoe_watch_agent/crusoe_watch_agent_amd.sh
-sudo ln -sf "/etc/crusoe/crusoe_watch_agent/crusoe_watch_agent_amd.sh" "/usr/bin/crusoe-watch-agent"
 ```
 
 ### Installation Modes
