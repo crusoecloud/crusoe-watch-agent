@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.25 (2026-05-22)
+
+**Bug Fixes**
+
+- Add pod identifier to internal custom metrics to avoid timeseries collision ([3ab5957](https://github.com/crusoecloud/crusoe-watch-agent/commit/3ab5957))
+
+
 ## 0.3.24 (2026-05-19)
 
 - Pin Vector to a stable release across all deployments ([61bc649](https://github.com/crusoecloud/crusoe-watch-agent/commit/61bc649))
