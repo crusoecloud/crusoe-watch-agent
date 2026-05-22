@@ -585,6 +585,8 @@ if exists(.metadata.level) {
 
         # add only crusoe_resource tag if app_id is present
         if endpoint_config.get("app_id"):
+            vrl_lines.append(f'.tags.pod_ip = "{endpoint_config["pod_ip"]}"')
+            vrl_lines.append(f'.tags.pod_name = "{endpoint_config["pod_name"]}"')
             vrl_lines.append(f'.tags.crusoe_resource = "custom_internal"')
             vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
             vrl_lines.append(f'.tags.app_id = "{endpoint_config["app_id"]}"')
