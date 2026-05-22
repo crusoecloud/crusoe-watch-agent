@@ -487,21 +487,10 @@ install_dcgm() {
 write_token_to_secrets() {
   local token="$1"
   mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  # The token file is consumed differently depending on install mode:
-  #   * Docker mode: read by docker-compose via env_file. Compose v2.24+
-  #     interpolates env_file values by default -- a literal '$' followed
-  #     by a valid identifier (e.g. '$EQeyUik...' in a bcrypt token) gets
-  #     expanded to empty, silently truncating the token. Escape '$' as
-  #     '$$' here; compose un-escapes '$$' back to '$' on interpolation.
-  #   * Native mode: read by systemd's EnvironmentFile=, which does NOT
-  #     interpolate. Write the token verbatim. This applies to both the
-  #     agent and the metrics-exporter when running as a native binary.
-  if [[ "$INSTALL_MODE" == "docker" ]]; then
-    local escaped_token="${token//\$/\$\$}"
-    echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
-  else
-    echo "CRUSOE_AUTH_TOKEN=${token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
-  fi
+  # Single-quote the value so neither docker-compose nor systemd's
+  # EnvironmentFile= tries to interpolate '$' in bcrypt tokens.
+  # Both strip surrounding quotes before exporting the variable.
+  echo "CRUSOE_AUTH_TOKEN='${token}'" > "$CRUSOE_MONITORING_TOKEN_FILE"
   chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
 }
 
@@ -812,11 +801,10 @@ do_install() {
     write_token_to_secrets "$CRUSOE_AUTH_TOKEN"
   elif [[ -s "$CRUSOE_MONITORING_TOKEN_FILE" ]]; then
     echo "Detected existing token file at $CRUSOE_MONITORING_TOKEN_FILE"
-    # The token file may have been written by a previous Docker install,
-    # which escapes '$' as '$$' for docker-compose. If the token is longer
-    # than expected, try un-escaping '$$' → '$' to recover the raw value.
+    # Strip quotes and un-escape '$$' → '$' (legacy Docker installs
+    # used '$$' escaping) so write_token_to_secrets receives the raw token.
     local existing_token
-    existing_token=$(sed 's/^CRUSOE_AUTH_TOKEN=//' "$CRUSOE_MONITORING_TOKEN_FILE")
+    existing_token=$(sed "s/^CRUSOE_AUTH_TOKEN=//; s/^['\"]//; s/['\"]$//" "$CRUSOE_MONITORING_TOKEN_FILE")
     if ! validate_token "$existing_token"; then
       existing_token="${existing_token//\$\$/\$}"
     fi
