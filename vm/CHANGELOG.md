@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.12 (2026-05-26)
+
+**Features**
+- Add `crusoe_vm_boot_time` metric to all standalone VM configurations ([5e7fde5](https://github.com/crusoecloud/crusoe-watch-agent/commit/5e7fde5))
+
+**Improvements**
+- Auto-detect VM type (NVIDIA, AMD, or CPU-only) during installation, removing the need to select the correct hardware-specific script ([4e34d79](https://github.com/crusoecloud/crusoe-watch-agent/commit/4e34d79))
+
+
 ## 1.0.11 (2026-05-19)
 
 - Pin Vector to a stable release across Docker and native installation modes ([61bc649](https://github.com/crusoecloud/crusoe-watch-agent/commit/61bc649))
