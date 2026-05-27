@@ -1,12 +1,6 @@
 # Configure Vector data directory for disk buffers
 data_dir: /var/lib/vector
 
-# Shared configuration templates
-x-common-buffer-config: &common-buffer-config
-    type: disk
-    max_size: 268435488  # 256 MiB
-    when_full: block
-
 sources:
     host_metrics:
         type: host_metrics
@@ -291,4 +285,7 @@ sinks:
             verify_certificate: true
             verify_hostname: true
             alpn_protocols: ["h2", "http/1.1"]
-        buffer: *common-buffer-config
+        buffer:
+            type: disk
+            max_size: 268435488  # 256 MiB
+            when_full: block

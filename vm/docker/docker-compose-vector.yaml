@@ -8,6 +8,7 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /var/log/journal:/var/log/journal:ro
+      - /var/lib/vector:/var/lib/vector
     env_file:
       - ./.env
       - /etc/crusoe/secrets/.monitoring-token

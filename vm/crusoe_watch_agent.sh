@@ -792,6 +792,9 @@ do_install() {
   if [[ "$INSTALL_MODE" == "docker" ]]; then
     status "Download Vector docker-compose file."
     wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
+
+    # Ensure the data directory for Vector disk buffers exists on the host
+    mkdir -p /var/lib/vector
   fi
 
   # 7. Token handling
