@@ -167,6 +167,14 @@ class VectorConfigReloader:
         self.cluster_sink_endpoint = f"{sink_endpoint}/cluster"
         self.sink_proxy_cfg = reloader_cfg["sink"].get("proxy", {}) or {}
 
+        # Note: cluster metrics would need greater buffer allowance in the future when VMagent
+        # is replaced with CWA, as metrics are proportional to the number of nodes.
+        self.sink_buffer_config = {
+            "type": "disk",
+            "max_size": 268435488,  # 256 MiB
+            "when_full": "block",
+        }
+
         LOG.setLevel(reloader_cfg["log_level"])
 
         # Template for per-pod custom metrics sinks. `inputs` is filled in per
@@ -534,7 +542,7 @@ if exists(.metadata.level) {
             "healthcheck": {"enabled": False},
             "compression": "snappy",
             "request": {"concurrency": "adaptive"},
-            "batch": {"max_bytes": 500000},
+            "batch": {"max_bytes": 500000, "aggregate": False},
             "tls": {"verify_certificate": True, "verify_hostname": True, "alpn_protocols": ["h2", "http/1.1"]},
         }
         if with_proxy and self.sink_proxy_cfg.get("enabled"):
@@ -658,6 +666,7 @@ if exists(.metadata.level) {
         # Wire the sink to read from this exporter's transform; copy so we don't
         # mutate the spec's stored sink_config across reconcile cycles.
         sink = dict(spec.sink_config, inputs=[spec.transform_name])
+        sink["buffer"] = self.sink_buffer_config
         vector_cfg.setdefault("sinks", {})[spec.sink_name] = sink
 
     def set_logs_config(self, vector_cfg: dict):
@@ -756,7 +765,7 @@ if exists(.metadata.level) {
             "compression": "snappy",
             "healthcheck": {"enabled": False},
             "request": {
-                "headers": {"X-Crusoe-Vm-Id": "${VM_ID:-unknown}"}
+                "headers": {"X-Crusoe-Vm-Id": "${VM_ID:-unknown}"},
             },
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "encoding": {"codec": "json"},
@@ -968,6 +977,8 @@ if exists(.metadata.level) {
         base_cfg["sinks"]["cms_gateway_node_metrics"]["endpoint"] = self.infra_sink_endpoint
         if self.sink_proxy_cfg.get("enabled"):
             base_cfg["sinks"]["cms_gateway_node_metrics"]["proxy"] = self.sink_proxy_cfg
+
+        base_cfg["sinks"]["cms_gateway_node_metrics"]["buffer"] = self.sink_buffer_config
 
         # Always reassign so LiteralStr is preserved through any deepcopy semantics
         base_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["source"] = self.node_metrics_vector_transform_source

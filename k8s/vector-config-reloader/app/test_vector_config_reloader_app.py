@@ -480,3 +480,36 @@ def test_reconcile_uses_last_known_cm_when_fetch_fails():
     r.k8s_api_client._cm_raises = ApiException(status=500, reason="ServerError")
     r.reconcile_once()
     assert r._tracked_cm_data == saved_cm
+
+
+# -------- Buffer configuration --------
+
+def test_sink_buffer_config():
+    """All sinks use 256 MiB disk buffer."""
+    r = VectorConfigReloader()
+    assert r.sink_buffer_config == {
+        "type": "disk",
+        "max_size": 268435488,  # 256 MiB
+        "when_full": "block",
+    }
+
+
+def test_ksm_sink_has_buffer():
+    r = VectorConfigReloader()
+    vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
+    r.ksm_cfg.enabled = True
+    r._apply_cluster_exporter(vector_cfg, r.ksm_spec, "10.0.0.1")
+
+    assert "kube_state_metrics_sink" in vector_cfg["sinks"]
+    sink = vector_cfg["sinks"]["kube_state_metrics_sink"]
+    assert sink["buffer"]["max_size"] == 268435488  # 256 MiB
+
+
+def test_logs_sink_has_no_buffer():
+    r = VectorConfigReloader()
+    vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
+    r.set_logs_config(vector_cfg)
+
+    assert "crusoe_ingest" in vector_cfg["sinks"]
+    sink = vector_cfg["sinks"]["crusoe_ingest"]
+    assert "buffer" not in sink

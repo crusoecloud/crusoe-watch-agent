@@ -300,6 +300,7 @@ sinks:
             concurrency: adaptive
         batch:
             max_bytes: 500000 # ~500KB
+            aggregate: false
         compression: snappy
         tls:
             verify_certificate: true
@@ -321,6 +322,7 @@ sinks:
             concurrency: adaptive
         batch:
             max_bytes: 500000 # ~500KB
+            aggregate: false
         compression: snappy
         tls:
             verify_certificate: true
