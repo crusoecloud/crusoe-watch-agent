@@ -595,7 +595,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: internal.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/vector-config-reloader:v0.2.21
+      image: internal.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/vector-config-reloader:v0.2.26
       env:
         - name: NODE_NAME
           valueFrom:
@@ -956,7 +956,7 @@ crusoeMetricsExporter:
 
   image:
     repository: internal.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/crusoe-metrics-exporter
-    tag: "0.1.1"
+    tag: "0.2.1"
     pullPolicy: IfNotPresent
 
   port: 9500
