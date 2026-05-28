@@ -51,8 +51,11 @@ metricsExporter:
   defaultSlurmMetricsPort: 6817
   defaultScrapeInterval: 60
 
-logLevel: WARNING
-
+# Log level for vector-config-reloader. INFO surfaces per-cycle reconcile
+# decisions ("no changes" / "reload triggered: pod set changed") which are the
+# primary signal that the reloader is healthy. Set to WARNING to suppress
+# steady-state output, or DEBUG for verbose pod-listing details.
+logLevel: INFO
 
 # CPU profile for Vector subchart
 # Adjust according to https://helm.vector.dev
@@ -102,7 +105,7 @@ vector:
     pullSecrets: [ ]
     # image.tag -- The tag to use for Vector's image.
     # @default -- Derived from the Chart's appVersion.
-    tag: "nightly-debian"
+    tag: "0.55.0-debian"
     # image.sha -- The SHA to use for Vector's image.
     sha: ""
     # image.base -- The base distribution to use for vector. If set, then the base in appVersion will be replaced with this base alongside the version.
@@ -495,11 +498,17 @@ vector:
           concurrency: adaptive
         batch:
             max_bytes: 500000 # ~500KB
+            aggregate: false
         compression: snappy
         tls:
           verify_certificate: true
           verify_hostname: true
           alpn_protocols: ["h2", "http/1.1"]
+        # Disk-based buffer for persistence during outages
+        buffer:
+          type: disk
+          max_size: 268435488  # 256 MiB buffer
+          when_full: block
   # defaultVolumes -- Default volumes that are mounted into pods. In most cases, these should not be changed.
   # Use `extraVolumes`/`extraVolumeMounts` for additional custom volumes.
   # @default -- See `values.yaml`
@@ -896,7 +905,7 @@ vector:
 # Log Collector configuration
 logCollector:
   # Shared defaults (applied to both NVIDIA and AMD unless overridden per-vendor)
-  imageTag: v0.2.17
+  imageTag: v0.2.23
   pullPolicy: IfNotPresent
 
   env:

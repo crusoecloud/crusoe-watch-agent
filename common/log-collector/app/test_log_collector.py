@@ -386,22 +386,23 @@ class TestCollectionWorkflow(unittest.TestCase):
         collector.find_nvidia_driver_pod = Mock(return_value=mock_pod)
 
         # Mock execute nvidia-bug-report
-        collector.execute_nvidia_bug_report = Mock(return_value='/tmp/test-log.log.gz')
+        collector.execute_nvidia_bug_report = Mock(return_value=('/tmp/test-log.log.gz', None, None))
 
         # Mock download
         test_log = Path(self.output_dir) / 'test-log.log.gz'
         test_log.write_text('test')
-        collector.download_log_file = Mock(return_value=test_log)
+        collector.download_log_file = Mock(return_value=(test_log, None, None))
 
         # Mock cleanup
         collector.cleanup_remote_log = Mock(return_value=True)
         collector.cleanup_old_logs = Mock()
 
-        log_path, error_msg = collector.collect_logs()
+        log_path, error_code, error_msg = collector.collect_logs()
 
         self.assertIsNotNone(log_path)
         self.assertEqual(log_path, test_log)
-        self.assertEqual(error_msg, "")
+        self.assertIsNone(error_code)
+        self.assertIsNone(error_msg)
         # Verify execute was called with event_id=None
         collector.execute_nvidia_bug_report.assert_called_once_with(mock_pod, None)
 
@@ -420,22 +421,23 @@ class TestCollectionWorkflow(unittest.TestCase):
         collector.find_nvidia_driver_pod = Mock(return_value=mock_pod)
 
         # Mock execute nvidia-bug-report
-        collector.execute_nvidia_bug_report = Mock(return_value='/tmp/test-log-evt123.log.gz')
+        collector.execute_nvidia_bug_report = Mock(return_value=('/tmp/test-log-evt123.log.gz', None, None))
 
         # Mock download
         test_log = Path(self.output_dir) / 'test-log-evt123.log.gz'
         test_log.write_text('test')
-        collector.download_log_file = Mock(return_value=test_log)
+        collector.download_log_file = Mock(return_value=(test_log, None, None))
 
         # Mock cleanup
         collector.cleanup_remote_log = Mock(return_value=True)
         collector.cleanup_old_logs = Mock()
 
-        log_path, error_msg = collector.collect_logs(event_id='evt-123')
+        log_path, error_code, error_msg = collector.collect_logs(event_id='evt-123')
 
         self.assertIsNotNone(log_path)
         self.assertEqual(log_path, test_log)
-        self.assertEqual(error_msg, "")
+        self.assertIsNone(error_code)
+        self.assertIsNone(error_msg)
         # Verify execute was called with event_id
         collector.execute_nvidia_bug_report.assert_called_once_with(mock_pod, 'evt-123')
 
@@ -448,11 +450,11 @@ class TestCollectionWorkflow(unittest.TestCase):
         collector.find_nvidia_driver_pod = Mock(return_value=None)
         collector.cleanup_old_logs = Mock()
 
-        log_path, error_msg = collector.collect_logs()
+        log_path, error_code, error_msg = collector.collect_logs()
 
         self.assertIsNone(log_path)
+        self.assertEqual(error_code, 'CWA-BR-5004')
         self.assertIn("NVIDIA driver pod not found", error_msg)
-        self.assertIn(collector.node_name, error_msg)
 
     @patch('log_collector.config.load_incluster_config')
     @patch('log_collector.client.CoreV1Api')
@@ -464,14 +466,14 @@ class TestCollectionWorkflow(unittest.TestCase):
         mock_pod = Mock()
         mock_pod.metadata.name = 'nvidia-gpu-driver-test'
         collector.find_nvidia_driver_pod = Mock(return_value=mock_pod)
-        collector.execute_nvidia_bug_report = Mock(return_value=None)
+        collector.execute_nvidia_bug_report = Mock(return_value=(None, 'CWA-BR-5005', 'Error executing bug report script'))
         collector.cleanup_old_logs = Mock()
 
-        log_path, error_msg = collector.collect_logs()
+        log_path, error_code, error_msg = collector.collect_logs()
 
         self.assertIsNone(log_path)
-        self.assertIn("Failed to execute nvidia-bug-report.sh", error_msg)
-        self.assertIn(mock_pod.metadata.name, error_msg)
+        self.assertEqual(error_code, 'CWA-BR-5005')
+        self.assertIn("Error executing bug report script", error_msg)
 
     @patch('log_collector.config.load_incluster_config')
     @patch('log_collector.client.CoreV1Api')
@@ -483,15 +485,15 @@ class TestCollectionWorkflow(unittest.TestCase):
         mock_pod = Mock()
         mock_pod.metadata.name = 'nvidia-gpu-driver-test'
         collector.find_nvidia_driver_pod = Mock(return_value=mock_pod)
-        collector.execute_nvidia_bug_report = Mock(return_value='/tmp/test-log.log.gz')
-        collector.download_log_file = Mock(return_value=None)
+        collector.execute_nvidia_bug_report = Mock(return_value=('/tmp/test-log.log.gz', None, None))
+        collector.download_log_file = Mock(return_value=(None, 'CWA-BR-5007', 'Unexpected error downloading bug report'))
         collector.cleanup_old_logs = Mock()
 
-        log_path, error_msg = collector.collect_logs()
+        log_path, error_code, error_msg = collector.collect_logs()
 
         self.assertIsNone(log_path)
-        self.assertIn("Failed to download log file", error_msg)
-        self.assertIn(mock_pod.metadata.name, error_msg)
+        self.assertEqual(error_code, 'CWA-BR-5007')
+        self.assertIn("Unexpected error downloading bug report", error_msg)
 
 
 if __name__ == '__main__':

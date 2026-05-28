@@ -4,8 +4,9 @@
 UBUNTU_OS_VERSION=$(lsb_release -r -s)
 CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 
-# GitHub branch (optional override via CLI, defaults to main)
-GITHUB_BRANCH="main"
+# GitHub ref (tag or branch). Defaults to "main" for backward compatibility.
+# Published scripts in docs/vm/ have this pinned to a release tag by CI.
+AGENT_VERSION="main"
 
 # CMS base URL (optional, defaults to prod)
 CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
@@ -18,7 +19,6 @@ REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR="vm/docker/docker-compose-amd-log-collec
 REMOTE_CRUSOE_WATCH_AGENT_SERVICE="vm/systemctl/crusoe-watch-agent.service"
 REMOTE_CRUSOE_AMD_EXPORTER_SERVICE="vm/systemctl/crusoe-amd-exporter.service"
 REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-amd-log-collector.service"
-REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE="vm/systemctl/crusoe-amd-log-collector-native.service"
 REMOTE_AMD_METRICS_CONFIG="vm/config/amd_metrics_config.json"
 REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER="vm/docker/docker-compose-crusoe-metrics-exporter.yaml"
 REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE="vm/systemctl/crusoe-metrics-exporter.service"
@@ -33,9 +33,14 @@ CRUSOE_MONITORING_TOKEN_FILE="$CRUSOE_SECRETS_DIR/.monitoring-token"
 # Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
+LATEST_VERSION_URL="https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/VERSION"
+LATEST_SCRIPT_URL="https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent_amd.sh"
+INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 
 # Log collector container image version (update here when releasing new container builds)
-LOG_COLLECTOR_IMAGE_VERSION="v0.2.17"
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.23"
+
+CRUSOE_METRICS_EXPORTER_BIN="/usr/local/bin/crusoe-metrics-exporter"
 
 # Optional parameters with defaults
 DEFAULT_AMD_EXPORTER_SERVICE_NAME="crusoe-amd-exporter.service"
@@ -44,7 +49,6 @@ AMD_EXPORTER_PORT="5000"
 DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME="crusoe-amd-log-collector.service"
 DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=false
-INSTALL_MODE="docker"  # docker or native
 
 LOGS_INGRESS_ENDPOINT=""
 REGION=""
@@ -58,13 +62,11 @@ usage() {
   echo "  --ingress-url URL                         Specify CMS base URL (default: https://cms-monitoring.crusoecloud.com)"
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
-  echo "  --no-docker                               Install using native binaries instead of Docker (default: Docker)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter (requires --region)"
   echo "  --region REGION                           Crusoe region (e.g. us-east1-a, eu-iceland1-a); used to derive OBJSTORE_ENDPOINT_FQDN"
   echo "Examples:"
   echo "  $0 install --branch main"
-  echo "  $0 install --no-docker"
   echo "  $0 uninstall"
   echo "  $0 refresh-token"
   echo "  $0 upgrade -b main"
@@ -93,7 +95,7 @@ parse_args() {
         ;;
       --branch|-b)
         if [[ -n "$2" ]]; then
-          GITHUB_BRANCH="$2"; shift 2
+          AGENT_VERSION="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -106,7 +108,7 @@ parse_args() {
         fi
         ;;
       --no-docker)
-        INSTALL_MODE="native"; shift ;;
+        error_exit "Native mode (--no-docker) is not supported for AMD. The AMD installer requires Docker." ;;
       --logs-endpoint)
         if [[ -n "$2" ]]; then
           LOGS_INGRESS_ENDPOINT="$2"; shift 2
@@ -138,6 +140,26 @@ parse_args() {
 }
 
 # --- Helper Functions ---
+
+# Check if a systemd unit exists (anywhere on the systemd path)
+service_exists() {
+  systemctl cat "$1" >/dev/null 2>&1
+}
+
+# Stop and disable a systemd service if it exists
+stop_and_disable_service() {
+  local service_name="$1"
+  if service_exists "$service_name"; then
+    echo "Found $service_name."
+    systemctl stop "$service_name" || echo "Warning: Failed to stop $service_name"
+    systemctl disable "$service_name" || echo "Warning: Failed to disable $service_name"
+    echo "$service_name has been stopped and disabled."
+    return 0
+  else
+    echo "No $service_name found."
+    return 1
+  fi
+}
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
@@ -176,32 +198,15 @@ check_root() {
   fi
 }
 
-# Check if a systemd unit exists (anywhere on the systemd path)
-service_exists() {
-  systemctl cat "$1" >/dev/null 2>&1
-}
-
-# Stop and disable a systemd service if it exists
-stop_and_disable_service() {
-  local service_name="$1"
-  if service_exists "$service_name"; then
-    echo "Found $service_name."
-    systemctl stop "$service_name" || echo "Warning: Failed to stop $service_name"
-    systemctl disable "$service_name" || echo "Warning: Failed to disable $service_name"
-    echo "$service_name has been stopped and disabled."
-    return 0
-  else
-    echo "No $service_name found."
-    return 1
-  fi
-}
-
 # --- Token & Version/Lifecycle Helpers ---
 
 write_token_to_secrets() {
   local token="$1"
   mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  # Escape dollar signs to prevent variable expansion in docker-compose/vector
+  # Docker-compose v2.24+ interpolates env_file values by default -- a
+  # literal '$' followed by a valid identifier (e.g. '$EQeyUik...' in a
+  # bcrypt token) gets expanded to empty, silently truncating the token.
+  # Escape '$' as '$$'; compose un-escapes '$$' back to '$' on interpolation.
   local escaped_token="${token//\$/\$\$}"
   echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
   chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
@@ -219,7 +224,7 @@ normalize_version() {
 }
 
 get_remote_version() {
-  normalize_version "$(curl -fsSL "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE")"
+  normalize_version "$(curl -fsSL "$LATEST_VERSION_URL")"
 }
 
 get_installed_version() {
@@ -252,6 +257,7 @@ check_os_support() {
 install_docker() {
   curl -fsSL https://get.docker.com | sh
 }
+
 
 # Compare semantic versions a.b.c >= x.y.z
 version_ge() {
@@ -304,60 +310,6 @@ ensure_rocm_6_2_or_newer() {
   fi
 }
 
-install_amd_log_collector_native() {
-  status "Installing AMD log collector natively."
-
-  # Ensure required system packages
-  status "Ensuring required packages (python3, pip, dmidecode)."
-  if ! command_exists python3; then
-    apt-get update && apt-get install -y python3 python3-pip || error_exit "Failed to install python3"
-  fi
-  if ! command_exists dmidecode; then
-    apt-get install -y dmidecode || error_exit "Failed to install dmidecode."
-  fi
-
-  # Create installation directory
-  local INSTALL_DIR="/opt/crusoe-amd-log-collector"
-  mkdir -p "$INSTALL_DIR" || error_exit "Failed to create $INSTALL_DIR"
-
-  # Download application files
-  status "Downloading AMD log collector application files."
-  local GITHUB_APP_BASE="$GITHUB_RAW_BASE_URL/common/log-collector/app"
-  wget -q -O "$INSTALL_DIR/log_collector.py" "$GITHUB_APP_BASE/log_collector.py" || error_exit "Failed to download log_collector.py"
-  wget -q -O "$INSTALL_DIR/amd-bug-report.sh" "$GITHUB_APP_BASE/amd-bug-report.sh" || error_exit "Failed to download amd-bug-report.sh"
-
-  # Make amd-bug-report.sh executable and copy to /usr/bin
-  chmod +x "$INSTALL_DIR/amd-bug-report.sh"
-  cp "$INSTALL_DIR/amd-bug-report.sh" /usr/bin/amd-bug-report.sh || error_exit "Failed to install amd-bug-report.sh"
-
-  # Download and install Python requirements
-  local GITHUB_REQ="$GITHUB_APP_BASE/requirements.txt"
-  wget -q -O "/tmp/amd-log-collector-requirements.txt" "$GITHUB_REQ" || error_exit "Failed to download requirements.txt"
-
-  # Try with --break-system-packages first (pip >= 22.1), fall back without it for older pip
-  if ! pip3 install --break-system-packages -r /tmp/amd-log-collector-requirements.txt 2>/dev/null; then
-    pip3 install -r /tmp/amd-log-collector-requirements.txt || error_exit "Failed to install Python dependencies"
-  fi
-  rm -f /tmp/amd-log-collector-requirements.txt
-
-  # Ensure ROCm tools are available (rocm-smi, rocminfo)
-  if ! command_exists rocm-smi; then
-    status "rocm-smi not found. Installing ROCm SMI tools."
-    # ROCm repository should already be configured for AMD GPU VMs
-    apt-get update && apt-get install -y rocm-smi rocminfo || error_exit "Failed to install ROCm SMI tools"
-  else
-    local rocm_version=$(get_rocm_version)
-    status "ROCm tools already available (version $rocm_version)"
-  fi
-
-  # Ensure other system tools needed by amd-bug-report.sh
-  apt-get install -y lsb-release lshw pciutils dkms gzip 2>/dev/null || true
-
-  status "AMD log collector native installation complete."
-}
-
-
-
 do_install() {
   # Ensure the script is run as root.
   check_root
@@ -406,19 +358,11 @@ do_install() {
     wget -q -O "$SYSTEMCTL_DIR/$AMD_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_EXPORTER_SERVICE"
 
     # Download AMD Log Collector artifacts
-    if [[ "$INSTALL_MODE" == "docker" ]]; then
-      status "Download AMD Log Collector docker-compose file."
-      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-amd-log-collector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR"
+    status "Download AMD Log Collector docker-compose file."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-amd-log-collector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR"
 
-      status "Download $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME systemd unit."
-      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE"
-    else
-      status "Installing AMD log collector natively."
-      install_amd_log_collector_native
-
-      status "Download $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME native systemd unit."
-      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_LOG_COLLECTOR_NATIVE_SERVICE"
-    fi
+    status "Download $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME systemd unit."
+    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE"
 
     # Create log directory for AMD log collector
     status "Creating AMD log collection directory."
@@ -436,8 +380,7 @@ do_install() {
   status "Download Vector docker-compose file."
   wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
 
-  # Download Crusoe Metrics Exporter artifacts (Docker mode only, opt-in via --enable-metrics-exporter)
-  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
+  if $ENABLE_METRICS_EXPORTER; then
     status "Download Crusoe Metrics Exporter docker-compose file."
     wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
 
@@ -492,27 +435,27 @@ EOF
     systemctl daemon-reload
     echo "systemctl enable $AMD_EXPORTER_SERVICE_NAME"
     systemctl enable "$AMD_EXPORTER_SERVICE_NAME"
-    echo "systemctl start $AMD_EXPORTER_SERVICE_NAME"
-    systemctl start "$AMD_EXPORTER_SERVICE_NAME"
+    echo "systemctl restart $AMD_EXPORTER_SERVICE_NAME"
+    systemctl restart "$AMD_EXPORTER_SERVICE_NAME"
 
     # Start AMD log collector
     status "Enable and start systemd services for $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME."
     systemctl daemon-reload
     echo "systemctl enable $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
     systemctl enable "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
-    echo "systemctl start $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
-    systemctl start "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    echo "systemctl restart $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl restart "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
   fi
 
   # Start Crusoe Metrics Exporter after .env is ready
-  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
+  if $ENABLE_METRICS_EXPORTER; then
     status "Enable and start systemd services for $DEFAULT_METRICS_EXPORTER_SERVICE_NAME."
     echo "systemctl daemon-reload"
     systemctl daemon-reload
     echo "systemctl enable $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
     systemctl enable "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
-    echo "systemctl start $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
-    systemctl start "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    echo "systemctl restart $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    systemctl restart "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
   fi
 
   status "Download crusoe-watch-agent.service."
@@ -523,10 +466,12 @@ EOF
   systemctl daemon-reload
   echo "systemctl enable crusoe-watch-agent.service"
   systemctl enable crusoe-watch-agent.service
-  echo "systemctl start crusoe-watch-agent.service"
-  systemctl start crusoe-watch-agent.service
+  echo "systemctl restart crusoe-watch-agent.service"
+  systemctl restart crusoe-watch-agent.service
 
+  printf '%s\n' "${ORIGINAL_ARGS[@]}" > "$INSTALL_ARGS_FILE"
   status "Setup Complete!"
+
   if $HAS_AMD_GPUS; then
     echo "Check status of $AMD_EXPORTER_SERVICE_NAME: 'sudo systemctl status $AMD_EXPORTER_SERVICE_NAME'"
     echo "Check status of $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME'"
@@ -540,6 +485,7 @@ EOF
 
 do_uninstall() {
   check_root
+
   status "Stopping and disabling crusoe-watch-agent service."
   if service_exists "crusoe-watch-agent.service"; then
     systemctl stop crusoe-watch-agent.service || true
@@ -574,10 +520,8 @@ do_uninstall() {
   status "Removing crusoe_watch_agent directory."
   rm -rf "$CRUSOE_WATCH_AGENT_DIR" || true
 
-  status "Removing AMD log collector directory (if native install)."
-  if [[ -d "/opt/crusoe-amd-log-collector" ]]; then
-    rm -rf /opt/crusoe-amd-log-collector || true
-  fi
+  rm -f "$INSTALL_ARGS_FILE" || true
+  rm -f "$CRUSOE_METRICS_EXPORTER_BIN" || true
 
   status "Uninstall complete."
 }
@@ -596,11 +540,7 @@ do_refresh_token() {
     error_exit "NEW_CRUSOE_AUTH_TOKEN is invalid. Please provide a valid token."
   fi
   status "Writing token to secrets store at $CRUSOE_MONITORING_TOKEN_FILE..."
-  mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  # Escape dollar signs to prevent variable expansion in docker-compose/vector
-  local escaped_token="${NEW_CRUSOE_AUTH_TOKEN//\$/\$\$}"
-  echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
-  chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
+  write_token_to_secrets "$NEW_CRUSOE_AUTH_TOKEN"
   status "Token refresh complete."
   echo "CRUSOE_AUTH_TOKEN has been updated in $CRUSOE_MONITORING_TOKEN_FILE."
   echo "For the changes to take effect, you may need to restart the crusoe-watch-agent service:"
@@ -613,29 +553,45 @@ do_upgrade() {
   local remote_ver installed_ver
   remote_ver=$(get_remote_version)
   if [[ -z "$remote_ver" ]]; then
-    error_exit "Failed to determine remote version from $REMOTE_VERSION_FILE on branch $GITHUB_BRANCH."
+    error_exit "Failed to determine remote version."
   fi
   installed_ver=$(get_installed_version)
 
   if [[ -z "$installed_ver" ]]; then
     status "No installed version detected. Performing clean install of $remote_ver."
-    do_uninstall
-    do_install
-    return
   elif version_lt "$installed_ver" "$remote_ver"; then
     status "Upgrading agent from $installed_ver to $remote_ver."
-    do_uninstall
-    do_install
   else
     echo "Installed version ($installed_ver) is up-to-date (remote: $remote_ver). No upgrade performed."
+    return
   fi
+
+  # Read saved install args
+  local saved_args=()
+  if [[ -f "$INSTALL_ARGS_FILE" ]]; then
+    mapfile -t saved_args < "$INSTALL_ARGS_FILE"
+  else
+    # Fallback for installs that predate args persistence
+    saved_args=(install)
+  fi
+
+  # Download the latest script and re-run install (idempotent)
+  local new_script
+  new_script=$(mktemp)
+  curl -fsSL "$LATEST_SCRIPT_URL" -o "$new_script" || error_exit "Failed to download latest script."
+  chmod +x "$new_script"
+  bash "$new_script" "${saved_args[@]}"
+  rm -f "$new_script"
 }
+
+# Capture raw args before parsing consumes them
+ORIGINAL_ARGS=("$@")
 
 # Parse command line arguments
 parse_args "$@"
 
-# Update base URL to reflect chosen branch
-GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${GITHUB_BRANCH}"
+# Update base URL to reflect chosen version (or branch override)
+GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${AGENT_VERSION}"
 
 # Construct endpoints from CMS_BASE_URL (after parse_args so --ingress-url is applied)
 TELEMETRY_INGRESS_ENDPOINT="${CMS_BASE_URL}/ingest"

@@ -26,6 +26,8 @@ import subprocess
 import socket
 import json
 import shlex
+from enum import Enum
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 from datetime import datetime, timezone
@@ -59,6 +61,18 @@ DRIVER_NAMESPACE = os.environ.get("DRIVER_NAMESPACE", "nvidia-gpu-operator" if G
 DRIVER_POD_PREFIX = os.environ.get("DRIVER_POD_PREFIX", f"{GPU_TYPE}-gpu-driver")
 RUN_ONCE = os.environ.get("RUN_ONCE", "false").lower() == "true"
 
+# Logging context — fields injected automatically into every log record within a task
+_log_ctx: ContextVar[dict] = ContextVar('log_ctx', default={})
+
+# Allow-list of per-call extra fields that are forwarded to the JSON log output
+_LOG_EXTRA_FIELDS = ("event_id", "error_code", "root_cause")
+
+def set_log_context(**kwargs) -> None:
+    """Inject fields into every log record emitted from this point forward (current context)."""
+    _log_ctx.set(kwargs)
+
+def clear_log_context() -> None:
+    _log_ctx.set({})
 
 class JSONFormatter(logging.Formatter):
     """JSON formatter for structured logging - efficient and no parsing needed."""
@@ -70,8 +84,16 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
+        # Inject task-scoped fields (e.g. event_id) set via set_log_context()
+        log_data.update(_log_ctx.get())
+
+        # Pull allow-listed per-call extra fields if present
+        for key in _LOG_EXTRA_FIELDS:
+            if hasattr(record, key):
+                log_data[key] = getattr(record, key)
+
         if record.exc_info:
-            log_data["exception"] = self.formatException(record.exc_info)
+            log_data["stacktrace"] = self.formatException(record.exc_info)
 
         return json.dumps(log_data)
 
@@ -84,6 +106,25 @@ logging.basicConfig(
     handlers=[handler]
 )
 LOG = logging.getLogger(__name__)
+
+
+class BugReportError(Enum):
+    """Error codes and default user-facing messages for bug report collection failures."""
+
+    SCRIPT_UNAVAILABLE   = ("CWA-BR-5001", "Bug report script unavailable")
+    SCRIPT_TIMED_OUT     = ("CWA-BR-5002", "Bug report script execution timed out")
+    SCRIPT_FAILED        = ("CWA-BR-5003", "Bug report script failed")
+    DRIVER_POD_NOT_FOUND = ("CWA-BR-5004", "NVIDIA driver pod not found")
+    EXEC_ERROR           = ("CWA-BR-5005", "Error executing bug report script")
+    NO_OUTPUT            = ("CWA-BR-5006", "Bug report script returned no output")
+    DOWNLOAD_FAILED      = ("CWA-BR-5007", "Unexpected error downloading bug report")
+    COLLECTION_TIMED_OUT = ("CWA-BR-5008", "Bug report generation timed out")
+    UPLOAD_FAILED        = ("CWA-BR-5009", "Bug report upload failed")
+    INTERNAL_ERROR       = ("CWA-BR-5099", "Internal Server Error")
+
+    def __init__(self, code: str, message: str):
+        self.code = code
+        self.message = message
 
 
 class LogCollector:
@@ -225,7 +266,7 @@ class LogCollector:
             if response.status_code == 200:
                 data = response.json()
                 if data.get("status") == "success" and data.get("event_id"):
-                    LOG.info(f"Received task with event_id: {data['event_id']}")
+                    LOG.info("Received task", extra={"event_id": data['event_id']})
                     return data
                 else:
                     LOG.debug(f"No tasks available: {data}")
@@ -247,7 +288,7 @@ class LogCollector:
             LOG.error(f"Unexpected error checking for tasks: {e}")
             return None
 
-    def report_result(self, event_id: str, status: str, log_file: Optional[Path] = None, message: str = "") -> bool:
+    def report_result(self, event_id: str, status: str, log_file: Optional[Path] = None, error_code: str = "", message: str = "") -> bool:
         """
         Report collection result to the API - combines upload and status in a single call.
 
@@ -266,7 +307,7 @@ class LogCollector:
 
             if log_file and status == "success":
                 # Success case - upload file with success status
-                LOG.info(f"Uploading log file {log_file.name} with success status for event {event_id}")
+                LOG.info(f"Uploading log file {log_file.name} with success status")
 
                 with open(log_file, 'rb') as f:
                     files = {'file': (log_file.name, f, 'application/gzip')}
@@ -281,11 +322,15 @@ class LogCollector:
                     response = requests.post(url, files=files, data=data, headers=headers, timeout=60)
             else:
                 # Failed case - send status only
-                LOG.info(f"Sending {status} status for event {event_id}: {message}")
+                LOG.info(f"Sending {status} status", extra={
+                    "error_code": error_code,
+                    "root_cause": message
+                })
                 data = {
                     'vm_id': self.vm_id,
                     'event_id': event_id,
                     'status': status,
+                    'error_code': error_code,
                     'message': message,
                     'node_name': self.node_name
                 }
@@ -293,20 +338,20 @@ class LogCollector:
                 response = requests.post(url, json=data, headers=headers, timeout=10)
 
             if response.status_code == 200:
-                LOG.info(f"Successfully reported {status} result for event {event_id}")
+                LOG.info(f"Successfully reported {status} result")
                 return True
             else:
                 LOG.error(f"Failed to report result: {response.status_code} - {response.text}")
                 return False
 
         except requests.exceptions.Timeout:
-            LOG.error("Report request timed out")
+            LOG.error("Report request timed out", exc_info = True)
             return False
         except requests.exceptions.RequestException as e:
-            LOG.error(f"Report request failed: {e}")
+            LOG.error(f"Report request failed: {e}", exc_info = True)
             return False
         except Exception as e:
-            LOG.error(f"Unexpected error during report: {e}")
+            LOG.error(f"Unexpected error during report: {e}", exc_info = True)
             return False
 
     def _get_node_instance_type(self) -> Optional[str]:
@@ -323,7 +368,7 @@ class LogCollector:
             node = self.k8s_api.read_node(self.node_name)
             return node.metadata.labels.get('node.kubernetes.io/instance-type')
         except ApiException as e:
-            LOG.error(f"Error reading node labels: {e}")
+            LOG.error(f"Error reading node labels: {e}", exc_info = True)
             return None
 
     def _is_bundled_driver_mode(self) -> bool:
@@ -402,15 +447,22 @@ class LogCollector:
                         )
 
             LOG.warning(
-                f"No running NVIDIA driver pod found on node {self.node_name} in namespace {self.driver_namespace}"
+                f"No running NVIDIA driver pod found",
+                extra={"error_code": BugReportError.DRIVER_POD_NOT_FOUND.code,
+                       "root_cause": f"NVIDIA driver pod not found on node {self.node_name} in namespace {self.driver_namespace}"},
             )
             return None
 
         except ApiException as e:
-            LOG.error(f"Error finding NVIDIA driver pod: {e}")
+            LOG.error(
+                f"Kubernetes API error finding NVIDIA driver pod: {e}",
+                exc_info=True,
+                extra={"error_code": BugReportError.DRIVER_POD_NOT_FOUND.code,
+                       "root_cause": str(e)},
+            )
             return None
 
-    def execute_nvidia_bug_report(self, pod, event_id: Optional[str] = None) -> Optional[str]:
+    def execute_nvidia_bug_report(self, pod, event_id: Optional[str] = None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Execute nvidia-bug-report.sh in the driver pod (K8s only).
 
@@ -419,17 +471,22 @@ class LogCollector:
             event_id: Optional event ID to include in filename
 
         Returns:
-            Path to the generated log file within the pod, or None on error
+            Tuple of (path to log file within pod, error_code, error_message).
+            On success: (path, None, None). On failure: (None, "CWA-BR-NNNN", "user-facing message").
         """
         if self.environment != "kubernetes":
-            return None
+            return None, None, None
 
         pod_name = pod.metadata.name
         container_name = self._get_driver_container_name(pod)
 
         if not container_name:
-            LOG.error(f"Could not find suitable container in pod {pod_name}")
-            return None
+            LOG.error(
+                f"Could not find suitable container",
+                extra={"error_code": BugReportError.EXEC_ERROR.code,
+                       "root_cause": f"No driver container found in pod {pod_name}"},
+            )
+            return None, BugReportError.EXEC_ERROR.code, BugReportError.EXEC_ERROR.message
 
         LOG.info(f"Executing nvidia-bug-report.sh in pod {pod_name}, container {container_name}")
 
@@ -468,33 +525,50 @@ class LogCollector:
                 _preload_content=False
             )
 
-            output = ""
+            stdout_output = ""
+            stderr_output = ""
             while resp.is_open():
                 resp.update(timeout=1)
                 if resp.peek_stdout():
-                    output += resp.read_stdout()
+                    stdout_output += resp.read_stdout()
                 if resp.peek_stderr():
-                    stderr = resp.read_stderr()
-                    if stderr:
-                        LOG.info(f"nvidia-bug-report stderr: {stderr}")
+                    chunk = resp.read_stderr()
+                    if chunk:
+                        stderr_output += chunk
 
             resp.close()
 
-            if actual_log_path in output or "Bug report generated" in output:
-                LOG.info(f"nvidia-bug-report.sh completed successfully, log file: {actual_log_path}")
-                return actual_log_path
+            if actual_log_path in stdout_output or "Bug report generated" in stdout_output:
+                LOG.info(
+                    f"nvidia-bug-report.sh completed successfully, log file: {actual_log_path}",
+                )
+                return actual_log_path, None, None
             else:
-                LOG.error(f"nvidia-bug-report.sh execution may have failed. Output: {output}")
-                return None
+                LOG.error(
+                    f"nvidia-bug-report.sh returned no expected output",
+                    extra={"error_code": BugReportError.NO_OUTPUT.code,
+                           "root_cause": f"stdout: {stdout_output!r}, stderr: {stderr_output!r}"},
+                )
+                return None, BugReportError.NO_OUTPUT.code, BugReportError.NO_OUTPUT.message
 
         except ApiException as e:
-            LOG.error(f"Error executing nvidia-bug-report.sh: {e}")
-            return None
+            LOG.error(
+                f"Kubernetes API error executing nvidia-bug-report.sh in pod {pod_name}",
+                exc_info=True,
+                extra={"error_code": BugReportError.EXEC_ERROR.code,
+                       "root_cause": str(e)},
+            )
+            return None, BugReportError.EXEC_ERROR.code, BugReportError.EXEC_ERROR.message
         except Exception as e:
-            LOG.error(f"Unexpected error during nvidia-bug-report execution: {e}")
-            return None
+            LOG.error(
+                f"Unexpected error during nvidia-bug-report execution",
+                exc_info=True,
+                extra={"error_code": BugReportError.INTERNAL_ERROR.code,
+                       "root_cause": str(e)},
+            )
+            return None, BugReportError.INTERNAL_ERROR.code, BugReportError.INTERNAL_ERROR.message
 
-    def execute_bug_report_local(self, event_id: Optional[str] = None) -> Optional[Path]:
+    def execute_bug_report_local(self, event_id: Optional[str] = None) -> Tuple[Optional[Path], Optional[str], Optional[str]]:
         """
         Execute bug report script locally (bundled in container).
         Works for both NVIDIA and AMD GPUs, in both K8s (bundled mode) and VM environments.
@@ -510,8 +584,12 @@ class LogCollector:
         # Determine script path based on GPU type
         script_path = Path(f"/usr/bin/{self.gpu_type}-bug-report.sh")
         if not script_path.exists():
-            LOG.error(f"Bug report script not found at {script_path}")
-            return None
+            LOG.error(
+                f"Script not found",
+                extra={"error_code": BugReportError.SCRIPT_UNAVAILABLE.code,
+                       "root_cause": f"Bug report script not found at {script_path}"},
+            )
+            return None, BugReportError.SCRIPT_UNAVAILABLE.code, BugReportError.SCRIPT_UNAVAILABLE.message
 
         try:
             # Generate unique filename with timestamp and optional event_id
@@ -551,13 +629,15 @@ class LogCollector:
                 )
 
                 if result.returncode == 0 and actual_log_path.exists():
-                    LOG.info(f"Bug report completed successfully: {actual_log_path}")
-                    return actual_log_path
+                    LOG.info(f"Bug report completed successfully: {actual_log_path}") 
+                    return actual_log_path, None, None
                 else:
-                    LOG.error(f"Bug report failed with return code {result.returncode}")
-                    LOG.error(f"stdout: {result.stdout}")
-                    LOG.error(f"stderr: {result.stderr}")
-                    return None
+                    LOG.error(
+                        f"Bug report script exited with non-zero return code",
+                        extra={"error_code": BugReportError.SCRIPT_FAILED.code,
+                               "root_cause": f"Bug report failed with return code: {result.returncode} and reason: {result.stderr}"},
+                    )
+                    return None, BugReportError.SCRIPT_FAILED.code, BugReportError.SCRIPT_FAILED.message
 
             finally:
                 # Restore mst binary if it was renamed
@@ -566,13 +646,22 @@ class LogCollector:
                     mst_backup_path.rename(mst_path)
 
         except subprocess.TimeoutExpired:
-            LOG.error(f"Bug report timed out after {COLLECTION_TIMEOUT}s")
-            return None
+            LOG.error(
+                f"Bug report timed out",
+                extra={"error_code": BugReportError.SCRIPT_TIMED_OUT.code,
+                       "root_cause": f"Bug report generation timed out after {COLLECTION_TIMEOUT}s"},
+            )
+            return None, BugReportError.SCRIPT_TIMED_OUT.code, BugReportError.SCRIPT_TIMED_OUT.message
         except Exception as e:
-            LOG.error(f"Error executing bug report locally: {e}")
-            return None
+            LOG.error(
+                f"Unexpected error executing bug report locally",
+                exc_info=True,
+                extra={"error_code": BugReportError.INTERNAL_ERROR.code,
+                       "root_cause": str(e)},
+            )
+            return None, BugReportError.INTERNAL_ERROR.code, BugReportError.INTERNAL_ERROR.message
 
-    def download_log_file(self, pod, remote_path: str) -> Optional[Path]:
+    def download_log_file(self, pod, remote_path: str) -> Tuple[Optional[Path], Optional[str], Optional[str]]:
         """
         Download the log file from the driver pod using tar (K8s only).
 
@@ -581,17 +670,22 @@ class LogCollector:
             remote_path: Path to the log file in the pod
 
         Returns:
-            Path to the downloaded file, or None on error
+            Tuple of (path to downloaded file, error_code, error_message).
+            On success: (Path, None, None). On failure: (None, "CWA-BR-NNNN", "user-facing message").
         """
         if self.environment != "kubernetes":
-            return None
+            return None, None, None
 
         pod_name = pod.metadata.name
         container_name = self._get_driver_container_name(pod)
 
         if not container_name:
-            LOG.error(f"Could not find suitable container in pod {pod_name}")
-            return None
+            LOG.error(
+                f"Could not find suitable container in pod {pod_name}",
+                extra={"error_code": BugReportError.DRIVER_POD_NOT_FOUND.code,
+                       "root_cause": f"No suitable container found in pod {pod_name}"},
+            )
+            return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
 
         LOG.info(f"Downloading {remote_path} from pod {pod_name}")
 
@@ -613,7 +707,11 @@ class LogCollector:
             )
 
             if "EXISTS" not in resp:
-                LOG.error(f"File does not exist: {remote_path}")
+                LOG.error(
+                    f"File does not exist",
+                    extra={"error_code": BugReportError.DOWNLOAD_FAILED.code,
+                           "root_cause": f"Failed to download log file from driver pod {pod_name}: file not found at {remote_path}"},
+                )
                 # List files in /tmp to help debug
                 list_resp = stream(
                     self.k8s_api.connect_get_namespaced_pod_exec,
@@ -627,7 +725,7 @@ class LogCollector:
                     tty=False
                 )
                 LOG.debug(f"Files in /tmp:\n{list_resp}")
-                return None
+                return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
 
             # Use base64 to avoid binary encoding issues
             # Create tar, pipe to base64, then decode on our side
@@ -658,11 +756,20 @@ class LogCollector:
                 try:
                     tar_data = base64.b64decode(resp)
                 except Exception as e:
-                    LOG.error(f"Failed to decode base64 data: {e}")
-                    return None
+                    LOG.error(
+                        f"Failed to decode base64 data from pod {pod_name}",
+                        exc_info=True,
+                        extra={"error_code": BugReportError.DOWNLOAD_FAILED.code,
+                               "root_cause": str(e)},
+                    )
+                    return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
             else:
-                LOG.error(f"No data received when downloading {remote_path}")
-                return None
+                LOG.error(
+                    f"No data received when downloading {remote_path} from pod {pod_name}",
+                    extra={"error_code": BugReportError.DOWNLOAD_FAILED.code,
+                           "root_cause": f"Failed to download log file from driver pod {pod_name}: empty response"},
+                )
+                return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
 
             LOG.debug(f"Decoded {len(tar_data)} bytes of tar data")
 
@@ -683,23 +790,43 @@ class LogCollector:
 
                 output_file = self.output_dir / remote_file
                 LOG.info(f"Successfully downloaded log to {output_file}")
-                return output_file
+                return output_file, None, None
 
             finally:
                 os.unlink(tmp_tar_path)
 
         except ApiException as e:
-            LOG.error(f"Kubernetes API error downloading log file: {e}")
-            return None
+            LOG.error(
+                f"Kubernetes API error downloading log file from pod {pod_name}",
+                exc_info=True,
+                extra={"error_code": BugReportError.DOWNLOAD_FAILED.code,
+                       "root_cause": str(e)},
+            )
+            return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
         except tarfile.TarError as e:
-            LOG.error(f"Error extracting tar file: {e}")
-            return None
+            LOG.error(
+                f"Error extracting tar file from pod {pod_name}",
+                exc_info=True,
+                extra={"error_code": BugReportError.DOWNLOAD_FAILED.code,
+                       "root_cause": str(e)},
+            )
+            return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
         except KeyError as e:
-            LOG.error(f"File not found in tar archive: {e}")
-            return None
+            LOG.error(
+                f"File not found in tar archive from pod {pod_name}",
+                exc_info=True,
+                extra={"error_code": BugReportError.DOWNLOAD_FAILED.code,
+                       "root_cause": str(e)},
+            )
+            return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
         except Exception as e:
-            LOG.error(f"Unexpected error downloading log file: {e}")
-            return None
+            LOG.error(
+                f"Unexpected error downloading log file from pod {pod_name}",
+                exc_info=True,
+                extra={"error_code": BugReportError.INTERNAL_ERROR.code,
+                       "root_cause": str(e)},
+            )
+            return None, BugReportError.INTERNAL_ERROR.code, BugReportError.INTERNAL_ERROR.message
 
     def cleanup_remote_log(self, pod, remote_path: str) -> bool:
         """
@@ -803,7 +930,7 @@ class LogCollector:
         except Exception as e:
             LOG.warning(f"Error during log cleanup (non-critical): {e}")
 
-    def collect_logs(self, event_id: Optional[str] = None) -> Tuple[Optional[Path], str]:
+    def collect_logs(self, event_id: Optional[str] = None) -> Tuple[Optional[Path], Optional[str], Optional[str]]:
         """
         Main log collection workflow for both K8s and VM environments.
 
@@ -811,11 +938,12 @@ class LogCollector:
             event_id: Optional event ID to include in filename and for API tracking
 
         Returns:
-            Tuple of (path to collected log file, error message).
-            On success: (Path, "")
-            On failure: (None, "specific error message")
+            Tuple of (path to collected log file, error_code, error_message).
+            On success: (Path, None, None). On failure: (None, "CWA-BR-NNNN", "user-facing message").
         """
-        LOG.info(f"Starting log collection cycle ({self.environment} mode, node {self.node_name}){f' for event {event_id}' if event_id else ''}")
+        LOG.info(
+            f"Starting log collection cycle ({self.environment} mode, node {self.node_name})", 
+        )
 
         # Clean up old logs to prevent disk space issues
         self.cleanup_old_logs()
@@ -825,41 +953,33 @@ class LogCollector:
         if self._is_bundled_driver_mode():
             # Execute bug report locally (bundled in container)
             # This path is used by: VMs, AMD in K8s, GB200 in K8s
-            LOG.info("Using bundled driver mode")
-            local_log_path = self.execute_bug_report_local(event_id)
+            LOG.info("Using bundled driver mode") 
+            local_log_path, error_code, error_msg = self.execute_bug_report_local(event_id)
 
             if not local_log_path:
-                error_msg = "Failed to execute bug report locally (bundled driver mode)"
-                LOG.error(error_msg)
-                return None, error_msg
+                return None, error_code, error_msg
         else:
             # Execute via GPU Operator driver pod (NVIDIA in K8s only, non-GB200)
             LOG.info("Using GPU Operator mode (driver pod)")
             driver_pod = self.find_nvidia_driver_pod()
             if not driver_pod:
-                error_msg = f"NVIDIA driver pod not found on node {self.node_name} in namespace {self.driver_namespace}"
-                LOG.error(f"Cannot collect logs: {error_msg}")
-                return None, error_msg
+                return None, BugReportError.DRIVER_POD_NOT_FOUND.code, BugReportError.DRIVER_POD_NOT_FOUND.message
 
-            remote_log_path = self.execute_nvidia_bug_report(driver_pod, event_id)
+            remote_log_path, error_code, error_msg = self.execute_nvidia_bug_report(driver_pod, event_id)
             if not remote_log_path:
-                error_msg = f"Failed to execute nvidia-bug-report.sh in driver pod {driver_pod.metadata.name}"
-                LOG.error(error_msg)
-                return None, error_msg
+                return None, error_code, error_msg
 
-            local_log_path = self.download_log_file(driver_pod, remote_log_path)
+            local_log_path, error_code, error_msg = self.download_log_file(driver_pod, remote_log_path)
             if not local_log_path:
-                error_msg = f"Failed to download log file from driver pod {driver_pod.metadata.name}"
-                LOG.error(error_msg)
-                return None, error_msg
+                return None, error_code, error_msg
 
             # Clean up remote log file
             self.cleanup_remote_log(driver_pod, remote_log_path)
 
         LOG.info(f"Log collection completed successfully: {local_log_path} ({local_log_path.stat().st_size / (1024*1024):.2f} MB)")
-        return local_log_path, ""
+        return local_log_path, None, None
 
-    def collect_logs_with_timeout(self, event_id: str) -> Tuple[bool, Optional[Path], str]:
+    def collect_logs_with_timeout(self, event_id: str) -> Tuple[bool, Optional[Path], Optional[str], Optional[str]]:
         """
         Collect logs with timeout handling.
 
@@ -867,40 +987,58 @@ class LogCollector:
             event_id: Event ID for this collection task
 
         Returns:
-            Tuple of (success, log_path, error_message)
+            Tuple of (success, log_path, error_code, error_message).
+            On success: (True, Path, None, None). On failure: (False, None, "CWA-BR-NNNN", "user-facing message").
         """
         import threading
+        from contextvars import copy_context
 
-        result = {"log_path": None, "error": None, "completed": False}
+        result = {"log_path": None, "error_code": None, "error_msg": None, "completed": False}
+        ctx = copy_context()
 
         def collection_target():
             try:
-                log_path, error_msg = self.collect_logs(event_id)
+                log_path, error_code, error_msg = self.collect_logs(event_id)
                 result["log_path"] = log_path
-                if error_msg:
-                    result["error"] = error_msg
+                result["error_code"] = error_code
+                result["error_msg"] = error_msg
                 result["completed"] = True
             except Exception as e:
-                result["error"] = str(e)
+                LOG.error(
+                    f"Unexpected exception in collection thread",
+                    exc_info=True,
+                    extra={"error_code": BugReportError.INTERNAL_ERROR.code,
+                           "root_cause": str(e) or repr(e)},
+                )
+                result["error_code"] = BugReportError.INTERNAL_ERROR.code
+                result["error_msg"] = "Internal Server Error"
                 result["completed"] = True
 
-        thread = threading.Thread(target=collection_target, daemon=True)
+        thread = threading.Thread(target=lambda: ctx.run(collection_target), daemon=True)
         thread.start()
         thread.join(timeout=COLLECTION_TIMEOUT)
 
         if not result["completed"]:
-            # Timeout occurred
-            error_msg = f"Collection timeout after {COLLECTION_TIMEOUT} seconds"
-            LOG.error(error_msg)
-            return False, None, error_msg
+            LOG.error(
+                f"Collection timed out",
+                extra={"error_code": BugReportError.COLLECTION_TIMED_OUT.code,
+                       "root_cause": f"Collection timeout after {COLLECTION_TIMEOUT} seconds"},
+            )
+            return False, None, BugReportError.COLLECTION_TIMED_OUT.code, BugReportError.COLLECTION_TIMED_OUT.message
 
-        if result["error"]:
-            return False, None, result["error"]
+        if result["error_msg"]:
+            return False, None, result["error_code"], result["error_msg"]
 
         if result["log_path"]:
-            return True, result["log_path"], ""
-        else:
-            return False, None, "Collection failed with unknown error"
+            return True, result["log_path"], None, None
+
+        LOG.error(
+            "Collection Failed",
+            exc_info = True,
+            extra={"error_code": BugReportError.INTERNAL_ERROR.code,
+                   "root_cause": "collection_target returned without log_path or error_msg"},
+        )
+        return False, None, BugReportError.INTERNAL_ERROR.code, BugReportError.INTERNAL_ERROR.message
 
     def _get_driver_container_name(self, pod) -> Optional[str]:
         """
@@ -939,9 +1077,12 @@ class LogCollector:
             LOG.info(f"Run once mode: {RUN_ONCE}")
             if RUN_ONCE:
                 # Run once and exit (K8s only)
-                log_path, error_msg = self.collect_logs()
+                log_path, error_code, error_msg = self.collect_logs()
                 if error_msg:
-                    LOG.error(f"Collection failed: {error_msg}")
+                    LOG.error(
+                        f"Collection failed: {error_msg}",
+                        extra={"error_code": error_code, "root_cause": error_msg},
+                    )
                 sys.exit(0 if log_path else 1)
 
         if API_ENABLED:
@@ -969,31 +1110,44 @@ class LogCollector:
 
                 if task and task.get("event_id"):
                     event_id = task["event_id"]
-                    LOG.info(f"Processing collection task for event: {event_id}")
+                    set_log_context(event_id=event_id)
+                    LOG.info(f"Processing collection task")
 
                     # Collect logs with timeout
-                    success, log_path, error_msg = self.collect_logs_with_timeout(event_id)
+                    success, log_path, error_code, error_msg = self.collect_logs_with_timeout(event_id)
 
                     if success and log_path:
                         # Report success and upload logs in a single call
-                        LOG.info(f"Reporting success and uploading logs for event {event_id}")
+                        LOG.info("Reporting success and uploading logs")
                         upload_success = self.report_result(event_id, "success", log_file=log_path)
 
                         if not upload_success:
                             # Upload failed - try to report failure status without file
-                            LOG.warning(f"Upload failed for event {event_id}, reporting failure status")
-                            self.report_result(event_id, "failed", message="Log collection succeeded but upload failed")
+                            LOG.error(
+                                "Log upload failed, reporting failure status",
+                                extra={"error_code": BugReportError.UPLOAD_FAILED.code,
+                                       "root_cause": "Log collection succeeded but upload failed"},
+                            )
+                            self.report_result(event_id, "failed", error_code=BugReportError.UPLOAD_FAILED.code, message=BugReportError.UPLOAD_FAILED.message)
                     else:
                         # Report failure with error message
-                        LOG.error(f"Collection failed for event {event_id}: {error_msg}")
-                        self.report_result(event_id, "failed", message=error_msg)
+                        LOG.error(
+                            f"Collection failed: {error_msg}",
+                            extra={"error_code": error_code, "root_cause": error_msg},
+                        )
+                        self.report_result(event_id, "failed", error_code=error_code, message=error_msg)
+
+                    clear_log_context()
 
                 else:
-                    # No tasks available
+                    # No tasks available or errored out and returned none at line 240
                     LOG.debug("No collection tasks available")
 
             except Exception as e:
-                LOG.error(f"Error in API polling loop: {e}", exc_info=True)
+                LOG.error("Error in API polling loop", exc_info=True,
+                          extra={"error_code": BugReportError.INTERNAL_ERROR.code,
+                                 "root_cause": str(e)})
+                clear_log_context()
 
             # Wait before polling again
             time.sleep(API_POLL_INTERVAL)
@@ -1005,11 +1159,18 @@ class LogCollector:
 
         while True:
             try:
-                log_path, error_msg = self.collect_logs()
+                log_path, error_code, error_msg = self.collect_logs()
                 if error_msg:
-                    LOG.error(f"Collection failed: {error_msg}")
+                    LOG.error(
+                        f"Collection failed: {error_msg}",
+                        extra={"error_code": error_code, "root_cause": error_msg},
+                    )
             except Exception as e:
-                LOG.error(f"Error during log collection: {e}", exc_info=True)
+                LOG.error(
+                    f"Unexpected error during log collection",
+                    exc_info=True,
+                    extra={"error_code": BugReportError.INTERNAL_ERROR.code, "root_cause": str(e) or repr(e)},
+                )
 
             LOG.info(f"Sleeping for {COLLECTION_INTERVAL} seconds until next collection")
             time.sleep(COLLECTION_INTERVAL)

@@ -23,6 +23,69 @@ include:
   - local: ci/semver-tag.gitlab-ci.yml
   - local: ci/script-signing.gitlab-ci.yml
 
+lint:mr:
+  stage: .pre
+  image: alpine:3.19
+  script:
+    - |
+      echo "MR title: $CI_MERGE_REQUEST_TITLE"
+      if ! echo "$CI_MERGE_REQUEST_TITLE" | grep -qE '^(feat|fix|chore|docs|refactor|test|ci|perf): .+'; then
+        echo "ERROR: MR title must match '<type>: <description>'"
+        echo "Valid types: feat, fix, chore, docs, refactor, test, ci, perf"
+        exit 1
+      fi
+
+      content=$(echo "$CI_MERGE_REQUEST_DESCRIPTION" | sed '/^$/d; /^#/d; /^---/d' | tr -d '[:space:]')
+      if [ -z "$content" ]; then
+        echo "ERROR: MR description cannot be empty"
+        exit 1
+      fi
+
+      if echo "$CI_MERGE_REQUEST_TITLE" | grep -qE '^chore:'; then
+        echo "Skipping Jira ticket check for chore MR"
+      elif ! echo "$CI_MERGE_REQUEST_TITLE $CI_MERGE_REQUEST_DESCRIPTION" | grep -qE '(CRUSOE|MAPS)-[0-9]+'; then
+        echo "ERROR: MR must reference a Jira ticket (e.g. CRUSOE-12345 or MAPS-263) in the title or description"
+        exit 1
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+lint:changelog:
+  stage: .pre
+  image: alpine:3.19
+  before_script:
+    - apk add --no-cache git
+  script:
+    - |
+      git fetch origin main --depth=1
+
+      # Check vm/VERSION bump
+      if git diff origin/main...HEAD --name-only | grep -q "^vm/VERSION$"; then
+        VERSION=$(tr -d '[:space:]' < vm/VERSION)
+        if ! grep -q "^## ${VERSION} " vm/CHANGELOG.md 2>/dev/null; then
+          echo "ERROR: vm/VERSION bumped to ${VERSION} but vm/CHANGELOG.md has no entry for it"
+          echo "Run: ./ci/scripts/generate-release-notes.sh vm"
+          exit 1
+        fi
+      fi
+
+      # Check k8s/helm-charts/Chart.yaml version bump
+      if git diff origin/main...HEAD --name-only | grep -q "^k8s/helm-charts/Chart.yaml$"; then
+        VERSION=$(grep "^version:" k8s/helm-charts/Chart.yaml | awk '{print $2}')
+        if [ -n "$VERSION" ] && ! grep -q "^## ${VERSION} " k8s/helm-charts/CHANGELOG.md 2>/dev/null; then
+          echo "ERROR: Chart.yaml version bumped to ${VERSION} but k8s/helm-charts/CHANGELOG.md has no entry for it"
+          echo "Run: ./ci/scripts/generate-release-notes.sh k8s"
+          exit 1
+        fi
+      fi
+
+      echo "Changelog check passed"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - vm/VERSION
+        - k8s/helm-charts/Chart.yaml
+
 # Runs if we don't change files in the submodules to ensure that a pipeline is always created.
 # Attempts to track files that don't have an associated job.
 no_op_pipeline_stub:
@@ -33,7 +96,7 @@ no_op_pipeline_stub:
       changes:
         - .gitlab/**/*
         - runbook/**/*
-        - scripts/**/*
+        - ci/scripts/**/*
         - README.md
         - .gitlab-ci.yml
         - vm/**/*

@@ -36,7 +36,7 @@ data:
     logs:
       enabled: {{ .Values.logs.enabled }}
     sink:
-      endpoint: {{ .Values.ingressEndpoint | quote }}
+      endpoint: {{ .Values.ingressEndpoint | default "https://cms-monitoring.crusoecloud.com" | quote }}
 {{- if .Values.proxy.enabled }}
       proxy:
         enabled: {{ .Values.proxy.enabled }}

@@ -4,14 +4,20 @@
 UBUNTU_OS_VERSION=$(lsb_release -r -s)
 CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 
-# GitHub branch (optional override via CLI, defaults to main)
-GITHUB_BRANCH="main"
+# GitHub ref (tag or branch). Defaults to "main" for backward compatibility.
+# Published scripts in docs/vm/ have this pinned to a release tag by CI.
+AGENT_VERSION="main"
 
 # CMS base URL (optional, defaults to prod)
 CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
 
 # Installation mode: "docker" (default) or "native" (--no-docker)
 INSTALL_MODE="docker"
+
+# Vector version pinned across all install modes. Keep this in sync with
+# vm/docker/docker-compose-vector.yaml (image tag) and
+# k8s/helm-charts/Chart.yaml (vector helm dependency).
+VECTOR_VERSION="0.55.0"
 
 # Define paths for config files within the GitHub repository (vm subdir)
 REMOTE_VECTOR_CONFIG_GPU_VM="vm/config/vector_gpu_vm.yaml"
@@ -31,6 +37,19 @@ REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE="vm/systemctl/crusoe-metrics-exporter.ser
 REMOTE_CRUSOE_LOG_COLLECTOR_NATIVE_SERVICE="vm/systemctl/crusoe-log-collector-native.service"
 REMOTE_CRUSOE_WATCH_AGENT_NATIVE_SERVICE="vm/systemctl/crusoe-watch-agent-native.service"
 REMOTE_CRUSOE_DCGM_EXPORTER_NATIVE_SERVICE="vm/systemctl/crusoe-dcgm-exporter-native.service"
+
+# AMD-specific constants
+DEFAULT_AMD_EXPORTER_SERVICE_NAME="crusoe-amd-exporter.service"
+AMD_EXPORTER_SERVICE_NAME=$DEFAULT_AMD_EXPORTER_SERVICE_NAME
+AMD_EXPORTER_PORT="5000"
+DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME="crusoe-amd-log-collector.service"
+REMOTE_VECTOR_CONFIG_AMD_GPU_VM="vm/config/vector_amd_gpu_vm.yaml"
+REMOTE_DOCKER_COMPOSE_AMD_EXPORTER="vm/docker/docker-compose-amd-exporter.yaml"
+REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR="vm/docker/docker-compose-amd-log-collector.yaml"
+REMOTE_CRUSOE_AMD_EXPORTER_SERVICE="vm/systemctl/crusoe-amd-exporter.service"
+REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE="vm/systemctl/crusoe-amd-log-collector.service"
+REMOTE_AMD_METRICS_CONFIG="vm/config/amd_metrics_config.json"
+
 SYSTEMCTL_DIR="/etc/systemd/system"
 CRUSOE_WATCH_AGENT_DIR="/etc/crusoe/crusoe_watch_agent"
 CRUSOE_AUTH_TOKEN_LENGTH=82
@@ -48,15 +67,24 @@ EXISTING_DCGM_EXPORTER_SERVICE="dcgm-exporter"
 DEFAULT_LOG_COLLECTOR_SERVICE_NAME="crusoe-log-collector.service"
 DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=false
+
+LOGS_INGRESS_ENDPOINT=""
 REGION=""
 
 # Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
 INSTALLED_VERSION_FILE="$CRUSOE_WATCH_AGENT_DIR/VERSION"
+LATEST_VERSION_URL="https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/VERSION"
+LATEST_SCRIPT_URL="https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent.sh"
 INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
+INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 
 # Log collector container image version (update here when releasing new container builds)
-LOG_COLLECTOR_IMAGE_VERSION="v0.2.17"
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.23"
+
+# Crusoe Metrics Exporter version (used for native binary download)
+CRUSOE_METRICS_EXPORTER_VERSION="0.2.1"
+CRUSOE_METRICS_EXPORTER_BIN="/usr/local/bin/crusoe-metrics-exporter"
 
 # dcgm-exporter docker image version map
 declare -A -r DCGM_EXPORTER_VERSION_MAP=(
@@ -70,15 +98,20 @@ usage() {
   echo "Usage: $0 <command> [options]"
   echo "Commands: install | uninstall | refresh-token | upgrade | help"
   echo "Options:"
-  echo "  --no-docker                               Install using native binaries instead of Docker (default: Docker)"
+  echo "  --no-docker                               Install using native binaries instead of Docker (default: Docker, not supported for AMD)"
+  echo "NVIDIA GPU options:"
   echo "  --dcgm-exporter-service-name NAME         Specify custom DCGM exporter service name"
   echo "  --dcgm-exporter-service-port PORT         Specify custom DCGM exporter port"
   echo "  --replace-dcgm-exporter [SERVICE_NAME]    Replace pre-installed dcgm-exporter systemd service with Crusoe version for full metrics collection."
-  echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter (requires --region)"
+  echo "AMD GPU options:"
+  echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
+  echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
+  echo "Common options:"
+  echo "  --enable-metrics-exporter                 Install and enable the Crusoe metrics exporter (requires --region)"
   echo "  --region REGION                           Crusoe region (e.g. us-east1-a, eu-iceland1-a); used to derive OBJSTORE_ENDPOINT_FQDN"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "                                            Optional SERVICE_NAME defaults to dcgm-exporter"
-  echo "Defaults: NAME=crusoe-dcgm-exporter, PORT=9400, MODE=docker"
+  echo "Defaults: NVIDIA NAME=crusoe-dcgm-exporter, PORT=9400; AMD NAME=crusoe-amd-exporter, PORT=5000; MODE=docker"
   echo "Examples:"
   echo "  $0 install --branch main"
   echo "  $0 install --no-docker"
@@ -114,7 +147,7 @@ parse_args() {
       # This is a hidden option to be used for internal testing
       --branch|-b)
         if [[ -n "$2" ]]; then
-          GITHUB_BRANCH="$2"; shift 2
+          AGENT_VERSION="$2"; shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -153,6 +186,20 @@ parse_args() {
           shift
         fi
         EXISTING_DCGM_EXPORTER_SERVICE=$(ensure_service_suffix "$EXISTING_DCGM_EXPORTER_SERVICE")
+        ;;
+      --amd-exporter-service-name)
+        if [[ -n "$2" ]]; then
+          AMD_EXPORTER_SERVICE_NAME=$(ensure_service_suffix "$2"); shift 2
+        else
+          error_exit "Missing value for $1"
+        fi
+        ;;
+      --amd-exporter-port)
+        if [[ -n "$2" ]]; then
+          AMD_EXPORTER_PORT="$2"; shift 2
+        else
+          error_exit "Missing value for $1"
+        fi
         ;;
       --help|-h)
         usage; exit 0;;
@@ -228,7 +275,6 @@ check_root() {
 }
 
 # --- Install Mode Persistence ---
-
 write_install_mode() {
   echo "$INSTALL_MODE" > "$INSTALL_MODE_FILE"
 }
@@ -244,12 +290,28 @@ read_install_mode() {
 # --- Native Installation Functions ---
 
 install_vector_native() {
+  # `install` is idempotent: existing vector is left alone. `upgrade` sets
+  # CWA_UPGRADE=1 to converge vector to $VECTOR_VERSION (never downgrades).
   if command_exists vector; then
-    echo "Vector is already installed."
+    if [[ "${CWA_UPGRADE:-}" == "1" ]]; then
+      local installed_ver
+      installed_ver=$(vector --version 2>/dev/null | awk '/^vector / {print $2}')
+      if [[ "$installed_ver" == "$VECTOR_VERSION" ]]; then
+        echo "Vector $VECTOR_VERSION is already installed."
+      elif [[ -n "$installed_ver" ]] && version_lt "$VECTOR_VERSION" "$installed_ver"; then
+        echo "Vector $installed_ver is newer than pinned $VECTOR_VERSION; not downgrading."
+      else
+        status "Upgrading Vector ${installed_ver:-unknown} -> $VECTOR_VERSION via APT."
+        bash -c "$(curl -L https://setup.vector.dev)" || error_exit "Failed to add Vector APT repository."
+        apt-get install -y "vector=${VECTOR_VERSION}-1" || error_exit "Failed to install Vector ${VECTOR_VERSION}-1."
+      fi
+    else
+      echo "Vector is already installed."
+    fi
   else
-    status "Installing Vector via APT."
+    status "Installing Vector $VECTOR_VERSION via APT."
     bash -c "$(curl -L https://setup.vector.dev)" || error_exit "Failed to add Vector APT repository."
-    apt-get install -y vector || error_exit "Failed to install Vector."
+    apt-get install -y "vector=${VECTOR_VERSION}-1" || error_exit "Failed to install Vector ${VECTOR_VERSION}-1."
   fi
   # Disable the default vector.service; we use our own custom unit
   systemctl disable vector.service 2>/dev/null || true
@@ -425,14 +487,10 @@ install_dcgm() {
 write_token_to_secrets() {
   local token="$1"
   mkdir -p "$CRUSOE_SECRETS_DIR" || true
-  if [[ "$INSTALL_MODE" == "docker" ]]; then
-    # Escape dollar signs to prevent variable expansion in docker-compose
-    local escaped_token="${token//\$/\$\$}"
-    echo "CRUSOE_AUTH_TOKEN=${escaped_token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
-  else
-    # Native mode: systemd EnvironmentFile reads raw values
-    echo "CRUSOE_AUTH_TOKEN=${token}" > "$CRUSOE_MONITORING_TOKEN_FILE"
-  fi
+  # Single-quote the value so neither docker-compose nor systemd's
+  # EnvironmentFile= tries to interpolate '$' in bcrypt tokens.
+  # Both strip surrounding quotes before exporting the variable.
+  echo "CRUSOE_AUTH_TOKEN='${token}'" > "$CRUSOE_MONITORING_TOKEN_FILE"
   chmod 600 "$CRUSOE_MONITORING_TOKEN_FILE" || true
 }
 
@@ -448,7 +506,7 @@ normalize_version() {
 }
 
 get_remote_version() {
-  normalize_version "$(curl -fsSL "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE")"
+  normalize_version "$(curl -fsSL "$LATEST_VERSION_URL")"
 }
 
 get_installed_version() {
@@ -463,6 +521,75 @@ version_lt() {
   [ "$a" != "$b" ] && [ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n1)" = "$b" ]
 }
 
+# Compare semantic versions a.b.c >= x.y.z
+version_ge() {
+  # Returns 0 (true) if $1 >= $2
+  [ "$1" = "$2" ] && return 0
+  local IFS=.
+  local i ver1=($1) ver2=($2)
+  for ((i=${#ver1[@]}; i<3; i++)); do ver1[i]=0; done
+  for ((i=${#ver2[@]}; i<3; i++)); do ver2[i]=0; done
+  for ((i=0; i<3; i++)); do
+    if ((10#${ver1[i]} > 10#${ver2[i]})); then return 0; fi
+    if ((10#${ver1[i]} < 10#${ver2[i]})); then return 1; fi
+  done
+  return 0
+}
+
+# Detect ROCm version using apt metadata (no dpkg) or version file
+get_rocm_version() {
+  local ver=""
+  if command_exists apt; then
+    # Prefer installed version if present
+    ver=$(apt show rocm-libs -a 2>/dev/null | sed -En 's/^Installed: ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n1)
+    # If not installed or missing Installed field, take the first Version line
+    if [[ -z "$ver" ]]; then
+      ver=$(apt show rocm-libs -a 2>/dev/null | sed -En 's/^Version: ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -n1)
+    fi
+  fi
+  if [[ -z "$ver" ]] && [ -f "/opt/rocm/.info/version" ]; then
+    ver=$(sed -En 's/^ROCM_VERSION=([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' /opt/rocm/.info/version | head -n1)
+  fi
+  echo "$ver"
+}
+
+ensure_rocm_6_2_or_newer() {
+  status "Checking ROCm version (require 6.2.0 or newer for GPU monitoring)."
+  local ver
+  ver=$(get_rocm_version)
+  if [[ -z "$ver" ]]; then
+    echo "ROCm not detected."
+    return 1
+  fi
+  if version_ge "$ver" "6.2.0"; then
+    echo "Detected ROCm version: $ver (OK)"
+    return 0
+  else
+    echo "Warning: Detected ROCm version $ver is older than required 6.2.0."
+    echo "GPU monitoring may not work properly. Consider upgrading ROCm."
+    return 1
+  fi
+}
+
+detect_nvidia_gpus() {
+  status "Checking for NVIDIA GPUs (nvidia-smi)."
+  if ! command_exists nvidia-smi; then
+    echo "nvidia-smi not found."
+    if lspci 2>/dev/null | grep -qi 'NVIDIA'; then
+      error_exit "NVIDIA GPU detected but GPU drivers are not installed. Please install NVIDIA drivers and try again."
+    fi
+    echo "No NVIDIA hardware detected."
+    return 1
+  fi
+  if nvidia-smi -L >/dev/null 2>&1; then
+    echo "Detected NVIDIA GPU(s): $(nvidia-smi -L | head -3)"
+    return 0
+  else
+    echo "nvidia-smi found but reported no GPUs."
+    return 1
+  fi
+}
+
 write_installed_version() {
   local ver
   ver=$(normalize_version "$1")
@@ -472,10 +599,32 @@ write_installed_version() {
 }
 
 do_install() {
-  # Ensure the script is run as root.
   check_root
 
-  # Install runtime dependencies based on mode
+  # 1. GPU detection — before any OS validation or package installs
+  local HAS_NVIDIA_GPUS=false
+  local HAS_AMD_GPUS=false
+  if detect_nvidia_gpus; then
+    HAS_NVIDIA_GPUS=true
+  elif ensure_rocm_6_2_or_newer; then
+    HAS_AMD_GPUS=true
+  else
+    echo "No NVIDIA or AMD GPUs detected. Will proceed with CPU-only monitoring"
+  fi
+
+  # AMD does not support native mode — fail fast before any installs
+  if $HAS_AMD_GPUS && [[ "$INSTALL_MODE" == "native" ]]; then
+    error_exit "Native mode (--no-docker) is not supported for AMD. The AMD installer requires Docker."
+  fi
+
+  # 2. OS validation per GPU type
+  if $HAS_NVIDIA_GPUS && [[ "$INSTALL_MODE" == "docker" ]]; then
+    check_os_support
+  elif $HAS_AMD_GPUS; then
+    check_os_support_amd
+  fi
+
+  # 3. Install runtime dependencies
   if [[ "$INSTALL_MODE" == "docker" ]]; then
     status "Ensure docker installation."
     if command_exists docker; then
@@ -500,15 +649,7 @@ do_install() {
     mkdir -p "$CRUSOE_WATCH_AGENT_DIR"
   fi
 
-  # Detect NVIDIA GPUs
-  local HAS_NVIDIA_GPUS=false
-  if command_exists nvidia-smi && nvidia-smi -L >/dev/null 2>&1; then
-    HAS_NVIDIA_GPUS=true
-  elif lspci 2>/dev/null | grep -qi 'NVIDIA'; then
-    # GPU hardware detected but nvidia-smi not available — drivers not installed
-    error_exit "NVIDIA GPU detected but GPU drivers are not installed. Please install NVIDIA drivers and try again."
-  fi
-
+  # 4. GPU-specific artifact installation
   if $HAS_NVIDIA_GPUS; then
     if [[ "$INSTALL_MODE" == "docker" ]]; then
       # Docker mode: require both dcgmi and nvidia-ctk pre-installed
@@ -519,8 +660,6 @@ do_install() {
       else
         error_exit "Please make sure NVIDIA dependencies (dcgm & nvidia-ctk) are installed and try again."
       fi
-      # OS version check only applies to Docker mode (selects image tag)
-      check_os_support
     else
       # Native mode: install DCGM if missing, nvidia-ctk not needed
       if command_exists dcgmi; then
@@ -594,38 +733,85 @@ do_install() {
     status "Creating NVIDIA log collection directory."
     mkdir -p /var/log/nvidia-bug-reports
     chmod 755 /var/log/nvidia-bug-reports
+
+  elif $HAS_AMD_GPUS; then
+    # Download Vector config for AMD GPU VM
+    status "Download AMD GPU Vector config."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_AMD_GPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_AMD_GPU_VM"
+
+    # Download AMD Exporter docker-compose and systemd unit, then enable/start service
+    status "Prepare AMD metrics config directory."
+    mkdir -p "$CRUSOE_WATCH_AGENT_DIR/config" || error_exit "Failed to create $CRUSOE_WATCH_AGENT_DIR/config"
+    status "Download AMD metrics config.json."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/config/config.json" "$GITHUB_RAW_BASE_URL/$REMOTE_AMD_METRICS_CONFIG" || error_exit "Failed to download $REMOTE_AMD_METRICS_CONFIG"
+
+    status "Download AMD Exporter docker-compose file."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-amd-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_AMD_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_AMD_EXPORTER"
+
+    status "Install $AMD_EXPORTER_SERVICE_NAME systemd unit."
+    wget -q -O "$SYSTEMCTL_DIR/$AMD_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_EXPORTER_SERVICE"
+
+    # Download AMD Log Collector artifacts
+    status "Download AMD Log Collector docker-compose file."
+    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-amd-log-collector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_AMD_LOG_COLLECTOR"
+
+    status "Download $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME systemd unit."
+    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_AMD_LOG_COLLECTOR_SERVICE"
+
+    # Create log directory for AMD log collector
+    status "Creating AMD log collection directory."
+    mkdir -p /var/log/amd-bug-reports
+    chmod 755 /var/log/amd-bug-reports
+
+  else
+    # CPU-only
+    status "Copy CPU Vector config."
+    if $ENABLE_METRICS_EXPORTER; then
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CME_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CME_CPU_VM"
+    else
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CPU_VM"
+    fi
   fi
 
-  # Download Crusoe Metrics Exporter artifacts (Docker mode only, opt-in via --enable-metrics-exporter)
-  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
-    status "Download Crusoe Metrics Exporter docker-compose file."
-    wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
+  # 5. Download/install Crusoe Metrics Exporter (opt-in via --enable-metrics-exporter).
+  if $ENABLE_METRICS_EXPORTER; then
+    if [[ "$INSTALL_MODE" == "docker" ]]; then
+      ensure_docker_running
 
-    status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
-    wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
+      status "Download Crusoe Metrics Exporter docker-compose file."
+      wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-crusoe-metrics-exporter.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_CRUSOE_METRICS_EXPORTER"
+
+      status "Download $DEFAULT_METRICS_EXPORTER_SERVICE_NAME systemd unit."
+      wget -q -O "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" "$GITHUB_RAW_BASE_URL/$REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE" || error_exit "Failed to download $REMOTE_CRUSOE_METRICS_EXPORTER_SERVICE"
+    else
+      install_metrics_exporter_native
+    fi
   fi
 
-  if ! $HAS_NVIDIA_GPUS; then
-     status "Copy CPU Vector config."
-     if $ENABLE_METRICS_EXPORTER; then
-       wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CME_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CME_CPU_VM"
-     else
-       wget -q -O "$CRUSOE_WATCH_AGENT_DIR/vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_VECTOR_CONFIG_CPU_VM" || error_exit "Failed to download $REMOTE_VECTOR_CONFIG_CPU_VM"
-     fi
-  fi
-
-  # Download Vector docker-compose file (Docker mode only)
+  # 6. Download Vector docker-compose file
   if [[ "$INSTALL_MODE" == "docker" ]]; then
     status "Download Vector docker-compose file."
     wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
+
+    # Ensure the data directory for Vector disk buffers exists on the host
+    mkdir -p /var/lib/vector
   fi
 
+  # 7. Token handling
   status "Ensuring Crusoe auth token in secrets."
   if [[ -n "$CRUSOE_AUTH_TOKEN" ]] && validate_token "$CRUSOE_AUTH_TOKEN"; then
     # Env var provided; write/overwrite secrets store
     write_token_to_secrets "$CRUSOE_AUTH_TOKEN"
   elif [[ -s "$CRUSOE_MONITORING_TOKEN_FILE" ]]; then
     echo "Detected existing token file at $CRUSOE_MONITORING_TOKEN_FILE"
+    # Strip quotes and un-escape '$$' → '$' (legacy Docker installs
+    # used '$$' escaping) so write_token_to_secrets receives the raw token.
+    local existing_token
+    existing_token=$(sed "s/^CRUSOE_AUTH_TOKEN=//; s/^['\"]//; s/['\"]$//" "$CRUSOE_MONITORING_TOKEN_FILE")
+    if ! validate_token "$existing_token"; then
+      existing_token="${existing_token//\$\$/\$}"
+    fi
+    write_token_to_secrets "$existing_token"
   else
     echo "Command: crusoe monitoring tokens create"
     echo "Please enter the crusoe monitoring token:"
@@ -640,13 +826,14 @@ do_install() {
     write_token_to_secrets "$CRUSOE_AUTH_TOKEN"
   fi
 
-  # Download version file first so we can read it
+  # 8. Download VERSION file
   status "Download VERSION file."
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
-  # Create .env file
-  status "Creating .env file with VM_ID and DCGM_EXPORTER_PORT."
-  cat <<EOF > "$ENV_FILE"
+  # 9. Create .env file — content varies by GPU type
+  if $HAS_NVIDIA_GPUS; then
+    status "Creating .env file with VM_ID and DCGM_EXPORTER_PORT."
+    cat <<EOF > "$ENV_FILE"
 VM_ID='${CRUSOE_VM_ID}'
 DCGM_EXPORTER_PORT='${DCGM_EXPORTER_SERVICE_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
@@ -655,38 +842,77 @@ LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
 AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
 EOF
-  [[ "$INSTALL_MODE" == "docker" ]] && echo "DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'" >> "$ENV_FILE"
+    [[ "$INSTALL_MODE" == "docker" ]] && echo "DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'" >> "$ENV_FILE"
+  elif $HAS_AMD_GPUS; then
+    status "Creating .env file with VM_ID, GPU_TYPE, and AMD_EXPORTER_PORT."
+    cat <<EOF > "$ENV_FILE"
+VM_ID='${CRUSOE_VM_ID}'
+GPU_TYPE='amd'
+AMD_EXPORTER_PORT='${AMD_EXPORTER_PORT}'
+TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
+LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
+LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
+AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
+EOF
+  else
+    status "Creating .env file with VM_ID."
+    cat <<EOF > "$ENV_FILE"
+VM_ID='${CRUSOE_VM_ID}'
+TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
+LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}'
+LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
+AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
+EOF
+  fi
   if [[ -n "$REGION" ]]; then
     echo "OBJSTORE_ENDPOINT_FQDN='object.${REGION}.crusoecloudcompute.com'" >> "$ENV_FILE"
   fi
   echo ".env file created at $ENV_FILE"
 
-  # Start DCGM exporter after .env is ready
+  # 10. Start GPU exporter services after .env is ready
   if $HAS_NVIDIA_GPUS; then
     status "Enable and start systemd services for $DCGM_EXPORTER_SERVICE_NAME."
     echo "systemctl daemon-reload"
     systemctl daemon-reload
     echo "systemctl enable $DCGM_EXPORTER_SERVICE_NAME"
     systemctl enable "$DCGM_EXPORTER_SERVICE_NAME"
-    echo "systemctl start $DCGM_EXPORTER_SERVICE_NAME"
-    systemctl start "$DCGM_EXPORTER_SERVICE_NAME"
+    echo "systemctl restart $DCGM_EXPORTER_SERVICE_NAME"
+    systemctl restart "$DCGM_EXPORTER_SERVICE_NAME"
 
     status "Enable and start systemd services for $DEFAULT_LOG_COLLECTOR_SERVICE_NAME."
     echo "systemctl enable $DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
     systemctl enable "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
-    echo "systemctl start $DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
-    systemctl start "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
+    echo "systemctl restart $DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl restart "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"
+  fi
+
+  if $HAS_AMD_GPUS; then
+    status "Enable and start systemd services for $AMD_EXPORTER_SERVICE_NAME."
+    echo "systemctl daemon-reload"
+    systemctl daemon-reload
+    echo "systemctl enable $AMD_EXPORTER_SERVICE_NAME"
+    systemctl enable "$AMD_EXPORTER_SERVICE_NAME"
+    echo "systemctl restart $AMD_EXPORTER_SERVICE_NAME"
+    systemctl restart "$AMD_EXPORTER_SERVICE_NAME"
+    
+    # Start AMD log collector
+    status "Enable and start systemd services for $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME."
+    systemctl daemon-reload
+    echo "systemctl enable $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl enable "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    echo "systemctl restart $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
+    systemctl restart "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"
   fi
 
   # Start Crusoe Metrics Exporter after .env is ready
-  if $ENABLE_METRICS_EXPORTER && [[ "$INSTALL_MODE" == "docker" ]]; then
+  if $ENABLE_METRICS_EXPORTER; then
     status "Enable and start systemd services for $DEFAULT_METRICS_EXPORTER_SERVICE_NAME."
     echo "systemctl daemon-reload"
     systemctl daemon-reload
     echo "systemctl enable $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
     systemctl enable "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
-    echo "systemctl start $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
-    systemctl start "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    echo "systemctl restart $DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+    systemctl restart "$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
   fi
 
   # Download the appropriate crusoe-watch-agent systemd unit
@@ -703,16 +929,21 @@ EOF
   systemctl daemon-reload
   echo "systemctl enable crusoe-watch-agent.service"
   systemctl enable crusoe-watch-agent.service
-  echo "systemctl start crusoe-watch-agent.service"
-  systemctl start crusoe-watch-agent.service
+  echo "systemctl restart crusoe-watch-agent.service"
+  systemctl restart crusoe-watch-agent.service
 
-  # Persist the install mode for upgrade/uninstall
+  # Persist the install mode and original CLI args for upgrade/uninstall
   write_install_mode
-
+  printf '%s\n' "${ORIGINAL_ARGS[@]}" > "$INSTALL_ARGS_FILE"
   status "Setup Complete! (mode: $INSTALL_MODE)"
+
   if $HAS_NVIDIA_GPUS; then
     echo "Check status of $DCGM_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DCGM_EXPORTER_SERVICE_NAME'"
     echo "Check status of $DEFAULT_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_LOG_COLLECTOR_SERVICE_NAME'"
+  fi
+  if $HAS_AMD_GPUS; then
+    echo "Check status of $AMD_EXPORTER_SERVICE_NAME: 'sudo systemctl status $AMD_EXPORTER_SERVICE_NAME'"
+    echo "Check status of $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME: 'sudo systemctl status $DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME'"
   fi
   if $ENABLE_METRICS_EXPORTER; then
     echo "Check status of $DEFAULT_METRICS_EXPORTER_SERVICE_NAME: 'sudo systemctl status $DEFAULT_METRICS_EXPORTER_SERVICE_NAME'"
@@ -733,14 +964,14 @@ do_uninstall() {
     systemctl disable crusoe-watch-agent.service || true
   fi
 
-  status "Stopping and disabling DCGM Exporter service if installed by this script."
   if service_exists "$DEFAULT_DCGM_EXPORTER_SERVICE_NAME"; then
+    status "Stopping and disabling DCGM Exporter service if installed by this script."
     systemctl stop "$DEFAULT_DCGM_EXPORTER_SERVICE_NAME" || true
     systemctl disable "$DEFAULT_DCGM_EXPORTER_SERVICE_NAME" || true
   fi
 
-  status "Stopping and disabling NVIDIA Log Collector service if installed by this script."
   if service_exists "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME"; then
+    status "Stopping and disabling NVIDIA Log Collector service if installed by this script."
     systemctl stop "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME" || true
     systemctl disable "$DEFAULT_LOG_COLLECTOR_SERVICE_NAME" || true
   fi
@@ -748,6 +979,18 @@ do_uninstall() {
   if service_exists "crusoe-nvidia-log-collector.service"; then
     systemctl stop "crusoe-nvidia-log-collector.service" || true
     systemctl disable "crusoe-nvidia-log-collector.service" || true
+  fi
+
+  if service_exists "$DEFAULT_AMD_EXPORTER_SERVICE_NAME"; then
+    status "Stopping and disabling AMD Exporter service if installed by this script."
+    systemctl stop "$DEFAULT_AMD_EXPORTER_SERVICE_NAME" || true
+    systemctl disable "$DEFAULT_AMD_EXPORTER_SERVICE_NAME" || true
+  fi
+
+  if service_exists "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME"; then
+    status "Stopping and disabling AMD Log Collector service if installed by this script."
+    systemctl stop "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" || true
+    systemctl disable "$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" || true
   fi
 
   status "Stopping and disabling Crusoe Metrics Exporter service if installed by this script."
@@ -762,16 +1005,24 @@ do_uninstall() {
   rm -f "$SYSTEMCTL_DIR/$DEFAULT_LOG_COLLECTOR_SERVICE_NAME" || true
   rm -f "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME" || true
   rm -f "$SYSTEMCTL_DIR/crusoe-nvidia-log-collector.service" || true  # Legacy name
+  rm -f "$SYSTEMCTL_DIR/$AMD_EXPORTER_SERVICE_NAME" || true
+  rm -f "$SYSTEMCTL_DIR/$DEFAULT_AMD_LOG_COLLECTOR_SERVICE_NAME" || true
   systemctl daemon-reload || true
 
-  # Remove native packages if installed in native mode
+  # Remove native binaries if installed in native mode
   if [[ "$INSTALL_MODE" == "native" ]]; then
     uninstall_native
+    rm -f "$CRUSOE_METRICS_EXPORTER_BIN" || true
+  fi
+
+  if [[ -d "/opt/crusoe-amd-log-collector" ]]; then
+    rm -rf /opt/crusoe-amd-log-collector || true
   fi
 
   status "Removing crusoe_watch_agent directory."
   rm -rf "$CRUSOE_WATCH_AGENT_DIR" || true
   rm -f "$INSTALL_MODE_FILE" || true
+  rm -f "$INSTALL_ARGS_FILE" || true
 
   status "Uninstall complete."
 }
@@ -811,22 +1062,40 @@ do_upgrade() {
   local remote_ver installed_ver
   remote_ver=$(get_remote_version)
   if [[ -z "$remote_ver" ]]; then
-    error_exit "Failed to determine remote version from $REMOTE_VERSION_FILE on branch $GITHUB_BRANCH."
+    error_exit "Failed to determine remote version."
   fi
   installed_ver=$(get_installed_version)
 
   if [[ -z "$installed_ver" ]]; then
     status "No installed version detected. Performing clean install of $remote_ver."
-    do_uninstall
-    do_install
-    return
   elif version_lt "$installed_ver" "$remote_ver"; then
     status "Upgrading agent from $installed_ver to $remote_ver."
-    do_uninstall
-    do_install
   else
     echo "Installed version ($installed_ver) is up-to-date (remote: $remote_ver). No upgrade performed."
+    return
   fi
+
+  # Read saved install args
+  local saved_args=()
+  if [[ -f "$INSTALL_ARGS_FILE" ]]; then
+    mapfile -t saved_args < "$INSTALL_ARGS_FILE"
+  else
+    # Fallback for installs that predate args persistence
+    saved_args=(install)
+    [[ "$INSTALL_MODE" == "native" ]] && saved_args+=(--no-docker)
+  fi
+
+  # Download the latest script and re-run install.
+  # CWA_UPGRADE=1 signals to install_vector_native (and any future helper that
+  # cares) that this is the upgrade path, so it can converge vector to the
+  # pinned version instead of preserving the idempotent skip-on-existing
+  # behavior used during a plain `install`.
+  local new_script
+  new_script=$(mktemp)
+  curl -fsSL "$LATEST_SCRIPT_URL" -o "$new_script" || error_exit "Failed to download latest script."
+  chmod +x "$new_script"
+  CWA_UPGRADE=1 bash "$new_script" "${saved_args[@]}"
+  rm -f "$new_script"
 }
 
 check_os_support() {
@@ -844,9 +1113,60 @@ check_os_support() {
   fi
 }
 
+check_os_support_amd() {
+  if ! version_ge "$UBUNTU_OS_VERSION" "22.04"; then
+    error_exit "Ubuntu version $UBUNTU_OS_VERSION is not supported. Require 22.04 or later."
+  fi
+}
+
 install_docker() {
   curl -fsSL https://get.docker.com | sh
 }
+
+# Install the crusoe-metrics-exporter binary from the GitHub release tarball.
+# Downloads the tarball for the current architecture, verifies the checksum,
+# and installs the binary + systemd unit.
+install_metrics_exporter_native() {
+  local arch
+  arch=$(dpkg --print-architecture)  # amd64 or arm64
+  local tarball="crusoe-metrics-exporter-${CRUSOE_METRICS_EXPORTER_VERSION}-linux-${arch}.tar.gz"
+  local url="https://github.com/crusoecloud/crusoe-metrics-exporter/releases/download/v${CRUSOE_METRICS_EXPORTER_VERSION}/${tarball}"
+  local sha_url="https://github.com/crusoecloud/crusoe-metrics-exporter/releases/download/v${CRUSOE_METRICS_EXPORTER_VERSION}/SHA256SUMS"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  status "Downloading crusoe-metrics-exporter v${CRUSOE_METRICS_EXPORTER_VERSION} (${arch})."
+  wget -q -O "${tmpdir}/${tarball}" "$url" || error_exit "Failed to download ${url}"
+  wget -q -O "${tmpdir}/SHA256SUMS" "$sha_url" || error_exit "Failed to download ${sha_url}"
+
+  status "Verifying checksum."
+  grep "${tarball}" "${tmpdir}/SHA256SUMS" > "${tmpdir}/${tarball}.sha256"
+  (cd "$tmpdir" && sha256sum -c "${tarball}.sha256") || error_exit "Checksum verification failed for ${tarball}"
+
+  status "Installing crusoe-metrics-exporter binary and systemd unit."
+  tar -xzf "${tmpdir}/${tarball}" -C "$tmpdir"
+  local stage="${tmpdir}/crusoe-metrics-exporter-${CRUSOE_METRICS_EXPORTER_VERSION}-linux-${arch}"
+  install -m 0755 "${stage}/crusoe-metrics-exporter" "$CRUSOE_METRICS_EXPORTER_BIN"
+  install -m 0644 "${stage}/crusoe-metrics-exporter.service" "$SYSTEMCTL_DIR/$DEFAULT_METRICS_EXPORTER_SERVICE_NAME"
+
+  rm -rf "$tmpdir"
+}
+
+# Ensure the docker.io package is installed and docker.service is running.
+# Used by --enable-metrics-exporter so the crusoe-metrics-exporter container
+# can run even when the agent itself is installed in native (non-docker) mode.
+ensure_docker_running() {
+  if ! command_exists docker; then
+    status "Installing docker.io package."
+    apt-get update || error_exit "apt-get update failed."
+    apt-get install -y docker.io || error_exit "Failed to install docker.io."
+  fi
+  if ! systemctl is-active --quiet docker; then
+    status "Enabling and starting docker.service."
+    systemctl enable --now docker || error_exit "Failed to start docker.service."
+  fi
+}
+
 
 # Function to check and upgrade DCGM version
 upgrade_dcgm() {
@@ -891,11 +1211,18 @@ upgrade_dcgm() {
   fi
 }
 
+# Capture raw args before parsing consumes them
+ORIGINAL_ARGS=("$@")
+
 # Parse command line arguments
 parse_args "$@"
 
-# Update base URL to reflect chosen branch
-GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${GITHUB_BRANCH}"
+# Update base URL to reflect chosen version (or branch override)
+GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${AGENT_VERSION}"
+
+# Pre-compute ingress endpoints so AMD .env block can reference them as variables
+TELEMETRY_INGRESS_ENDPOINT="${CMS_BASE_URL}/ingest"
+LOGS_INGRESS_ENDPOINT="${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}"
 
 # --- Main Script ---
 
