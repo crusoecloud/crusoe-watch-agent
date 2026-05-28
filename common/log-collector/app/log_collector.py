@@ -64,6 +64,19 @@ def _get_cms_base_url() -> str:
         return f"http://{PROXY_URL}:{PROXY_PORT}"
     return API_BASE_URL
 
+# Proxy configuration for API calls (bug report upload)
+PROXY_ENABLED = os.environ.get("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL = os.environ.get("PROXY_URL", "")
+PROXY_PORT = os.environ.get("PROXY_PORT", "3128")
+
+
+def _get_proxies() -> Optional[Dict[str, str]]:
+    if PROXY_ENABLED and PROXY_URL:
+        proxy = f"http://{PROXY_URL}:{PROXY_PORT}"
+        return {"http": proxy, "https": proxy}
+    return None
+
+
 # K8s-specific configuration (only used when ENVIRONMENT == "kubernetes")
 NODE_NAME = os.environ.get("NODE_NAME")
 DRIVER_NAMESPACE = os.environ.get("DRIVER_NAMESPACE", "nvidia-gpu-operator" if GPU_TYPE == "nvidia" else "amd-gpu-operator")
@@ -270,7 +283,7 @@ class LogCollector:
             headers = self._get_auth_headers()
 
             LOG.debug(f"Polling API: {url} with params: {params}")
-            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response = requests.get(url, params=params, headers=headers, timeout=10, proxies=_get_proxies())
 
             if response.status_code == 200:
                 data = response.json()
@@ -328,7 +341,7 @@ class LogCollector:
                         'message': message if message else 'Logs collected and uploaded successfully'
                     }
 
-                    response = requests.post(url, files=files, data=data, headers=headers, timeout=60)
+                    response = requests.post(url, files=files, data=data, headers=headers, timeout=60, proxies=_get_proxies())
             else:
                 # Failed case - send status only
                 LOG.info(f"Sending {status} status", extra={
@@ -344,7 +357,7 @@ class LogCollector:
                     'node_name': self.node_name
                 }
 
-                response = requests.post(url, json=data, headers=headers, timeout=10)
+                response = requests.post(url, json=data, headers=headers, timeout=10, proxies=_get_proxies())
 
             if response.status_code == 200:
                 LOG.info(f"Successfully reported {status} result")
