@@ -12,17 +12,17 @@ proxy:
   port: 3128
 
 customMetrics:
-  enabled: true
+  enabled: false
   namespace: crusoe-monitoring
 
 dcgmMetrics:
   enabled: false
 
 kubeStateMetrics:
-  enabled: true
+  enabled: false
 
 slurmMetrics:
-  enabled: true
+  enabled: false
   paths:
     - /metrics/jobs
     - /metrics/jobs-users-accts
@@ -31,7 +31,7 @@ slurmMetrics:
     - /metrics/scheduler
 
 logs:
-  enabled: true
+  enabled: false
 
 job:
   name: crusoe-monitoring-token-job
@@ -944,7 +944,7 @@ logCollector:
 
   # AMD log collector - deploys only on nodes with feature.node.kubernetes.io/amd-gpu=true
   amd:
-    enabled: true
+    enabled: false
     name: crusoe-log-collector-amd
     imageRepository: internal.ccr.crusoecloudcompute.com/crusoe-watch-agent.5c1683f7/amd-log-collector
 
