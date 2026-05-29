@@ -80,7 +80,7 @@ INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
 INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 
 # Log collector container image version (update here when releasing new container builds)
-LOG_COLLECTOR_IMAGE_VERSION="v0.2.23"
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.27"
 
 # Crusoe Metrics Exporter version (used for native binary download)
 CRUSOE_METRICS_EXPORTER_VERSION="0.2.1"

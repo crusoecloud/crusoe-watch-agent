@@ -88,6 +88,14 @@ spec:
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
+        {{- if $.Values.proxy.enabled }}
+        - name: PROXY_ENABLED
+          value: "true"
+        - name: PROXY_URL
+          value: {{ $.Values.proxy.url | quote }}
+        - name: PROXY_PORT
+          value: {{ $.Values.proxy.port | quote }}
+        {{- end }}
 
         envFrom:
         - secretRef:

@@ -15,6 +15,7 @@ os.environ['KUBERNETES_SERVICE_HOST'] = 'kubernetes.default.svc'
 os.environ['NODE_NAME'] = 'test-node'
 os.environ['LOG_OUTPUT_DIR'] = tempfile.mkdtemp()
 
+import log_collector
 from log_collector import LogCollector
 
 
@@ -494,6 +495,73 @@ class TestCollectionWorkflow(unittest.TestCase):
         self.assertIsNone(log_path)
         self.assertEqual(error_code, 'CWA-BR-5007')
         self.assertIn("Unexpected error downloading bug report", error_msg)
+
+
+class TestProxyConfig(unittest.TestCase):
+    """Test proxy URL resolution."""
+
+    def test_proxy_disabled_returns_api_base_url(self):
+        """When PROXY_ENABLED is false, _get_cms_base_url returns API_BASE_URL."""
+        with patch.object(log_collector, 'PROXY_ENABLED', False):
+            with patch.object(log_collector, 'PROXY_URL', 'proxy.internal'):
+                with patch.object(log_collector, 'API_BASE_URL', 'https://cms.example.com'):
+                    self.assertEqual(log_collector._get_cms_base_url(), 'https://cms.example.com')
+
+    def test_proxy_enabled_returns_proxy_base_url(self):
+        """When PROXY_ENABLED is true, _get_cms_base_url returns http://PROXY_URL:PROXY_PORT."""
+        with patch.object(log_collector, 'PROXY_ENABLED', True):
+            with patch.object(log_collector, 'PROXY_URL', 'proxy.internal'):
+                with patch.object(log_collector, 'PROXY_PORT', '3128'):
+                    self.assertEqual(log_collector._get_cms_base_url(), 'http://proxy.internal:3128')
+
+    def test_proxy_enabled_but_no_url_falls_back_to_api_base(self):
+        """When PROXY_ENABLED is true but PROXY_URL is empty, falls back to API_BASE_URL."""
+        with patch.object(log_collector, 'PROXY_ENABLED', True):
+            with patch.object(log_collector, 'PROXY_URL', ''):
+                with patch.object(log_collector, 'API_BASE_URL', 'https://cms.example.com'):
+                    self.assertEqual(log_collector._get_cms_base_url(), 'https://cms.example.com')
+
+    @patch('log_collector.requests.get')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_check_for_tasks_uses_proxy_url(self, mock_core_api, mock_load_config, mock_get):
+        """check_for_tasks hits the proxy base URL when proxy is enabled."""
+        os.environ['NODE_NAME'] = 'test-node'
+        os.environ['VM_ID'] = 'test-vm-123'
+        collector = LogCollector()
+
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_get.return_value = mock_response
+
+        with patch.object(log_collector, 'PROXY_ENABLED', True):
+            with patch.object(log_collector, 'PROXY_URL', 'proxy.internal'):
+                with patch.object(log_collector, 'PROXY_PORT', '3128'):
+                    collector.check_for_tasks()
+
+        call_args = mock_get.call_args
+        self.assertTrue(call_args[0][0].startswith('http://proxy.internal:3128'))
+
+    @patch('log_collector.requests.post')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_report_result_uses_proxy_url(self, mock_core_api, mock_load_config, mock_post):
+        """report_result hits the proxy base URL when proxy is enabled."""
+        os.environ['NODE_NAME'] = 'test-node'
+        os.environ['VM_ID'] = 'test-vm-123'
+        collector = LogCollector()
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        with patch.object(log_collector, 'PROXY_ENABLED', True):
+            with patch.object(log_collector, 'PROXY_URL', 'proxy.internal'):
+                with patch.object(log_collector, 'PROXY_PORT', '3128'):
+                    collector.report_result('evt-123', 'failed', message='test')
+
+        call_args = mock_post.call_args
+        self.assertTrue(call_args[0][0].startswith('http://proxy.internal:3128'))
 
 
 if __name__ == '__main__':

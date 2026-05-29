@@ -54,6 +54,15 @@ API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
 COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))
 COLLECTION_INTERVAL = int(os.environ.get("COLLECTION_INTERVAL", "3600"))
 CRUSOE_AUTH_TOKEN = os.environ.get("CRUSOE_MONITORING_TOKEN") or os.environ.get("CRUSOE_AUTH_TOKEN")
+PROXY_ENABLED = os.environ.get("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL     = os.environ.get("PROXY_URL", "")
+PROXY_PORT    = os.environ.get("PROXY_PORT", "3128")
+
+
+def _get_cms_base_url() -> str:
+    if PROXY_ENABLED and PROXY_URL:
+        return f"http://{PROXY_URL}:{PROXY_PORT}"
+    return API_BASE_URL
 
 # K8s-specific configuration (only used when ENVIRONMENT == "kubernetes")
 NODE_NAME = os.environ.get("NODE_NAME")
@@ -256,7 +265,7 @@ class LogCollector:
             return None
 
         try:
-            url = f"{API_BASE_URL}/agent/check-tasks"
+            url = f"{_get_cms_base_url()}/agent/check-tasks"
             params = {"vm_id": self.vm_id}
             headers = self._get_auth_headers()
 
@@ -302,7 +311,7 @@ class LogCollector:
             True if report successful, False otherwise
         """
         try:
-            url = f"{API_BASE_URL}/agent/upload-logs"
+            url = f"{_get_cms_base_url()}/agent/upload-logs"
             headers = self._get_auth_headers()
 
             if log_file and status == "success":
