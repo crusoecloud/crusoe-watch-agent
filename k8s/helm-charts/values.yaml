@@ -40,7 +40,7 @@ job:
 secrets:
   crusoeMonitoringToken: crusoe-monitoring-token
   existingSecret: crusoe-secrets
-  useProvidedMonitoringToken: false
+  useProvidedMonitoringToken: true
   monitoringToken: ""
 
 metricsExporter:
