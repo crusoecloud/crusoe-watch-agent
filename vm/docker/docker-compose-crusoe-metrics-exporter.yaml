@@ -1,6 +1,6 @@
 services:
   crusoe-metrics-exporter:
-    image: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter:0.2.1
+    image: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter:0.2.3
     container_name: crusoe-metrics-exporter
     pid: "host"
     hostname: crusoe-metrics-exporter
@@ -19,7 +19,7 @@ services:
       - PORT=9500
       - DISKSTATS_PATH=/proc/diskstats
       - MOUNTSTATS_PATH=/proc/self/mountstats
-      # OBJSTORE_ENDPOINT_FQDN is sourced from .env (set by the install script's --region flag)
+      # OBJSTORE_ENDPOINT_FQDN is sourced from .env (set by the installer script via hostname)
       - OBJSTORE_ENDPOINT_FQDN=${OBJSTORE_ENDPOINT_FQDN:-}
 
     ports:

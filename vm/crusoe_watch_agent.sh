@@ -69,7 +69,6 @@ DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=false
 
 LOGS_INGRESS_ENDPOINT=""
-REGION=""
 
 # Versioning and upgrade helpers (vm agent has its own version)
 REMOTE_VERSION_FILE="vm/VERSION"
@@ -107,8 +106,7 @@ usage() {
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
   echo "Common options:"
-  echo "  --enable-metrics-exporter                 Install and enable the Crusoe metrics exporter (requires --region)"
-  echo "  --region REGION                           Crusoe region (e.g. us-east1-a, eu-iceland1-a); used to derive OBJSTORE_ENDPOINT_FQDN"
+  echo "  --enable-metrics-exporter                 Install and enable the Crusoe metrics exporter"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "                                            Optional SERVICE_NAME defaults to dcgm-exporter"
   echo "Defaults: NVIDIA NAME=crusoe-dcgm-exporter, PORT=9400; AMD NAME=crusoe-amd-exporter, PORT=5000; MODE=docker"
@@ -117,7 +115,7 @@ usage() {
   echo "  $0 install --no-docker"
   echo "  $0 install --replace-dcgm-exporter"
   echo "  $0 install --replace-dcgm-exporter my-dcgm-exporter"
-  echo "  $0 install --enable-metrics-exporter --region \$REGION"
+  echo "  $0 install --enable-metrics-exporter"
   echo "  $0 uninstall"
   echo "  $0 refresh-token"
   echo "  $0 upgrade -b main"
@@ -170,13 +168,6 @@ parse_args() {
         ;;
       --enable-metrics-exporter)
         ENABLE_METRICS_EXPORTER=true; shift ;;
-      --region)
-        if [[ -n "$2" ]]; then
-          REGION="$2"; shift 2
-        else
-          error_exit "Missing value for $1"
-        fi
-        ;;
       --replace-dcgm-exporter)
         REPLACE_DCGM_EXPORTER=true
         shift
@@ -208,11 +199,6 @@ parse_args() {
     esac
   done
 
-  # --region is required when --enable-metrics-exporter is set, so that
-  # OBJSTORE_ENDPOINT_FQDN can be derived for the crusoe-metrics-exporter.
-  if $ENABLE_METRICS_EXPORTER && [[ -z "$REGION" ]]; then
-    error_exit "--enable-metrics-exporter requires --region (e.g. 'eu-iceland1-a')"
-  fi
 }
 
 # Check if a systemd unit exists (anywhere on the systemd path)
@@ -864,8 +850,14 @@ LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
 AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
 EOF
   fi
-  if [[ -n "$REGION" ]]; then
+  # Derive OBJSTORE_ENDPOINT_FQDN from the VM's hostname domain.
+  # Crusoe VMs have a domain like "us-east1-a.compute.internal"; the first
+  # dot-separated segment is the region.
+  DETECTED_DOMAIN=$(hostname -d 2>/dev/null || true)
+  if [[ -n "$DETECTED_DOMAIN" ]]; then
+    REGION="${DETECTED_DOMAIN%%.*}"
     echo "OBJSTORE_ENDPOINT_FQDN='object.${REGION}.crusoecloudcompute.com'" >> "$ENV_FILE"
+    status "Derived OBJSTORE_ENDPOINT_FQDN from hostname (region: $REGION)"
   fi
   echo ".env file created at $ENV_FILE"
 

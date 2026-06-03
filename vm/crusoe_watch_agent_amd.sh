@@ -51,7 +51,6 @@ DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=false
 
 LOGS_INGRESS_ENDPOINT=""
-REGION=""
 
 # CLI args parsing
 usage() {
@@ -63,8 +62,7 @@ usage() {
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
-  echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter (requires --region)"
-  echo "  --region REGION                           Crusoe region (e.g. us-east1-a, eu-iceland1-a); used to derive OBJSTORE_ENDPOINT_FQDN"
+  echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter"
   echo "Examples:"
   echo "  $0 install --branch main"
   echo "  $0 uninstall"
@@ -116,13 +114,6 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
-      --region)
-        if [[ -n "$2" ]]; then
-          REGION="$2"; shift 2
-        else
-          error_exit "Missing value for $1"
-        fi
-        ;;
       --enable-metrics-exporter)
         ENABLE_METRICS_EXPORTER=true; shift ;;
       --help|-h)
@@ -132,11 +123,6 @@ parse_args() {
     esac
   done
 
-  # --region is required when --enable-metrics-exporter is set, so that
-  # OBJSTORE_ENDPOINT_FQDN can be derived for the crusoe-metrics-exporter.
-  if $ENABLE_METRICS_EXPORTER && [[ -z "$REGION" ]]; then
-    error_exit "--enable-metrics-exporter requires --region (e.g. 'eu-iceland1-a')"
-  fi
 }
 
 # --- Helper Functions ---
@@ -423,8 +409,14 @@ LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
 AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
 EOF
-  if [[ -n "$REGION" ]]; then
+  # Derive OBJSTORE_ENDPOINT_FQDN from the VM's hostname domain.
+  # Crusoe VMs have a domain like "us-east1-a.compute.internal"; the first
+  # dot-separated segment is the region.
+  DETECTED_DOMAIN=$(hostname -d 2>/dev/null || true)
+  if [[ -n "$DETECTED_DOMAIN" ]]; then
+    REGION="${DETECTED_DOMAIN%%.*}"
     echo "OBJSTORE_ENDPOINT_FQDN='object.${REGION}.crusoecloudcompute.com'" >> "$ENV_FILE"
+    status "Derived OBJSTORE_ENDPOINT_FQDN from hostname (region: $REGION)"
   fi
   echo ".env file created at $ENV_FILE"
 
