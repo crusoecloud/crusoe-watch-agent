@@ -534,18 +534,7 @@ class LogCollector:
                 _preload_content=False
             )
 
-            stdout_output = ""
-            stderr_output = ""
-            while resp.is_open():
-                resp.update(timeout=1)
-                if resp.peek_stdout():
-                    stdout_output += resp.read_stdout()
-                if resp.peek_stderr():
-                    chunk = resp.read_stderr()
-                    if chunk:
-                        stderr_output += chunk
-
-            resp.close()
+            stdout_output, stderr_output = self._read_exec_stream(resp)
 
             if actual_log_path in stdout_output or "Bug report generated" in stdout_output:
                 LOG.info(
@@ -568,6 +557,14 @@ class LogCollector:
                        "root_cause": str(e)},
             )
             return None, BugReportError.EXEC_ERROR.code, BugReportError.EXEC_ERROR.message
+        except TimeoutError as e:
+            LOG.error(
+                f"Timed out executing nvidia-bug-report.sh in pod {pod_name}",
+                exc_info=True,
+                extra={"error_code": BugReportError.COLLECTION_TIMED_OUT.code,
+                       "root_cause": str(e)},
+            )
+            return None, BugReportError.COLLECTION_TIMED_OUT.code, BugReportError.COLLECTION_TIMED_OUT.message
         except Exception as e:
             LOG.error(
                 f"Unexpected error during nvidia-bug-report execution",
@@ -701,14 +698,14 @@ class LogCollector:
         try:
             # First verify the file exists
             LOG.debug(f"Verifying file exists: {remote_path}")
-            check_command = ["test", "-f", remote_path, "&&", "echo", "EXISTS"]
+            check_command = f"test -f {shlex.quote(remote_path)} && echo EXISTS"
 
             resp = stream(
                 self.k8s_api.connect_get_namespaced_pod_exec,
                 pod_name,
                 self.driver_namespace,
                 container=container_name,
-                command=["/bin/sh", "-c", " ".join(check_command)],
+                command=["/bin/sh", "-c", check_command],
                 stderr=True,
                 stdin=False,
                 stdout=True,
@@ -736,13 +733,11 @@ class LogCollector:
                 LOG.debug(f"Files in /tmp:\n{list_resp}")
                 return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
 
-            # Use base64 to avoid binary encoding issues
-            # Create tar, pipe to base64, then decode on our side
             remote_dir = os.path.dirname(remote_path)
             remote_file = os.path.basename(remote_path)
             exec_command = [
                 "/bin/sh", "-c",
-                f"tar -C {remote_dir} -cf - {remote_file} | base64"
+                f"tar -C {shlex.quote(remote_dir)} -cf - {shlex.quote(remote_file)} | base64"
             ]
 
             LOG.debug(f"Running command: {exec_command[2]}")
@@ -756,20 +751,23 @@ class LogCollector:
                 stderr=True,
                 stdin=False,
                 stdout=True,
-                tty=False
+                tty=False,
+                _preload_content=False
             )
 
-            # Read base64-encoded data (this is text, not binary)
-            if resp:
+            stdout_output, stderr_output = self._read_exec_stream(resp)
+            LOG.debug(f"Received {len(stdout_output)} base64 chars from pod {pod_name} for {remote_path}")
+
+            if stdout_output:
                 LOG.debug(f"Received base64 data, decoding...")
                 try:
-                    tar_data = base64.b64decode(resp)
+                    tar_data = base64.b64decode(stdout_output)
                 except Exception as e:
                     LOG.error(
                         f"Failed to decode base64 data from pod {pod_name}",
                         exc_info=True,
                         extra={"error_code": BugReportError.DOWNLOAD_FAILED.code,
-                               "root_cause": str(e)},
+                               "root_cause": f"{e}; received {len(stdout_output)} base64 chars; stderr={stderr_output[-500:]!r}"},
                     )
                     return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
             else:
@@ -828,6 +826,14 @@ class LogCollector:
                        "root_cause": str(e)},
             )
             return None, BugReportError.DOWNLOAD_FAILED.code, BugReportError.DOWNLOAD_FAILED.message
+        except TimeoutError as e:
+            LOG.error(
+                f"Timed out downloading log file from pod {pod_name}",
+                exc_info=True,
+                extra={"error_code": BugReportError.COLLECTION_TIMED_OUT.code,
+                       "root_cause": str(e)},
+            )
+            return None, BugReportError.COLLECTION_TIMED_OUT.code, BugReportError.COLLECTION_TIMED_OUT.message
         except Exception as e:
             LOG.error(
                 f"Unexpected error downloading log file from pod {pod_name}",
@@ -836,6 +842,32 @@ class LogCollector:
                        "root_cause": str(e)},
             )
             return None, BugReportError.INTERNAL_ERROR.code, BugReportError.INTERNAL_ERROR.message
+
+    def _read_exec_stream(self, resp, timeout: int = COLLECTION_TIMEOUT) -> Tuple[str, str]:
+        stdout_output = ""
+        stderr_output = ""
+        # resp.update(timeout=1) only bounds a single poll, not the total wait.
+        # Without an overall deadline a hung exec (stream never closes) would spin
+        # this loop forever; because collect_logs runs in an abandoned daemon thread,
+        # that leaks the thread and websocket connection rather than blocking the request.
+        deadline = time.monotonic() + timeout
+        try:
+            while resp.is_open():
+                if time.monotonic() > deadline:
+                    raise TimeoutError(
+                        f"Timed out reading exec stream after {timeout}s "
+                        f"(received {len(stdout_output)} stdout / {len(stderr_output)} stderr chars)"
+                    )
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    stdout_output += resp.read_stdout()
+                if resp.peek_stderr():
+                    chunk = resp.read_stderr()
+                    if chunk:
+                        stderr_output += chunk
+        finally:
+            resp.close()
+        return stdout_output, stderr_output
 
     def cleanup_remote_log(self, pod, remote_path: str) -> bool:
         """
@@ -861,9 +893,10 @@ class LogCollector:
 
         try:
             # Delete the file and verify it's gone
+            quoted_remote_path = shlex.quote(remote_path)
             exec_command = [
                 "/bin/sh", "-c",
-                f"rm -f {remote_path} && if [ -f {remote_path} ]; then echo 'STILL_EXISTS'; else echo 'DELETED'; fi"
+                f"rm -f {quoted_remote_path} && if [ -f {quoted_remote_path} ]; then echo 'STILL_EXISTS'; else echo 'DELETED'; fi"
             ]
 
             resp = stream(
@@ -978,12 +1011,12 @@ class LogCollector:
             if not remote_log_path:
                 return None, error_code, error_msg
 
-            local_log_path, error_code, error_msg = self.download_log_file(driver_pod, remote_log_path)
-            if not local_log_path:
-                return None, error_code, error_msg
-
-            # Clean up remote log file
-            self.cleanup_remote_log(driver_pod, remote_log_path)
+            try:
+                local_log_path, error_code, error_msg = self.download_log_file(driver_pod, remote_log_path)
+                if not local_log_path:
+                    return None, error_code, error_msg
+            finally:
+                self.cleanup_remote_log(driver_pod, remote_log_path)
 
         LOG.info(f"Log collection completed successfully: {local_log_path} ({local_log_path.stat().st_size / (1024*1024):.2f} MB)")
         return local_log_path, None, None

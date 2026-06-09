@@ -7,6 +7,10 @@ import unittest
 from unittest.mock import Mock, patch, MagicMock, mock_open
 import tempfile
 import os
+import base64
+import io
+import itertools
+import tarfile
 from pathlib import Path
 
 # Set minimal required environment variables before importing the module
@@ -406,6 +410,7 @@ class TestCollectionWorkflow(unittest.TestCase):
         self.assertIsNone(error_msg)
         # Verify execute was called with event_id=None
         collector.execute_nvidia_bug_report.assert_called_once_with(mock_pod, None)
+        collector.cleanup_remote_log.assert_called_once_with(mock_pod, '/tmp/test-log.log.gz')
 
     @patch('log_collector.config.load_incluster_config')
     @patch('log_collector.client.CoreV1Api')
@@ -441,6 +446,7 @@ class TestCollectionWorkflow(unittest.TestCase):
         self.assertIsNone(error_msg)
         # Verify execute was called with event_id
         collector.execute_nvidia_bug_report.assert_called_once_with(mock_pod, 'evt-123')
+        collector.cleanup_remote_log.assert_called_once_with(mock_pod, '/tmp/test-log-evt123.log.gz')
 
     @patch('log_collector.config.load_incluster_config')
     @patch('log_collector.client.CoreV1Api')
@@ -488,9 +494,374 @@ class TestCollectionWorkflow(unittest.TestCase):
         collector.find_nvidia_driver_pod = Mock(return_value=mock_pod)
         collector.execute_nvidia_bug_report = Mock(return_value=('/tmp/test-log.log.gz', None, None))
         collector.download_log_file = Mock(return_value=(None, 'CWA-BR-5007', 'Unexpected error downloading bug report'))
+        collector.cleanup_remote_log = Mock(return_value=True)
         collector.cleanup_old_logs = Mock()
 
         log_path, error_code, error_msg = collector.collect_logs()
+
+        self.assertIsNone(log_path)
+        self.assertEqual(error_code, 'CWA-BR-5007')
+        self.assertIn("Unexpected error downloading bug report", error_msg)
+        collector.cleanup_remote_log.assert_called_once_with(mock_pod, '/tmp/test-log.log.gz')
+
+
+class FakeExecResponse:
+    def __init__(self, stdout='', stderr=''):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.open = True
+
+    def is_open(self):
+        return self.open
+
+    def update(self, timeout=1):
+        self.open = False
+
+    def peek_stdout(self):
+        return bool(self.stdout)
+
+    def read_stdout(self):
+        output = self.stdout
+        self.stdout = ''
+        return output
+
+    def peek_stderr(self):
+        return bool(self.stderr)
+
+    def read_stderr(self):
+        output = self.stderr
+        self.stderr = ''
+        return output
+
+    def close(self):
+        self.open = False
+
+
+class ChunkedFakeExecResponse:
+    def __init__(self, stdout_chunks=None, stderr_chunks=None):
+        self.stdout_chunks = list(stdout_chunks or [])
+        self.stderr_chunks = list(stderr_chunks or [])
+        self.current_stdout = ''
+        self.current_stderr = ''
+        self.open = True
+
+    def is_open(self):
+        return self.open
+
+    def update(self, timeout=1):
+        if self.stdout_chunks:
+            self.current_stdout = self.stdout_chunks.pop(0)
+        else:
+            self.current_stdout = ''
+
+        if self.stderr_chunks:
+            self.current_stderr = self.stderr_chunks.pop(0)
+        else:
+            self.current_stderr = ''
+
+        if not self.stdout_chunks and not self.stderr_chunks and not self.current_stdout and not self.current_stderr:
+            self.open = False
+
+    def peek_stdout(self):
+        return bool(self.current_stdout)
+
+    def read_stdout(self):
+        output = self.current_stdout
+        self.current_stdout = ''
+        return output
+
+    def peek_stderr(self):
+        return bool(self.current_stderr)
+
+    def read_stderr(self):
+        output = self.current_stderr
+        self.current_stderr = ''
+        return output
+
+    def close(self):
+        self.open = False
+
+
+class HangingFakeExecResponse:
+    """Mimics an exec stream that never closes (a hung command / half-open websocket)."""
+    def __init__(self):
+        self.closed = False
+
+    def is_open(self):
+        return not self.closed
+
+    def update(self, timeout=1):
+        pass  # never yields data, never closes
+
+    def peek_stdout(self):
+        return False
+
+    def peek_stderr(self):
+        return False
+
+    def close(self):
+        self.closed = True
+
+
+class TestDownloadLogFile(unittest.TestCase):
+    def setUp(self):
+        self.output_dir = tempfile.mkdtemp()
+        os.environ['NODE_NAME'] = 'test-node'
+        os.environ['LOG_OUTPUT_DIR'] = self.output_dir
+
+    def tearDown(self):
+        if 'NODE_NAME' in os.environ:
+            del os.environ['NODE_NAME']
+        if 'LOG_OUTPUT_DIR' in os.environ:
+            del os.environ['LOG_OUTPUT_DIR']
+
+    def _make_pod(self):
+        mock_pod = Mock()
+        mock_pod.metadata.name = 'nvidia-gpu-driver-test'
+        mock_container = Mock()
+        mock_container.name = 'nvidia-driver-ctr'
+        mock_pod.spec.containers = [mock_container]
+        return mock_pod
+
+    def _make_encoded_tar(self, remote_file, file_data):
+        tar_buffer = io.BytesIO()
+        with tarfile.open(fileobj=tar_buffer, mode='w') as tar:
+            tar_info = tarfile.TarInfo(remote_file)
+            tar_info.size = len(file_data)
+            tar.addfile(tar_info, io.BytesIO(file_data))
+
+        return base64.b64encode(tar_buffer.getvalue()).decode()
+
+    @patch('log_collector.stream')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_download_log_file_ignores_stderr_when_decoding_base64(self, mock_core_api, mock_load_config, mock_stream):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        remote_file = 'nvidia-bug-report-test-node.log.gz'
+        file_data = b'test log data'
+        encoded_tar = self._make_encoded_tar(remote_file, file_data)
+        mock_pod = self._make_pod()
+
+        mock_stream.side_effect = [
+            'EXISTS',
+            FakeExecResponse(stdout=encoded_tar, stderr='tar: removing leading / from member names\n')
+        ]
+
+        log_path, error_code, error_msg = collector.download_log_file(mock_pod, f'/tmp/{remote_file}')
+
+        self.assertEqual(log_path, Path(self.output_dir) / remote_file)
+        self.assertIsNone(error_code)
+        self.assertIsNone(error_msg)
+        self.assertEqual(log_path.read_bytes(), file_data)
+
+    @patch('log_collector.stream')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_download_log_file_reassembles_multichunk_stdout(self, mock_core_api, mock_load_config, mock_stream):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        remote_file = 'nvidia-bug-report-test-node.log.gz'
+        file_data = b'test log data' * 1024
+        encoded_tar = self._make_encoded_tar(remote_file, file_data)
+        chunks = [encoded_tar[i:i + 97] for i in range(0, len(encoded_tar), 97)]
+
+        mock_stream.side_effect = [
+            'EXISTS',
+            ChunkedFakeExecResponse(stdout_chunks=chunks)
+        ]
+
+        log_path, error_code, error_msg = collector.download_log_file(self._make_pod(), f'/tmp/{remote_file}')
+
+        self.assertEqual(log_path, Path(self.output_dir) / remote_file)
+        self.assertIsNone(error_code)
+        self.assertIsNone(error_msg)
+        self.assertEqual(log_path.read_bytes(), file_data)
+
+    @patch('log_collector.stream')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_download_log_file_uses_preload_content_false_for_download(self, mock_core_api, mock_load_config, mock_stream):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        remote_file = 'nvidia-bug-report-test-node.log.gz'
+        encoded_tar = self._make_encoded_tar(remote_file, b'test log data')
+
+        mock_stream.side_effect = [
+            'EXISTS',
+            FakeExecResponse(stdout=encoded_tar)
+        ]
+
+        collector.download_log_file(self._make_pod(), f'/tmp/{remote_file}')
+
+        self.assertEqual(mock_stream.call_args_list[1][1]['_preload_content'], False)
+
+    @patch('log_collector.stream')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_download_log_file_handles_empty_poll_without_stopping(self, mock_core_api, mock_load_config, mock_stream):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        remote_file = 'nvidia-bug-report-test-node.log.gz'
+        file_data = b'test log data after empty poll'
+        encoded_tar = self._make_encoded_tar(remote_file, file_data)
+
+        mock_stream.side_effect = [
+            'EXISTS',
+            ChunkedFakeExecResponse(stdout_chunks=['', encoded_tar[:50], encoded_tar[50:]])
+        ]
+
+        log_path, error_code, error_msg = collector.download_log_file(self._make_pod(), f'/tmp/{remote_file}')
+
+        self.assertEqual(log_path, Path(self.output_dir) / remote_file)
+        self.assertIsNone(error_code)
+        self.assertIsNone(error_msg)
+        self.assertEqual(log_path.read_bytes(), file_data)
+
+    @patch('log_collector.stream')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_download_log_file_interleaved_stderr_does_not_corrupt_base64(self, mock_core_api, mock_load_config, mock_stream):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        remote_file = 'nvidia-bug-report-test-node.log.gz'
+        file_data = b'test log data with stderr'
+        encoded_tar = self._make_encoded_tar(remote_file, file_data)
+        stdout_chunks = [encoded_tar[:50], encoded_tar[50:]]
+        stderr_chunks = ['tar warning\n', 'tar more warning\n']
+
+        mock_stream.side_effect = [
+            'EXISTS',
+            ChunkedFakeExecResponse(stdout_chunks=stdout_chunks, stderr_chunks=stderr_chunks)
+        ]
+
+        log_path, error_code, error_msg = collector.download_log_file(self._make_pod(), f'/tmp/{remote_file}')
+
+        self.assertEqual(log_path, Path(self.output_dir) / remote_file)
+        self.assertIsNone(error_code)
+        self.assertIsNone(error_msg)
+        self.assertEqual(log_path.read_bytes(), file_data)
+
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_read_exec_stream_collects_stdout_and_stderr_chunks(self, mock_core_api, mock_load_config):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        resp = ChunkedFakeExecResponse(
+            stdout_chunks=['out1', '', 'out2'],
+            stderr_chunks=['err1', 'err2']
+        )
+
+        stdout_output, stderr_output = collector._read_exec_stream(resp)
+
+        self.assertEqual(stdout_output, 'out1out2')
+        self.assertEqual(stderr_output, 'err1err2')
+
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_read_exec_stream_times_out_on_hung_exec(self, mock_core_api, mock_load_config):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        resp = HangingFakeExecResponse()
+
+        # Patch monotonic so the deadline (first call) is immediately exceeded by the
+        # loop's checks. chain+repeat keeps the fake stable no matter how many times
+        # monotonic() is called, so adding e.g. elapsed-time logging later won't break it.
+        monotonic_values = itertools.chain([1000.0], itertools.repeat(1100.0))
+        with patch.object(log_collector.time, 'monotonic', side_effect=monotonic_values):
+            with self.assertRaises(TimeoutError):
+                collector._read_exec_stream(resp, timeout=5)
+
+        # The hung stream must be closed so the websocket/thread can be released.
+        self.assertTrue(resp.closed)
+
+    @patch('log_collector.stream')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_download_log_file_timeout_returns_timed_out_code(self, mock_core_api, mock_load_config, mock_stream):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        # File-exists check succeeds, then the download read hangs.
+        mock_stream.side_effect = [
+            'EXISTS',
+            HangingFakeExecResponse()
+        ]
+
+        # Drive monotonic past the deadline so _read_exec_stream raises TimeoutError.
+        monotonic_values = itertools.chain([1000.0], itertools.repeat(1000.0 + log_collector.COLLECTION_TIMEOUT + 1))
+        with patch.object(log_collector.time, 'monotonic', side_effect=monotonic_values):
+            log_path, error_code, error_msg = collector.download_log_file(self._make_pod(), '/tmp/test.log.gz')
+
+        # A hung exec must surface as a timeout, not a generic internal error.
+        self.assertIsNone(log_path)
+        self.assertEqual(error_code, 'CWA-BR-5008')
+
+    @patch('log_collector.stream')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_download_log_file_reports_invalid_base64_stdout(self, mock_core_api, mock_load_config, mock_stream):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        mock_pod = Mock()
+        mock_pod.metadata.name = 'nvidia-gpu-driver-test'
+        mock_container = Mock()
+        mock_container.name = 'nvidia-driver-ctr'
+        mock_pod.spec.containers = [mock_container]
+
+        mock_stream.side_effect = [
+            'EXISTS',
+            FakeExecResponse(stdout='not base64!', stderr='tar failed\n')
+        ]
+
+        log_path, error_code, error_msg = collector.download_log_file(mock_pod, '/tmp/test.log.gz')
+
+        self.assertIsNone(log_path)
+        self.assertEqual(error_code, 'CWA-BR-5007')
+        self.assertIn("Unexpected error downloading bug report", error_msg)
+
+    @patch('log_collector.stream')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_download_log_file_empty_stdout_returns_error(self, mock_core_api, mock_load_config, mock_stream):
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        mock_stream.side_effect = [
+            'EXISTS',
+            FakeExecResponse(stdout='', stderr='tar: produced no output\n')
+        ]
+
+        log_path, error_code, error_msg = collector.download_log_file(self._make_pod(), '/tmp/test.log.gz')
+
+        self.assertIsNone(log_path)
+        self.assertEqual(error_code, 'CWA-BR-5007')
+        self.assertIn("Unexpected error downloading bug report", error_msg)
+
+    @patch('log_collector.stream')
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_download_log_file_non_tar_payload_returns_error(self, mock_core_api, mock_load_config, mock_stream):
+        # Valid base64 that decodes to non-tar bytes: mirrors a clean-boundary truncation
+        non_tar = base64.b64encode(b'valid base64 but not a tar archive').decode()
+
+        with patch.object(log_collector, 'LOG_OUTPUT_DIR', self.output_dir):
+            collector = LogCollector()
+
+        mock_stream.side_effect = [
+            'EXISTS',
+            FakeExecResponse(stdout=non_tar)
+        ]
+
+        log_path, error_code, error_msg = collector.download_log_file(self._make_pod(), '/tmp/test.log.gz')
 
         self.assertIsNone(log_path)
         self.assertEqual(error_code, 'CWA-BR-5007')
