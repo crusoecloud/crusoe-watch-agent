@@ -38,7 +38,7 @@ LATEST_SCRIPT_URL="https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/cr
 INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 
 # Log collector container image version (update here when releasing new container builds)
-LOG_COLLECTOR_IMAGE_VERSION="v0.2.27"
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.28"
 
 CRUSOE_METRICS_EXPORTER_BIN="/usr/local/bin/crusoe-metrics-exporter"
 

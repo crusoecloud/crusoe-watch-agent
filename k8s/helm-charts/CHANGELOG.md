@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.26 (2026-06-09)
+
+**Features**
+- Add 256 MiB persistent disk buffers to metrics sinks to prevent data loss during temporary outages ([f9d0214](https://github.com/crusoecloud/crusoe-watch-agent/commit/f9d0214))
+- Infer cluster region from node hostname when installing CWA with CME, removing the need to specify it explicitly ([d4da1e8](https://github.com/crusoecloud/crusoe-watch-agent/commit/d4da1e8))
+- Route log-collector API requests through egress proxy when proxy is enabled ([049a2f7](https://github.com/crusoecloud/crusoe-watch-agent/commit/049a2f7))
+
+**Bug Fixes**
+- Fix NVIDIA bug report download failing on large payloads ([ff55028](https://github.com/crusoecloud/crusoe-watch-agent/commit/ff55028))
+
+
 ## 0.3.25 (2026-05-22)
 
 **Bug Fixes**
