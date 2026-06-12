@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.27 (2026-06-12)
+
+- Fix Vector failing to detect config updates written in the same second as startup, which caused metrics like DCGM to be silently missed ([cfce70f](https://github.com/crusoecloud/crusoe-watch-agent/commit/cfce70f))
+
+
 ## 0.3.26 (2026-06-09)
 
 **Features**
