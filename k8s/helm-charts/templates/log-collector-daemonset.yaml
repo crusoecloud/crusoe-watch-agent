@@ -53,16 +53,6 @@ spec:
                     values:
                       - "true"
 
-      initContainers:
-        - name: fix-logs-permissions
-          image: busybox:latest
-          command: ["sh", "-c", "mkdir -p /logs && chown -R 0:0 /logs && chmod -R 755 /logs"]
-          volumeMounts:
-            - name: {{ $vendor }}-logs
-              mountPath: /logs
-          securityContext:
-            runAsUser: 0
-
       containers:
       - name: log-collector
         image: "{{ $vendorValues.imageRepository }}:{{ $vendorValues.imageTag | default $shared.imageTag }}"
