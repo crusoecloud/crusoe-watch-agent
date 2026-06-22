@@ -289,32 +289,56 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 ''')
 
         self.enrich_logs_transform_source = LiteralStr('''
-.agent = "crusoe-watch-agent"
-.chart_version = "${CHART_VERSION}"
-.host = get_hostname!()
-.crusoe_cluster_id = "${CRUSOE_CLUSTER_ID}"
+# enrich_logs converges all parser branches and assembles the standardized envelope:
+# the raw event verbatim under `payload`, Crusoe identity under `crusoe`, and
+# _msg/_time/level/log_source at the top level.
 
-del(.source_type)
-
-# Fallback _time if not set
-if !exists(._time) {
-    if exists(.__REALTIME_TIMESTAMP) {
-        ._time = .__REALTIME_TIMESTAMP
-    } else if exists(.timestamp) {
-        ._time = .timestamp
-    }
+# Pull the agent-derived scratch fields off the event before wrapping; what remains
+# is the raw log, preserved verbatim under payload.
+parsed_msg = null
+if exists(._msg) {
+    parsed_msg = del(._msg)
+}
+parsed_time = null
+if exists(._time) {
+    parsed_time = del(._time)
+}
+cwa_level = null
+if exists(.level) {
+    cwa_level = del(.level)
+}
+cwa_log_source = null
+if exists(.log_source) {
+    cwa_log_source = del(.log_source)
 }
 
-# Fallback _msg if not set
-if !exists(._msg) {
-    if exists(.message) {
-        ._msg = del(.message)
-    }
+raw = .
+. = {}
+.payload = raw
+
+# Crusoe identity metadata; remaining identity fields are set by CML Ingress.
+.crusoe = { "agent": "crusoe-watch-agent", "chart_version": "${CHART_VERSION}" }
+
+if cwa_log_source != null {
+    .log_source = cwa_log_source
 }
 
-# Normalize level to canonical enum (mirrors GCP Cloud Logging SEVERITY_TRANSLATIONS):
-#   emergency, alert, critical, error, warning, notice, info, debug
-# Unrecognized values are dropped; missing levels stay absent.
+if parsed_msg != null {
+    ._msg = parsed_msg
+} else if exists(.payload.message) {
+    ._msg = .payload.message
+}
+
+if parsed_time != null {
+    ._time = parsed_time
+} else if exists(.payload.__REALTIME_TIMESTAMP) {
+    ._time = .payload.__REALTIME_TIMESTAMP
+} else if exists(.payload.timestamp) {
+    ._time = .payload.timestamp
+}
+
+# Normalize level to canonical enum (mirrors GCP Cloud Logging SEVERITY_TRANSLATIONS).
+# Unrecognized values are omitted.
 level_synonyms = {
     "emergency": "emergency", "emerg": "emergency",
     "alert": "alert", "a": "alert",
@@ -326,13 +350,11 @@ level_synonyms = {
     "debug": "debug", "trace": "debug", "trace_int": "debug",
     "fine": "debug", "finer": "debug", "finest": "debug", "config": "debug", "d": "debug"
 }
-if exists(.level) {
-    lvl = downcase(string!(.level))
+if cwa_level != null {
+    lvl = downcase(string!(cwa_level))
     normalized = get(level_synonyms, [lvl]) ?? null
     if normalized != null {
         .level = normalized
-    } else {
-        del(.level)
     }
 }
 ''')
@@ -343,8 +365,8 @@ if exists(.level) {
 # Infallible bind — events without MESSAGE would otherwise abort the transform.
 msg = string(.message) ?? ""
 
-# Map syslog PRIORITY to a canonical level. enrich_logs runs the final
-# normalize-or-drop pass against the level_synonyms map.
+# Map syslog PRIORITY to a canonical level, staged in scratch .level (enrich_logs
+# normalizes it to the top-level `level`). The raw event keeps PRIORITY untouched.
 # Coerce defensively: journald emits PRIORITY as a string, but other
 # upstreams (e.g. forwarded syslog) may not.
 priority = to_string(.PRIORITY) ?? ""
@@ -366,77 +388,59 @@ if priority == "0" {
     .level = "debug"
 }
 
-# Default: preserve MESSAGE verbatim. The whitelist below may override
-# _msg / level / _time if it extracts cleaner values from real logfmt.
+# Default: parsed message = MESSAGE verbatim. The logfmt/klog blocks below may extract a
+# cleaner _msg / level / time into scratch. We extract ONLY those three — we do not
+# materialize other structured fields onto the event, so payload stays raw (the full
+# MESSAGE is preserved at payload.message; use unpack_logfmt at query time if needed).
 ._msg = msg
 
 # Narrow logfmt whitelist. parse_logfmt is intentionally permissive
 # (see vector#6418), so we only run it on identifiers known to emit
-# real logfmt-shaped MESSAGE, gate on a `^\\S+=` sniff, and validate
-# extracted keys are proper identifiers. Everything else (sshd, sudo,
-# systemd, kernel, etc.) keeps its raw _msg and natively-promoted
-# journald fields; consumers can use LogsQL's unpack_logfmt at query
-# time for fields we don't materialize at ingest.
+# real logfmt-shaped MESSAGE and gate on a `^\\S+=` sniff.
 logfmt_emitters = ["containerd", "dockerd", "etcd"]
 syslog_id = string(.SYSLOG_IDENTIFIER) ?? ""
 
 if includes(logfmt_emitters, syslog_id) && match(msg, r'^\\S+=') {
     parsed, err = parse_logfmt(msg)
     if err == null && is_object(parsed) {
-        structured_fields = {}
-        for_each(object(parsed)) -> |key, value| {
-            # Skip bare tokens (no `=`) and mangled keys (non-identifier shape).
-            is_bare = (value == true) || (value == "true")
-            if !is_bare && match(key, r'^[a-zA-Z_][a-zA-Z0-9_.-]*$') {
-                structured_fields = set!(structured_fields, [key], value)
+        structured_fields = object(parsed)
+        if exists(structured_fields.msg) {
+            ._msg = string!(structured_fields.msg)
+        }
+        if exists(structured_fields.time) {
+            parsed_time, ts_err = parse_timestamp(string!(structured_fields.time), format: "%+")
+            if ts_err == null {
+                ._time = parsed_time
             }
         }
-
-        if length(structured_fields) > 0 {
-            if exists(structured_fields.msg) {
-                ._msg = string!(structured_fields.msg)
-            }
-            if exists(structured_fields.time) {
-                parsed_time, ts_err = parse_timestamp(string!(structured_fields.time), format: "%+")
-                if ts_err == null {
-                    ._time = parsed_time
-                }
-            }
-            if exists(structured_fields.level) {
-                .level = downcase(string!(structured_fields.level))
-            }
-            for_each(structured_fields) -> |key, value| {
-                if key != "msg" && key != "time" && key != "level" {
-                    . = set!(., [key], value)
-                }
-            }
+        if exists(structured_fields.level) {
+            .level = downcase(string!(structured_fields.level))
         }
     }
 }
 
 # klog prefix parser. Without this, kubelet stdout is always level=info
 # (journald PRIORITY is fixed at 6); parse_klog reads the leading severity
-# letter and leaves the payload verbatim.
+# letter. We extract only message/level/timestamp into scratch — the raw line
+# stays at payload.message.
 klog_emitters = ["kubelet", "kube-proxy"]
 if includes(klog_emitters, syslog_id) {
     parsed_klog, klog_err = parse_klog(msg)
     if klog_err == null && is_object(parsed_klog) {
-        for_each(object(parsed_klog)) -> |key, value| {
-            if key == "message" {
-                ._msg = string!(value)
-            } else if key == "level" {
-                .level = string!(value)
-            } else if key == "timestamp" {
-                ._time = value
-            } else {
-                . = set!(., [key], value)
-            }
+        if exists(parsed_klog.message) {
+            ._msg = string!(parsed_klog.message)
+        }
+        if exists(parsed_klog.level) {
+            .level = string!(parsed_klog.level)
+        }
+        if exists(parsed_klog.timestamp) {
+            ._time = parsed_klog.timestamp
         }
     }
 }
 
-del(.message)
-del(.timestamp)
+# Nothing is added to or removed from the raw event: enrich_logs wraps it verbatim under
+# payload and lifts the scratch ._msg / ._time / .level / .log_source out.
 ''')
 
         self.parse_crusoe_container_logs_transform_source = LiteralStr('''
@@ -453,7 +457,9 @@ if exists(.kubernetes.pod_labels.app) && starts_with(string!(.kubernetes.pod_lab
                 .level = string!(parsed.level)
             }
             if exists(parsed.message) {
-                .message = string!(parsed.message)
+                # Stage the parsed message for enrich_logs to lift to top-level _msg;
+                # the raw JSON line stays in .message (preserved as payload.message).
+                ._msg = string!(parsed.message)
             }
             # Note: parsed.timestamp exists but we use kubernetes timestamp
         }
@@ -473,7 +479,9 @@ if (to_string(.kubernetes.container_name) ?? "") == "vector-config-reloader" {
                 .level = string!(parsed.level)
             }
             if exists(parsed.message) {
-                .message = string!(parsed.message)
+                # Stage the parsed message for enrich_logs to lift to top-level _msg;
+                # the raw JSON line stays in .message (preserved as payload.message).
+                ._msg = string!(parsed.message)
             }
             # Note: parsed.timestamp exists but we use kubernetes timestamp
         }
@@ -724,8 +732,9 @@ if exists(.metadata.level) {
         }
 
         # Parallel branches: each parser takes only its source(s). Then enrich_logs
-        # converges all parsers, adds common fields (.agent/.host/.cluster_id), and runs
-        # common cleanup (source_type, _time/_msg fallbacks, level normalization).
+        # converges all parsers, builds the crusoe identity namespace (agent,
+        # chart_version, cluster_id), and runs common cleanup (envelope wrapping,
+        # _time/_msg fallbacks, level normalization).
         transforms[PARSE_JOURNALD_LOGS_TRANSFORM_NAME] = {
             "type": "remap",
             "inputs": [FILTER_JOURNALD_NOISE_TRANSFORM_NAME],
@@ -765,7 +774,10 @@ if exists(.metadata.level) {
             "compression": "snappy",
             "healthcheck": {"enabled": False},
             "request": {
-                "headers": {"X-Crusoe-Vm-Id": "${VM_ID:-unknown}"},
+                "headers": {
+                    "X-Crusoe-Vm-Id": "${VM_ID:-unknown}",
+                    "User-Agent": "CrusoeWatchAgent/CMK-${CHART_VERSION}",
+                },
             },
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "encoding": {"codec": "json"},

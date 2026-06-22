@@ -513,3 +513,60 @@ def test_logs_sink_has_no_buffer():
     assert "crusoe_ingest" in vector_cfg["sinks"]
     sink = vector_cfg["sinks"]["crusoe_ingest"]
     assert "buffer" not in sink
+
+
+def test_logs_sink_identifies_agent_via_user_agent():
+    """The logs sink sends a User-Agent header identifying the agent and its version."""
+    r = VectorConfigReloader()
+    vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
+    r.set_logs_config(vector_cfg)
+
+    headers = vector_cfg["sinks"]["crusoe_ingest"]["request"]["headers"]
+    assert headers["User-Agent"] == "CrusoeWatchAgent/CMK-${CHART_VERSION}"
+
+
+def test_logs_envelope_contract():
+    """Standardized envelope: raw event under payload, identity under crusoe,
+    _msg/_time/level/log_source at the top level. Scratch (._*) never ships."""
+    r = VectorConfigReloader()
+    vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
+    r.set_logs_config(vector_cfg)
+
+    enrich = vector_cfg["transforms"]["enrich_logs"]["source"]
+    assert ".payload = raw" in enrich
+    assert '.crusoe = { "agent": "crusoe-watch-agent"' in enrich
+    # K8s envelope uses chart_version (not agent_version — that's the VM field name).
+    assert '"chart_version": "${CHART_VERSION}"' in enrich
+    assert '"agent_version"' not in enrich
+    # cluster_id is stamped server-side by CML Ingress, not by the agent envelope.
+    assert "cluster_id" not in enrich
+    assert ".log_source = cwa_log_source" in enrich
+    assert ".crusoe.log_source" not in enrich
+    assert "._payload" not in enrich
+    assert "._crusoe" not in enrich
+    # Scratch is pulled out before wrapping, so it never lands in payload.
+    assert "cwa_level = del(.level)" in enrich
+    assert "cwa_log_source = del(.log_source)" in enrich
+    # No flattening of agent metadata to the top level.
+    assert '.agent = "crusoe-watch-agent"' not in enrich
+    assert ".host = get_hostname" not in enrich
+    assert "._msg = parsed_msg" in enrich
+    assert "._msg = .payload.message" in enrich
+    assert "._time = parsed_time" in enrich
+
+    journald = vector_cfg["transforms"]["parse_journald_logs"]["source"]
+    # Drop-nothing: must not delete the raw message/timestamp.
+    assert "del(.message)" not in journald
+    assert "del(.timestamp)" not in journald
+    assert '.log_source = "journald"' in journald
+    assert '.level = "info"' in journald
+
+    crusoe = vector_cfg["transforms"]["parse_crusoe_container_logs"]["source"]
+    # Parsed JSON message/level staged into scratch; the raw .message line is preserved.
+    assert "._msg = string!(parsed.message)" in crusoe
+    assert ".level = string!(parsed.level)" in crusoe
+    assert ".message = string!(parsed.message)" not in crusoe
+    assert '.log_source = "cwa-config-reloader"' in crusoe
+
+    internal = vector_cfg["transforms"]["parse_internal_logs"]["source"]
+    assert '.log_source = "crusoe-watch-agent"' in internal
