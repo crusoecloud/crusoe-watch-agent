@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.28 (2026-06-23)
+
+**Bug Fixes**
+- Fix ALPN negotiation for all metric and log sinks when egress proxy is enabled ([2649f91](https://github.com/crusoecloud/crusoe-watch-agent/commit/2649f91))
+- Route kube-state-metrics through the egress proxy when `proxy.enabled` is set, consistent with all other metric sinks ([2649f91](https://github.com/crusoecloud/crusoe-watch-agent/commit/2649f91))
+- Remove `fix-logs-permissions` init container from the log-collector DaemonSet, which pulled `busybox:latest` from Docker Hub and could fail due to image pull rate limits ([f0b8895](https://github.com/crusoecloud/crusoe-watch-agent/commit/f0b8895))
+
+**Improvements**
+- Restructure collected log events to wrap the raw original event verbatim under a `.payload` envelope ([a1381be](https://github.com/crusoecloud/crusoe-watch-agent/commit/a1381be))
+- Switch Vector image source from `timberio/vector` to `ghcr.io/vectordotdev/vector` to avoid Docker Hub pull rate limits ([f0b8895](https://github.com/crusoecloud/crusoe-watch-agent/commit/f0b8895))
+
+
 ## 0.3.27 (2026-06-12)
 
 - Fix Vector failing to detect config updates written in the same second as startup, which caused metrics like DCGM to be silently missed ([cfce70f](https://github.com/crusoecloud/crusoe-watch-agent/commit/cfce70f))
