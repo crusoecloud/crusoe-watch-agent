@@ -185,7 +185,7 @@ class VectorConfigReloader:
         # KSM sink intentionally does NOT use the proxy — it talks to the
         # in-cluster ingest path directly. Slurm/CME do route via proxy when configured.
         self.kube_state_metrics_sink_config = self._build_prom_remote_write_sink(
-            self.cluster_sink_endpoint, "cri:cmk/${CRUSOE_CLUSTER_ID}", with_proxy=False,
+            self.cluster_sink_endpoint, "cri:cmk/${CRUSOE_CLUSTER_ID}", with_proxy=True,
         )
         self.slurm_metrics_sink_config = self._build_prom_remote_write_sink(
             self.cluster_sink_endpoint, "cri:cmk/${CRUSOE_CLUSTER_ID}", with_proxy=True,
@@ -551,7 +551,11 @@ if exists(.metadata.level) {
             "compression": "snappy",
             "request": {"concurrency": "adaptive"},
             "batch": {"max_bytes": 500000, "aggregate": False},
-            "tls": {"verify_certificate": True, "verify_hostname": True, "alpn_protocols": ["h2", "http/1.1"]},
+            "tls": {
+                "verify_certificate": True,
+                "verify_hostname": True,
+                "alpn_protocols": ["http/1.1"] if with_proxy and self.sink_proxy_cfg.get("enabled") else ["h2", "http/1.1"],
+            },
         }
         if with_proxy and self.sink_proxy_cfg.get("enabled"):
             cfg["proxy"] = self.sink_proxy_cfg
@@ -782,7 +786,11 @@ if exists(.metadata.level) {
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "encoding": {"codec": "json"},
             "batch": {"max_bytes": 100000},
-            "tls": {"verify_certificate": True, "verify_hostname": True, "alpn_protocols": ["h2", "http/1.1"]}
+            "tls": {
+                "verify_certificate": True,
+                "verify_hostname": True,
+                "alpn_protocols": ["http/1.1"] if self.sink_proxy_cfg.get("enabled") else ["h2", "http/1.1"],
+            }
         }
         if self.sink_proxy_cfg.get("enabled"):
             sink_config["proxy"] = self.sink_proxy_cfg
@@ -989,6 +997,7 @@ if exists(.metadata.level) {
         base_cfg["sinks"]["cms_gateway_node_metrics"]["endpoint"] = self.infra_sink_endpoint
         if self.sink_proxy_cfg.get("enabled"):
             base_cfg["sinks"]["cms_gateway_node_metrics"]["proxy"] = self.sink_proxy_cfg
+            base_cfg["sinks"]["cms_gateway_node_metrics"]["tls"]["alpn_protocols"] = ["http/1.1"]
 
         base_cfg["sinks"]["cms_gateway_node_metrics"]["buffer"] = self.sink_buffer_config
 
