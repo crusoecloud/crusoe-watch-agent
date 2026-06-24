@@ -495,10 +495,13 @@ vector:
             max_bytes: 500000 # ~500KB
             aggregate: false
         compression: snappy
+        proxy:
+          http: "http://internal.cms-monitoring.crusoecloud.com:3128"
+          https: "http://internal.cms-monitoring.crusoecloud.com:3128"
         tls:
           verify_certificate: true
           verify_hostname: true
-          alpn_protocols: ["h2", "http/1.1"]
+          alpn_protocols: ["http/1.1"]
         # Disk-based buffer for persistence during outages
         buffer:
           type: disk
