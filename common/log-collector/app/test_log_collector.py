@@ -871,32 +871,30 @@ class TestDownloadLogFile(unittest.TestCase):
 class TestProxyConfig(unittest.TestCase):
     """Test proxy URL resolution."""
 
-    def test_proxy_disabled_returns_api_base_url(self):
-        """When PROXY_ENABLED is false, _get_cms_base_url returns API_BASE_URL."""
-        with patch.object(log_collector, 'PROXY_ENABLED', False):
-            with patch.object(log_collector, 'PROXY_URL', 'proxy.internal'):
-                with patch.object(log_collector, 'API_BASE_URL', 'https://cms.example.com'):
-                    self.assertEqual(log_collector._get_cms_base_url(), 'https://cms.example.com')
-
-    def test_proxy_enabled_returns_proxy_base_url(self):
-        """When PROXY_ENABLED is true, _get_cms_base_url returns http://PROXY_URL:PROXY_PORT."""
+    def test_get_proxies_enabled(self):
+        """When PROXY_ENABLED is true, _get_proxies returns both http and https proxy entries."""
         with patch.object(log_collector, 'PROXY_ENABLED', True):
             with patch.object(log_collector, 'PROXY_URL', 'proxy.internal'):
                 with patch.object(log_collector, 'PROXY_PORT', '3128'):
-                    self.assertEqual(log_collector._get_cms_base_url(), 'http://proxy.internal:3128')
+                    proxies = log_collector._get_proxies()
+                    self.assertEqual(proxies, {'http': 'http://proxy.internal:3128', 'https': 'http://proxy.internal:3128'})
 
-    def test_proxy_enabled_but_no_url_falls_back_to_api_base(self):
-        """When PROXY_ENABLED is true but PROXY_URL is empty, falls back to API_BASE_URL."""
+    def test_get_proxies_disabled(self):
+        """When PROXY_ENABLED is false, _get_proxies returns None."""
+        with patch.object(log_collector, 'PROXY_ENABLED', False):
+            self.assertIsNone(log_collector._get_proxies())
+
+    def test_get_proxies_enabled_no_url(self):
+        """When PROXY_ENABLED is true but PROXY_URL is empty, _get_proxies returns None."""
         with patch.object(log_collector, 'PROXY_ENABLED', True):
             with patch.object(log_collector, 'PROXY_URL', ''):
-                with patch.object(log_collector, 'API_BASE_URL', 'https://cms.example.com'):
-                    self.assertEqual(log_collector._get_cms_base_url(), 'https://cms.example.com')
+                self.assertIsNone(log_collector._get_proxies())
 
     @patch('log_collector.requests.get')
     @patch('log_collector.config.load_incluster_config')
     @patch('log_collector.client.CoreV1Api')
-    def test_check_for_tasks_uses_proxy_url(self, mock_core_api, mock_load_config, mock_get):
-        """check_for_tasks hits the proxy base URL when proxy is enabled."""
+    def test_check_for_tasks_uses_proxy_kwarg(self, mock_core_api, mock_load_config, mock_get):
+        """check_for_tasks passes the proxy via the proxies kwarg, not as the base URL."""
         os.environ['NODE_NAME'] = 'test-node'
         os.environ['VM_ID'] = 'test-vm-123'
         collector = LogCollector()
@@ -908,16 +906,19 @@ class TestProxyConfig(unittest.TestCase):
         with patch.object(log_collector, 'PROXY_ENABLED', True):
             with patch.object(log_collector, 'PROXY_URL', 'proxy.internal'):
                 with patch.object(log_collector, 'PROXY_PORT', '3128'):
-                    collector.check_for_tasks()
+                    with patch.object(log_collector, 'API_BASE_URL', 'https://cms.example.com'):
+                        collector.check_for_tasks()
 
         call_args = mock_get.call_args
-        self.assertTrue(call_args[0][0].startswith('http://proxy.internal:3128'))
+        self.assertTrue(call_args[0][0].startswith('https://cms.example.com'))
+        expected_proxies = {'http': 'http://proxy.internal:3128', 'https': 'http://proxy.internal:3128'}
+        self.assertEqual(call_args[1].get('proxies'), expected_proxies)
 
     @patch('log_collector.requests.post')
     @patch('log_collector.config.load_incluster_config')
     @patch('log_collector.client.CoreV1Api')
-    def test_report_result_uses_proxy_url(self, mock_core_api, mock_load_config, mock_post):
-        """report_result hits the proxy base URL when proxy is enabled."""
+    def test_report_result_uses_proxy_kwarg(self, mock_core_api, mock_load_config, mock_post):
+        """report_result passes the proxy via the proxies kwarg, not as the base URL."""
         os.environ['NODE_NAME'] = 'test-node'
         os.environ['VM_ID'] = 'test-vm-123'
         collector = LogCollector()
@@ -929,10 +930,13 @@ class TestProxyConfig(unittest.TestCase):
         with patch.object(log_collector, 'PROXY_ENABLED', True):
             with patch.object(log_collector, 'PROXY_URL', 'proxy.internal'):
                 with patch.object(log_collector, 'PROXY_PORT', '3128'):
-                    collector.report_result('evt-123', 'failed', message='test')
+                    with patch.object(log_collector, 'API_BASE_URL', 'https://cms.example.com'):
+                        collector.report_result('evt-123', 'failed', message='test')
 
         call_args = mock_post.call_args
-        self.assertTrue(call_args[0][0].startswith('http://proxy.internal:3128'))
+        self.assertTrue(call_args[0][0].startswith('https://cms.example.com'))
+        expected_proxies = {'http': 'http://proxy.internal:3128', 'https': 'http://proxy.internal:3128'}
+        self.assertEqual(call_args[1].get('proxies'), expected_proxies)
 
 
 if __name__ == '__main__':

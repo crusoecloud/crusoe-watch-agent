@@ -900,7 +900,7 @@ vector:
 # Log Collector configuration
 logCollector:
   # Shared defaults (applied to both NVIDIA and AMD unless overridden per-vendor)
-  imageTag: v0.2.28
+  imageTag: v0.2.30
   pullPolicy: IfNotPresent
 
   env:

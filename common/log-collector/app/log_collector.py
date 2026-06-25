@@ -59,10 +59,11 @@ PROXY_URL     = os.environ.get("PROXY_URL", "")
 PROXY_PORT    = os.environ.get("PROXY_PORT", "3128")
 
 
-def _get_cms_base_url() -> str:
+def _get_proxies() -> Optional[Dict[str, str]]:
     if PROXY_ENABLED and PROXY_URL:
-        return f"http://{PROXY_URL}:{PROXY_PORT}"
-    return API_BASE_URL
+        proxy = f"http://{PROXY_URL}:{PROXY_PORT}"
+        return {"http": proxy, "https": proxy}
+    return None
 
 # K8s-specific configuration (only used when ENVIRONMENT == "kubernetes")
 NODE_NAME = os.environ.get("NODE_NAME")
@@ -265,12 +266,12 @@ class LogCollector:
             return None
 
         try:
-            url = f"{_get_cms_base_url()}/agent/check-tasks"
+            url = f"{API_BASE_URL}/agent/check-tasks"
             params = {"vm_id": self.vm_id}
             headers = self._get_auth_headers()
 
             LOG.debug(f"Polling API: {url} with params: {params}")
-            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response = requests.get(url, params=params, headers=headers, timeout=10, proxies=_get_proxies())
 
             if response.status_code == 200:
                 data = response.json()
@@ -311,7 +312,7 @@ class LogCollector:
             True if report successful, False otherwise
         """
         try:
-            url = f"{_get_cms_base_url()}/agent/upload-logs"
+            url = f"{API_BASE_URL}/agent/upload-logs"
             headers = self._get_auth_headers()
 
             if log_file and status == "success":
@@ -328,7 +329,7 @@ class LogCollector:
                         'message': message if message else 'Logs collected and uploaded successfully'
                     }
 
-                    response = requests.post(url, files=files, data=data, headers=headers, timeout=60)
+                    response = requests.post(url, files=files, data=data, headers=headers, timeout=60, proxies=_get_proxies())
             else:
                 # Failed case - send status only
                 LOG.info(f"Sending {status} status", extra={
@@ -344,7 +345,7 @@ class LogCollector:
                     'node_name': self.node_name
                 }
 
-                response = requests.post(url, json=data, headers=headers, timeout=10)
+                response = requests.post(url, json=data, headers=headers, timeout=10, proxies=_get_proxies())
 
             if response.status_code == 200:
                 LOG.info(f"Successfully reported {status} result")
