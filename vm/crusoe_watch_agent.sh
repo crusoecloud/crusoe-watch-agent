@@ -66,7 +66,7 @@ REPLACE_DCGM_EXPORTER=false
 EXISTING_DCGM_EXPORTER_SERVICE="dcgm-exporter"
 DEFAULT_LOG_COLLECTOR_SERVICE_NAME="crusoe-log-collector.service"
 DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
-ENABLE_METRICS_EXPORTER=false
+ENABLE_METRICS_EXPORTER=true
 
 LOGS_INGRESS_ENDPOINT=""
 
@@ -82,7 +82,7 @@ INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 LOG_COLLECTOR_IMAGE_VERSION="v0.2.28"
 
 # Crusoe Metrics Exporter version (used for native binary download)
-CRUSOE_METRICS_EXPORTER_VERSION="0.2.1"
+CRUSOE_METRICS_EXPORTER_VERSION="0.2.4"
 CRUSOE_METRICS_EXPORTER_BIN="/usr/local/bin/crusoe-metrics-exporter"
 
 # dcgm-exporter docker image version map

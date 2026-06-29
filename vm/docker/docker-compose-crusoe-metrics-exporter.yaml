@@ -1,6 +1,6 @@
 services:
   crusoe-metrics-exporter:
-    image: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter:0.2.3
+    image: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter:0.2.4
     container_name: crusoe-metrics-exporter
     pid: "host"
     hostname: crusoe-metrics-exporter

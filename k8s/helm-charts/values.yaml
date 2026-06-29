@@ -946,12 +946,12 @@ logCollector:
 
 # crusoe-metrics-exporter configuration
 crusoeMetricsExporter:
-  enabled: false
+  enabled: true
   name: crusoe-metrics-exporter
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter
-    tag: "0.2.1"
+    tag: "0.2.4"
     pullPolicy: IfNotPresent
 
   port: 9500
