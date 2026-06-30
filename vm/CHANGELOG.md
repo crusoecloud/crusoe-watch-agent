@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.13 (2026-06-29)
+
+**Features**
+- Enable CME bundling by default for all installations ([fe2d9b4](https://github.com/crusoecloud/crusoe-watch-agent/commit/fe2d9b4))
+
+**Bug Fixes**
+- Fix API requests failing for proxy-enabled deployments ([7c323ce](https://github.com/crusoecloud/crusoe-watch-agent/commit/7c323ce))
+
+
 ## 1.0.12 (2026-05-26)
 
 **Features**
