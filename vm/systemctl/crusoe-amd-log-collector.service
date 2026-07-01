@@ -1,9 +1,9 @@
 [Unit]
 Description=Crusoe AMD Log Collector for VMs
 Documentation=https://github.com/crusoecloud/crusoe-watch-agent
-After=docker.service crusoe-amd-exporter.service
+After=docker.service crusoe-amd-exporter.service load-amdgpu.service
 Requires=docker.service
-Wants=crusoe-amd-exporter.service
+Wants=crusoe-amd-exporter.service load-amdgpu.service
 
 [Service]
 Type=simple

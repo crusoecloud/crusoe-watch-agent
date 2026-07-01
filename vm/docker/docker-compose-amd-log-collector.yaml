@@ -9,7 +9,9 @@ services:
       - /var/log/amd-bug-reports:/logs
       # DMI information for VM ID detection
       - /sys:/host/sys:ro
-      # ROCm device access
+
+    # ROCm device access
+    devices:
       - /dev/kfd:/dev/kfd
       - /dev/dri:/dev/dri
 
