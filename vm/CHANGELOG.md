@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.15 (2026-07-02)
+
+**Bug Fixes**
+- Fix systemd ordering cycle on MI35x VMs caused by the AMD log collector's load-amdgpu dependency, which could prevent GPU driver load or collector startup after reboot ([4477f42](https://github.com/crusoecloud/crusoe-watch-agent/commit/4477f42))
+
+
 ## 1.0.14 (2026-07-01)
 
 - Fix ROCm GPU detection failures on MI35x VMs ([86aafde](https://github.com/crusoecloud/crusoe-watch-agent/commit/86aafde))
