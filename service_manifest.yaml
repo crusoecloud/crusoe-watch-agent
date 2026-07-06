@@ -1,0 +1,10 @@
+api_version: crusoe.ai/v1
+kind: CrusoeService
+metadata:
+  name: crusoe-watch-agent
+spec:
+  owning_squad: managed-platform-services
+  deployment_type: helm
+  description: >-
+    A lightweight, open-source agent that runs on customer VMs to collect host and GPU metrics. 
+    It is the primary tool for collecting metrics on individual VMs.
