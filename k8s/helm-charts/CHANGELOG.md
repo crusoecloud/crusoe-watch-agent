@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.30 (2026-07-09)
+
+- Fix log-collector DaemonSet scheduling on GPU nodes with custom taints ([2f15c78](https://github.com/crusoecloud/crusoe-watch-agent/commit/2f15c78))
+
+
 ## 0.3.29 (2026-06-29)
 
 **Features**
