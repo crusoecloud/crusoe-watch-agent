@@ -916,6 +916,13 @@ logCollector:
 
   nodeSelector: {}
 
+  # Tolerations for the collector DaemonSets. Defaults to tolerate-all so the
+  # collector schedules onto GPU nodes regardless of what taints are applied.
+  # Can be overridden per-vendor via logCollector.<nvidia|amd>.tolerations;
+  # a per-vendor override replaces this list entirely (it does not merge).
+  tolerations:
+    - operator: Exists
+
   resources:
     requests:
       cpu: 50m

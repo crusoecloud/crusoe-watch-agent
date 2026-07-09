@@ -1,7 +1,7 @@
 {{- /* Vendor-specific configuration for GPU log collectors */ -}}
 {{- $vendorConfigs := dict
-  "nvidia" (dict "tolerationKey" "nvidia.com/gpu" "affinityKey" "nvidia.com/gpu.present" "driverNamespace" "nvidia-gpu-operator" "driverPodPrefix" "nvidia-gpu-driver")
-  "amd" (dict "tolerationKey" "amd.com/gpu" "affinityKey" "feature.node.kubernetes.io/amd-gpu" "driverNamespace" "kube-amd-gpu" "driverPodPrefix" "amd-gpu-driver")
+  "nvidia" (dict "affinityKey" "nvidia.com/gpu.present" "driverNamespace" "nvidia-gpu-operator" "driverPodPrefix" "nvidia-gpu-driver")
+  "amd" (dict "affinityKey" "feature.node.kubernetes.io/amd-gpu" "driverNamespace" "kube-amd-gpu" "driverPodPrefix" "amd-gpu-driver")
 }}
 
 {{- range $vendor := list "nvidia" "amd" }}
@@ -38,10 +38,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 
+      {{- with ($vendorValues.tolerations | default $shared.tolerations) }}
       tolerations:
-        - key: {{ $vcfg.tolerationKey }}
-          operator: Exists
-          effect: NoSchedule
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 
       affinity:
         nodeAffinity:
