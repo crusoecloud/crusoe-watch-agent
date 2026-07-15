@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.16 (2026-07-15)
+
+- Update AMD GPU metrics exporter ([b896102](https://github.com/crusoecloud/crusoe-watch-agent/commit/b896102))
+
+
 ## 1.0.15 (2026-07-02)
 
 **Bug Fixes**
