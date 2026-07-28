@@ -966,7 +966,7 @@ crusoeMetricsExporter:
   env:
     PORT: "9500"
     DISKSTATS_PATH: "/host/proc/diskstats"
-    MOUNTSTATS_PATH: "/host/proc/self/mountstats"
+    MOUNTSTATS_PATH: "/host/proc/1/mountstats"
 
   nodeSelector: {}
 
