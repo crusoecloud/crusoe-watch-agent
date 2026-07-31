@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.33 (2026-07-31)
+
+- Enable kernel soft-lockup detection in the bundled Crusoe metrics exporter by mounting `/dev/kmsg` and granting `CAP_SYSLOG` to the exporter container ([54a208c](https://github.com/crusoecloud/crusoe-watch-agent/commit/54a208c))
+
+
 ## 0.3.32 (2026-07-27)
 
 Internal improvements and maintenance.

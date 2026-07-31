@@ -979,11 +979,25 @@ crusoeMetricsExporter:
     - name: proc
       mountPath: /host/proc
       readOnly: true
+    # Kernel log stream for the soft-lockup collector (CME >= 0.2.7)
+    - name: dev-kmsg
+      mountPath: /dev/kmsg
+      readOnly: true
 
   volumes:
     - name: proc
       hostPath:
         path: /proc
+    - name: dev-kmsg
+      hostPath:
+        path: /dev/kmsg
+        type: CharDevice
+
+  # CAP_SYSLOG lets the exporter read /dev/kmsg; without it the soft-lockup
+  # collector logs a warning and disables itself (all other collectors unaffected).
+  securityContext:
+    capabilities:
+      add: ["SYSLOG"]
 
   resources:
     requests:
