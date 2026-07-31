@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.32 (2026-07-27)
+
+Internal improvements and maintenance.
+
+
 ## 0.3.31 (2026-07-22)
 
 Bump bundled crusoe-metrics-exporter to v0.2.6, adding the CPU steal collector.
