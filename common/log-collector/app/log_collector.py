@@ -398,10 +398,10 @@ class LogCollector:
             LOG.info(f"Node {self.node_name} uses AMD, using bundled driver mode")
             return True
 
-        # GB200 nodes use bundled NVIDIA drivers
+        # GB200/GB300 nodes use bundled NVIDIA drivers
         instance_type = self._get_node_instance_type()
-        if instance_type and 'gb200' in instance_type.lower():
-            LOG.info(f"Node {self.node_name} is GB200 (instance-type={instance_type}), using bundled driver mode")
+        if instance_type and any(t in instance_type.lower() for t in ('gb200', 'gb300')):
+            LOG.info(f"Node {self.node_name} is {instance_type}, using bundled driver mode")
             return True
 
         # All other GPU types use GPU Operator

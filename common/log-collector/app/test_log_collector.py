@@ -939,5 +939,36 @@ class TestProxyConfig(unittest.TestCase):
         self.assertEqual(call_args[1].get('proxies'), expected_proxies)
 
 
+class TestBundledDriverMode(unittest.TestCase):
+    """Test _is_bundled_driver_mode instance-type selection."""
+
+    def setUp(self):
+        os.environ['NODE_NAME'] = 'test-node'
+        os.environ['LOG_OUTPUT_DIR'] = tempfile.mkdtemp()
+
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def _collector_with_instance_type(self, instance_type, mock_core_api, mock_load_config):
+        collector = LogCollector()
+        collector._get_node_instance_type = Mock(return_value=instance_type)
+        return collector
+
+    def test_gb200_uses_bundled_mode(self):
+        collector = self._collector_with_instance_type('gb200-4x-nvl.8x')
+        self.assertTrue(collector._is_bundled_driver_mode())
+
+    def test_gb300_uses_bundled_mode(self):
+        collector = self._collector_with_instance_type('gb300-288gb-nvl.4x')
+        self.assertTrue(collector._is_bundled_driver_mode())
+
+    def test_other_gpu_uses_operator_mode(self):
+        collector = self._collector_with_instance_type('h100-80gb-sxm-ib.8x')
+        self.assertFalse(collector._is_bundled_driver_mode())
+
+    def test_missing_instance_type_uses_operator_mode(self):
+        collector = self._collector_with_instance_type(None)
+        self.assertFalse(collector._is_bundled_driver_mode())
+
+
 if __name__ == '__main__':
     unittest.main()
