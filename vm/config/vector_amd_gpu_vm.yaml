@@ -17,6 +17,7 @@ sources:
               - "lo*"
             includes:
               - "ens*"
+              - "enp*"
         scrape_interval_secs: 60
 
     amd_metrics:

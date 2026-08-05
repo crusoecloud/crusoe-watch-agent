@@ -17,6 +17,7 @@ sources:
               - "lo*"
             includes:
               - "ens*"
+              - "enp*"
         process:
           processes:
             includes:

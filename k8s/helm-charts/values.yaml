@@ -400,6 +400,7 @@ vector:
               - "lo*"
             includes:
               - "ens*"
+              - "enp*"
         process:
           processes:
             includes:
