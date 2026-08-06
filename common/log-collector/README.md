@@ -44,7 +44,7 @@ The log collector supports **heterogeneous clusters** with both NVIDIA and AMD n
 - **Other NVIDIA GPUs** (A100, L40S, H100): Executes via `kubectl exec` into GPU Operator driver pod
 
 **AMD (`crusoe-log-collector-amd`):**
-- **All AMD nodes**: Always uses bundled mode, executes `/usr/bin/amd-bug-report.sh` locally
+- **All AMD nodes**: Always uses bundled mode, executes AMD's `/usr/bin/rocm_techsupport.sh` locally (output captured and gzipped by the collector)
 
 ## Execution Modes
 
@@ -101,7 +101,7 @@ Set `RUN_ONCE=true` to collect logs once and exit. Useful for testing or manual 
 │  │  crusoe-system NS / VM systemd    │  │
 │  │  ┌─────────────────────────────┐  │  │
 │  │  │ log-collector pod/service   │  │  │
-│  │  │ - amd-bug-report.sh OR      │  │  │
+│  │  │ - rocm_techsupport.sh OR    │  │  │
 │  │  │   nvidia-bug-report.sh      │  │  │
 │  │  │ - Stores in /logs           │  │  │
 │  │  └─────────────────────────────┘  │  │

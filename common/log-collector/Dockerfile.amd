@@ -15,18 +15,21 @@ FROM ubuntu:24.04
 
 WORKDIR /app
 
-# Install Python, ROCm SMI tools, and system tools needed by amd-bug-report.sh
-# Includes dmidecode for VM ID detection (used by both K8s and VM modes)
+# Install Python, ROCm SMI tools, and system tools used by rocm_techsupport.sh
+# (invoked directly by log_collector.py). dmidecode is also used for VM ID
+# detection (both K8s and VM modes). Tools rocm_techsupport.sh probes but that
+# are absent (IB/OFED/mst/nicctl/rocm-bandwidth-test) degrade gracefully.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     ca-certificates \
     gnupg \
     && mkdir -p /etc/apt/keyrings \
     && wget -qO- https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg \
-    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.3 ubuntu main" > /etc/apt/sources.list.d/rocm.list \
+    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/7.0.1 noble main" > /etc/apt/sources.list.d/rocm.list \
     && apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    rocm-smi \
+    amd-smi-lib \
+    rocm-smi-lib \
     rocminfo \
     lsb-release \
     lshw \
@@ -34,14 +37,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dkms \
     gzip \
     dmidecode \
+    sudo \
+    kmod \
+    hwloc \
+    numactl \
+    clinfo \
+    ethtool \
+    iproute2 \
+    initramfs-tools \
+    systemd \
+    libdrm2 \
+    libdrm-amdgpu1 \
     && rm -rf /var/lib/apt/lists/*
+
+# ROCm tools (amd-smi, rocminfo, rocm-smi) install into /opt/rocm/bin, which is not on the default PATH.
+ENV PATH="/opt/rocm/bin:${PATH}"
 
 # Copy pip-installed packages from builder
 COPY --from=builder /usr/local/lib/python3.12/dist-packages /usr/local/lib/python3.12/dist-packages
 
-# Copy AMD bug report script
-COPY app/amd-bug-report.sh /usr/bin/amd-bug-report.sh
-RUN chmod +x /usr/bin/amd-bug-report.sh
+# Vendored AMD diagnostic collector (pinned, reviewed in-repo).
+#   Source:  https://github.com/amddcgpuce/rocmtechsupport/blob/master/rocm_techsupport.sh
+#   Commit:  08441a6c9232c835fe40abbf313068a374560af9  (V1.42, 2026-05-29)
+#   sha256:  7dcffe1246f1a04a6da348d4e52f10ff6b9fe063ca3c67eb175cd561a67c5bb3
+# log_collector.py runs this directly and adapts it to the collector's
+# --output-file/gzip contract (captures stdout, gzips, bounds runtime).
+COPY app/rocm_techsupport.sh /usr/bin/rocm_techsupport.sh
+RUN chmod +x /usr/bin/rocm_techsupport.sh
 
 # Copy application code
 COPY app/log_collector.py .

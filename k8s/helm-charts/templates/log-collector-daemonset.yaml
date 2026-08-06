@@ -98,6 +98,24 @@ spec:
         - name: sysfs
           mountPath: /host/sys
           readOnly: true
+        {{- if eq $vendor "amd" }}
+        # Host install/config state for rocm_techsupport.sh (read-only).
+        - name: host-dpkg
+          mountPath: /var/lib/dpkg
+          readOnly: true
+        - name: host-lib-modules
+          mountPath: /lib/modules
+          readOnly: true
+        - name: host-dkms
+          mountPath: /var/lib/dkms
+          readOnly: true
+        - name: host-boot
+          mountPath: /boot
+          readOnly: true
+        - name: host-journal
+          mountPath: /var/log/journal
+          readOnly: true
+        {{- end }}
 
         {{- with ($vendorValues.resources | default $shared.resources) }}
         resources:
@@ -117,5 +135,24 @@ spec:
       - name: sysfs
         hostPath:
           path: /sys
+      {{- if eq $vendor "amd" }}
+      - name: host-dpkg
+        hostPath:
+          path: /var/lib/dpkg
+      - name: host-lib-modules
+        hostPath:
+          path: /lib/modules
+      - name: host-dkms
+        hostPath:
+          path: /var/lib/dkms
+          type: DirectoryOrCreate
+      - name: host-boot
+        hostPath:
+          path: /boot
+      - name: host-journal
+        hostPath:
+          path: /var/log/journal
+          type: DirectoryOrCreate
+      {{- end }}
 {{- end }}
 {{- end }}

@@ -22,6 +22,8 @@ import tarfile
 import tempfile
 import base64
 import requests
+import gzip
+import shutil
 import subprocess
 import socket
 import json
@@ -586,10 +588,13 @@ class LogCollector:
         Returns:
             Path to generated log file, or None on error
         """
-        LOG.info(f"Executing {self.gpu_type}-bug-report.sh locally (bundled driver mode)")
+        LOG.info(f"Executing bug report locally for {self.gpu_type.upper()} (bundled driver mode)")
 
-        # Determine script path based on GPU type
-        script_path = Path(f"/usr/bin/{self.gpu_type}-bug-report.sh")
+        # Determine which script to run based on GPU type.
+        if self.gpu_type == "amd":
+            script_path = Path("/usr/bin/rocm_techsupport.sh")
+        else:
+            script_path = Path(f"/usr/bin/{self.gpu_type}-bug-report.sh")
         if not script_path.exists():
             LOG.error(
                 f"Script not found",
@@ -623,7 +628,50 @@ class LogCollector:
                     mst_path.rename(mst_backup_path)
                     mst_was_renamed = True
 
-                # Execute bug report script bundled in the container
+                if self.gpu_type == "amd":
+                    # rocm_techsupport.sh takes no arguments and writes its report to stdout.
+                    env = {**os.environ,
+                           "PATH": f"/opt/rocm/bin:{os.environ.get('PATH', '')}"}
+                    LOG.info(f"Running command: {script_path} (stdout -> {log_path_base})")
+
+                    partial = False
+                    with open(log_path_base, "wb") as out:
+                        try:
+                            subprocess.run(
+                                [str(script_path)],
+                                stdout=out,
+                                stderr=subprocess.STDOUT,
+                                env=env,
+                                timeout=COLLECTION_TIMEOUT,
+                                check=False,
+                            )
+                        except subprocess.TimeoutExpired:
+                            partial = True
+                            LOG.warning(
+                                f"{script_path.name} timed out after {COLLECTION_TIMEOUT}s; "
+                                f"saving partial report"
+                            )
+
+                    # Compress to "<path>.gz" (partial or complete) and drop the uncompressed copy.
+                    with open(log_path_base, "rb") as f_in, \
+                            gzip.open(actual_log_path, "wb") as f_out:
+                        shutil.copyfileobj(f_in, f_out)
+                    log_path_base.unlink(missing_ok=True)
+
+                    if actual_log_path.exists() and actual_log_path.stat().st_size > 0:
+                        LOG.info(
+                            f"Bug report completed successfully"
+                            f"{' (partial, timed out)' if partial else ''}: {actual_log_path}"
+                        )
+                        return actual_log_path, None, None
+                    LOG.error(
+                        f"Bug report produced no output",
+                        extra={"error_code": BugReportError.SCRIPT_FAILED.code,
+                               "root_cause": f"{script_path.name} produced an empty report"},
+                    )
+                    return None, BugReportError.SCRIPT_FAILED.code, BugReportError.SCRIPT_FAILED.message
+
+                # NVIDIA / GB200: the vendor script writes "<path>.gz" itself.
                 cmd = [str(script_path), "--output-file", str(log_path_base)]
 
                 LOG.info(f"Running command: {' '.join(cmd)}")
@@ -636,7 +684,7 @@ class LogCollector:
                 )
 
                 if result.returncode == 0 and actual_log_path.exists():
-                    LOG.info(f"Bug report completed successfully: {actual_log_path}") 
+                    LOG.info(f"Bug report completed successfully: {actual_log_path}")
                     return actual_log_path, None, None
                 else:
                     LOG.error(

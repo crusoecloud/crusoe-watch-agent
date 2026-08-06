@@ -9,6 +9,12 @@ services:
       - /var/log/amd-bug-reports:/logs
       # DMI information for VM ID detection
       - /sys:/host/sys:ro
+      # Host install/config state for rocm_techsupport.sh (read-only).
+      - /var/lib/dpkg:/var/lib/dpkg:ro        # dpkg -l  -> host amdgpu-dkms / ROCm packages
+      - /lib/modules:/lib/modules:ro          # modinfo amdgpu
+      - /var/lib/dkms:/var/lib/dkms:ro         # dkms status
+      - /boot:/boot:ro                         # lsinitramfs
+      - /var/log/journal:/var/log/journal:ro   # journalctl -b -1/-2/-3 (needs host persistent journald)
 
     # ROCm device access
     devices:
