@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.18 (2026-08-06)
+
+- Use rocm_techsupport.sh script to capture bug report on AMD VMs ([e127d09](https://github.com/crusoecloud/crusoe-watch-agent/commit/e127d09))
+- Fix network metrics collection for Grace-based SKUs (gb200, gb300) using enp* network interfaces ([829e54d](https://github.com/crusoecloud/crusoe-watch-agent/commit/829e54d))
+- Fix log collection for GB300 nodes that bundle the NVIDIA driver ([4000c87](https://github.com/crusoecloud/crusoe-watch-agent/commit/4000c87))
+
+
 ## 1.0.17 (2026-07-27)
 
 Internal improvements and maintenance.
