@@ -40,7 +40,7 @@ spec:
 
       containers:
       - name: crusoe-metrics-exporter
-        image: "{{ .Values.crusoeMetricsExporter.image.repository }}:{{ .Values.crusoeMetricsExporter.image.tag }}"
+        image: "{{ include "cwa.image" (dict "ctx" $ "upstream" "ghcr" "repository" .Values.crusoeMetricsExporter.image.repository "tag" .Values.crusoeMetricsExporter.image.tag) }}"
         imagePullPolicy: {{ .Values.crusoeMetricsExporter.image.pullPolicy }}
 
         ports:

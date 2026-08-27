@@ -40,6 +40,25 @@ INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 # Log collector container image version (update here when releasing new container builds)
 LOG_COLLECTOR_IMAGE_VERSION="v0.2.31"
 
+# Container registry to pull images from: "ghcr" (default) or "ccr".
+# "ccr" resolves to Crusoe Container Registry's per-region pull-through cache
+# projects, which are allowlisted for anonymous pull and reachable in-region
+# without egress to the public internet.
+IMAGE_REGISTRY="ghcr"
+
+# A CCR pull-through cache project maps to exactly one upstream registry, so
+# each region has a separate project mirroring ghcr.io and docker.io.
+# TODO(registry): only us-east1-a is provisioned today -- add an entry for every
+# supported region as the mirrors are created.
+# Keep in sync with crusoe_watch_agent.sh and k8s/helm-charts/values.yaml.
+CCR_ENDPOINT_FORMAT="registry.%s.ccr.crusoecloudcompute.com"
+declare -A -r CCR_GHCR_PROJECT_MAP=(
+  ["us-east1-a"]="cwa-useast1a-ghcr.07bc97e8"
+)
+declare -A -r CCR_DOCKERHUB_PROJECT_MAP=(
+  ["us-east1-a"]="cwa-useast1a-dockerhub.07bc97e8"
+)
+
 CRUSOE_METRICS_EXPORTER_BIN="/usr/local/bin/crusoe-metrics-exporter"
 
 # Optional parameters with defaults
@@ -63,6 +82,9 @@ usage() {
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter"
+  echo "  --registry NAME                           Registry to pull container images from: ghcr (default) or ccr."
+  echo "                                            ccr uses Crusoe Container Registry's in-region pull-through"
+  echo "                                            cache, which needs no public internet egress or credentials."
   echo "Examples:"
   echo "  $0 install --branch main"
   echo "  $0 uninstall"
@@ -110,6 +132,17 @@ parse_args() {
       --logs-endpoint)
         if [[ -n "$2" ]]; then
           LOGS_INGRESS_ENDPOINT="$2"; shift 2
+        else
+          error_exit "Missing value for $1"
+        fi
+        ;;
+      --registry)
+        if [[ -n "$2" ]]; then
+          case "$2" in
+            ghcr|ccr) IMAGE_REGISTRY="$2" ;;
+            *) error_exit "Unsupported --registry '$2'. Valid values are: ghcr, ccr." ;;
+          esac
+          shift 2
         else
           error_exit "Missing value for $1"
         fi
@@ -182,6 +215,51 @@ check_root() {
   if [[ $EUID -ne 0 ]]; then
       error_exit "This script must be run as root."
   fi
+}
+
+# --- Container Registry Resolution ---
+# Crusoe VMs have a domain like "us-east1-a.compute.internal"; the first
+# dot-separated segment is the region. Echoes an empty string when the domain
+# is unavailable.
+detect_region() {
+  local domain
+  domain=$(hostname -d 2>/dev/null || true)
+  [[ -n "$domain" ]] && echo "${domain%%.*}"
+}
+
+# Resolve IMAGE_REGISTRY_GHCR and IMAGE_REGISTRY_DOCKERHUB, the registry
+# prefixes the docker-compose files prepend to their (host-less) image paths.
+resolve_image_registries() {
+  IMAGE_REGISTRY_GHCR="ghcr.io"
+  IMAGE_REGISTRY_DOCKERHUB="docker.io"
+  [[ "$IMAGE_REGISTRY" == "ghcr" ]] && return
+
+  local region ghcr_project dockerhub_project endpoint
+  region=$(detect_region)
+  if [[ -z "$region" ]]; then
+    registry_fallback_warning "the region could not be derived from the hostname domain (hostname -d returned nothing)"
+    return
+  fi
+
+  ghcr_project="${CCR_GHCR_PROJECT_MAP[$region]:-}"
+  dockerhub_project="${CCR_DOCKERHUB_PROJECT_MAP[$region]:-}"
+  if [[ -z "$ghcr_project" || -z "$dockerhub_project" ]]; then
+    registry_fallback_warning "no CCR pull-through cache project is configured for region '$region' (configured regions: ${!CCR_GHCR_PROJECT_MAP[*]})"
+    return
+  fi
+
+  # shellcheck disable=SC2059 # CCR_ENDPOINT_FORMAT is an intentional format string
+  endpoint=$(printf "$CCR_ENDPOINT_FORMAT" "$region")
+  IMAGE_REGISTRY_GHCR="${endpoint}/${ghcr_project}"
+  IMAGE_REGISTRY_DOCKERHUB="${endpoint}/${dockerhub_project}"
+  status "Pulling container images through CCR in region $region."
+}
+
+# --registry ccr falls back to the upstream registries rather than aborting the
+# install. Warn loudly, since a VM without public egress will fail to pull.
+registry_fallback_warning() {
+  echo -e "\n\033[1mWarning: --registry ccr requested, but $1.\033[0m" >&2
+  echo "Falling back to ghcr.io / docker.io, which requires egress to the public internet." >&2
 }
 
 # --- Token & Version/Lifecycle Helpers ---
@@ -409,12 +487,16 @@ LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
 AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
 EOF
+  # Registry prefixes consumed by the docker-compose files.
+  resolve_image_registries
+  cat <<EOF >> "$ENV_FILE"
+IMAGE_REGISTRY_GHCR='${IMAGE_REGISTRY_GHCR}'
+IMAGE_REGISTRY_DOCKERHUB='${IMAGE_REGISTRY_DOCKERHUB}'
+EOF
+
   # Derive OBJSTORE_ENDPOINT_FQDN from the VM's hostname domain.
-  # Crusoe VMs have a domain like "us-east1-a.compute.internal"; the first
-  # dot-separated segment is the region.
-  DETECTED_DOMAIN=$(hostname -d 2>/dev/null || true)
-  if [[ -n "$DETECTED_DOMAIN" ]]; then
-    REGION="${DETECTED_DOMAIN%%.*}"
+  REGION=$(detect_region)
+  if [[ -n "$REGION" ]]; then
     echo "OBJSTORE_ENDPOINT_FQDN='object.${REGION}.crusoecloudcompute.com'" >> "$ENV_FILE"
     status "Derived OBJSTORE_ENDPOINT_FQDN from hostname (region: $REGION)"
   fi

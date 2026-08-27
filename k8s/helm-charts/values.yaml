@@ -1,6 +1,24 @@
 namespace: crusoe-system
 ingressEndpoint: "https://cms-monitoring.crusoecloud.com"
 
+# Settings shared with subcharts.
+global:
+  # global.registry --Where container images are pulled from - ghcr (default) or ccr.
+  registry: ghcr
+
+  # global.region -- Crusoe region, e.g. "us-east1-a". Auto-detected from the
+  # topology.kubernetes.io/region node label; only set it for `helm template`
+  # or --dry-run, which render without cluster access.
+  region: ""
+
+  # global.ccr -- Preconfigured CCR pull-through cache projects, keyed by region.
+  ccr:
+    endpointFormat: "registry.%s.ccr.crusoecloudcompute.com"
+    projects:
+      us-east1-a:
+        ghcr: "cwa-useast1a-ghcr.07bc97e8"
+        dockerhub: "cwa-useast1a-dockerhub.07bc97e8"
+
 proxy:
   enabled: false
   url: "internal.cms-monitoring.crusoecloud.com"
@@ -30,7 +48,8 @@ logs:
 
 job:
   name: crusoe-monitoring-token-job
-  image: ghcr.io/crusoecloud/crusoe-watch-agent/token-job:v0.2.12
+  imageRepository: crusoecloud/crusoe-watch-agent/token-job
+  imageTag: v0.2.12
   ttlSecondsAfterFinished: 300
 secrets:
   crusoeMonitoringToken: crusoe-monitoring-token
@@ -91,7 +110,7 @@ vector:
   # Define the Vector image to use.
   image:
     # image.repository -- Override default registry and name for Vector's image.
-    repository: ghcr.io/vectordotdev/vector
+    repository: vectordotdev/vector
     # image.pullPolicy -- The [pullPolicy](https://kubernetes.io/docs/concepts/containers/images/#image-pull-policy) for
     # Vector's image.
     pullPolicy: IfNotPresent
@@ -587,11 +606,15 @@ vector:
   #       - name: test
   #         mountPath: /test
 
+  configReloader:
+    imageRepository: crusoecloud/crusoe-watch-agent/vector-config-reloader
+    imageTag: v0.2.29
+
   # extraContainers -- Extra Containers to be added to the Vector Pods.
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: ghcr.io/crusoecloud/crusoe-watch-agent/vector-config-reloader:v0.2.29
+      image: '{{ include "cwa.image" (dict "ctx" . "upstream" "ghcr" "repository" .Values.configReloader.imageRepository "tag" .Values.configReloader.imageTag) }}'
       env:
         - name: NODE_NAME
           valueFrom:
@@ -943,13 +966,13 @@ logCollector:
   nvidia:
     enabled: true
     name: crusoe-log-collector-nvidia
-    imageRepository: ghcr.io/crusoecloud/crusoe-watch-agent/log-collector
+    imageRepository: crusoecloud/crusoe-watch-agent/log-collector
 
   # AMD log collector - deploys only on nodes with feature.node.kubernetes.io/amd-gpu=true
   amd:
     enabled: true
     name: crusoe-log-collector-amd
-    imageRepository: ghcr.io/crusoecloud/crusoe-watch-agent/amd-log-collector
+    imageRepository: crusoecloud/crusoe-watch-agent/amd-log-collector
 
 
 # crusoe-metrics-exporter configuration
@@ -958,7 +981,7 @@ crusoeMetricsExporter:
   name: crusoe-metrics-exporter
 
   image:
-    repository: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter
+    repository: crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter
     tag: "0.2.8"
     pullPolicy: IfNotPresent
 

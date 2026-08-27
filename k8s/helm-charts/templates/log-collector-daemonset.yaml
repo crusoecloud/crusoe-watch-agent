@@ -55,7 +55,7 @@ spec:
 
       containers:
       - name: log-collector
-        image: "{{ $vendorValues.imageRepository }}:{{ $vendorValues.imageTag | default $shared.imageTag }}"
+        image: "{{ include "cwa.image" (dict "ctx" $ "upstream" "ghcr" "repository" $vendorValues.imageRepository "tag" ($vendorValues.imageTag | default $shared.imageTag)) }}"
         imagePullPolicy: {{ $vendorValues.pullPolicy | default $shared.pullPolicy }}
 
         env:

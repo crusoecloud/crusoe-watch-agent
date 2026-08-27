@@ -1,6 +1,6 @@
 services:
   crusoe-vector:
-    image: ghcr.io/vectordotdev/vector:0.55.0-debian
+    image: ${IMAGE_REGISTRY_GHCR:-ghcr.io}/vectordotdev/vector:0.55.0-debian
     container_name: crusoe-vector
     hostname: crusoe-vector
     volumes:

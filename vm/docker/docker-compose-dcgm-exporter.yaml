@@ -1,6 +1,6 @@
 services:
   crusoe-dcgm-exporter:
-    image: nvidia/dcgm-exporter:${DCGM_EXPORTER_IMAGE_VERSION}
+    image: ${IMAGE_REGISTRY_DOCKERHUB:-docker.io}/nvidia/dcgm-exporter:${DCGM_EXPORTER_IMAGE_VERSION}
     container_name: crusoe-dcgm-exporter
     hostname: crusoe-dcgm-exporter
     cap_add: [SYS_ADMIN]
