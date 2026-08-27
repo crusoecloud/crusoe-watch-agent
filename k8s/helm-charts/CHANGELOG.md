@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.35 (2026-08-25)
+
+Internal improvements and maintenance.
+
+
 ## 0.3.34 (2026-08-06)
 
 - Use rocm_techsupport.sh script to capture bug report on AMD VMs ([e127d09](https://github.com/crusoecloud/crusoe-watch-agent/commit/e127d09))

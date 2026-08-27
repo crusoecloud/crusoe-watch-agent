@@ -959,7 +959,7 @@ crusoeMetricsExporter:
 
   image:
     repository: ghcr.io/crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter
-    tag: "0.2.7"
+    tag: "0.2.8"
     pullPolicy: IfNotPresent
 
   port: 9500
