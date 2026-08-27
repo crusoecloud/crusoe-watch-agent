@@ -451,9 +451,9 @@ install_log_collector_native() {
   local GITHUB_REQ="$GITHUB_APP_BASE/requirements.txt"
   wget -q -O "/tmp/log-collector-requirements.txt" "$GITHUB_REQ" || error_exit "Failed to download requirements.txt"
 
-  # Try with --break-system-packages first (pip >= 22.1), fall back without it for older pip
-  if ! pip3 install --break-system-packages -r /tmp/log-collector-requirements.txt 2>/dev/null; then
-    pip3 install -r /tmp/log-collector-requirements.txt || error_exit "Failed to install Python dependencies"
+  # --break-system-packages is needed on Ubuntu 24.04 (PEP 668).
+  if ! pip3 install --break-system-packages --ignore-installed -r /tmp/log-collector-requirements.txt; then
+    pip3 install --ignore-installed -r /tmp/log-collector-requirements.txt || error_exit "Failed to install Python dependencies"
   fi
   rm -f /tmp/log-collector-requirements.txt
 
