@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.36 (2026-08-28)
+
+- Bump crusoe-metrics-exporter image to 0.2.9
+
 ## 0.3.35 (2026-08-25)
 
 Internal improvements and maintenance.
