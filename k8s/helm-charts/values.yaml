@@ -45,6 +45,14 @@ slurmMetrics:
 
 logs:
   enabled: true
+  # Deployment pods in these namespaces are collected; the DaemonSets, which log
+  # once per node, are not. Both namespace names are listed so either NVIDIA
+  # install layout matches.
+  operatorNamespaces:
+    - nvidia-gpu-operator
+    - gpu-operator
+    - nvidia-network-operator
+    - network-operator
 
 job:
   name: crusoe-monitoring-token-job

@@ -24,13 +24,27 @@ ENRICH_LOGS_TRANSFORM_NAME = "enrich_logs"
 PARSE_JOURNALD_LOGS_TRANSFORM_NAME = "parse_journald_logs"
 PARSE_CRUSOE_CONTAINER_LOGS_TRANSFORM_NAME = "parse_crusoe_container_logs"
 PARSE_INTERNAL_LOGS_TRANSFORM_NAME = "parse_internal_logs"
+PARSE_OPERATOR_LOGS_TRANSFORM_NAME = "parse_operator_logs"
 FILTER_CRUSOE_LOG_COLLECTOR_LOGS_TRANSFORM_NAME = "filter_crusoe_log_collector_logs"
 FILTER_VECTOR_CONFIG_RELOADER_LOGS_TRANSFORM_NAME = "filter_vector_config_reloader_logs"
 FILTER_JOURNALD_NOISE_TRANSFORM_NAME = "filter_journald_noise"
 JOURNALD_LOGS_SOURCE_NAME = "journald_logs"
 KUBERNETES_LOGS_SOURCE_NAME = "kubernetes_logs"
+OPERATOR_LOGS_SOURCE_NAME = "operator_kubernetes_logs"
 VECTOR_INTERNAL_LOGS_SOURCE_NAME = "vector_internal_logs"
 NODE_METRICS_VECTOR_TRANSFORM_NAME = "enrich_node_metrics"
+
+DEFAULT_OPERATOR_LOG_NAMESPACES = [
+    "nvidia-gpu-operator",
+    "gpu-operator",
+    "nvidia-network-operator",
+    "network-operator",
+]
+
+# Collect the operator Deployments, not the DaemonSets sharing their namespaces.
+# pod-template-hash is stamped on every Deployment pod and on no DaemonSet pod,
+# so the label selects them without depending on names, which NVIDIA can change.
+OPERATOR_DEPLOYMENT_LABEL_SELECTOR = "pod-template-hash"
 
 CUSTOM_METRICS_CONFIG_MAP_NAME = "crusoe-custom-metrics-config"
 CUSTOM_METRICS_CONFIG_MAP_KEY = "custom-metrics-config.yaml"
@@ -61,6 +75,7 @@ APP_KUBERNETES_NAME_TO_TYPE = {
     "slurmctld": POD_TYPE_SLURM,
     "crusoe-metrics-exporter": POD_TYPE_CME,
 }
+
 
 @dataclass
 class ExporterRuntimeConfig:
@@ -159,7 +174,14 @@ class VectorConfigReloader:
         )
         self.amd_manager = AmdExporterManager(reloader_cfg.get("amd_metrics", {}))
         self.custom_metrics_enabled = reloader_cfg["custom_metrics"].get("enabled", True)
-        self.logs_enabled = reloader_cfg.get("logs", {}).get("enabled", True)
+        logs_cfg = reloader_cfg.get("logs", {}) or {}
+        self.logs_enabled = logs_cfg.get("enabled", True)
+        operator_namespaces = logs_cfg.get("operator_namespaces")
+        self.operator_log_namespaces = (
+            list(operator_namespaces) if operator_namespaces is not None
+            else list(DEFAULT_OPERATOR_LOG_NAMESPACES)
+        )
+        self.operator_logs_enabled = bool(self.operator_log_namespaces)
         self.default_custom_metrics_config = reloader_cfg["custom_metrics"]
         sink_endpoint = reloader_cfg["sink"].get("endpoint") or "https://cms-monitoring.crusoecloud.com"
         self.infra_sink_endpoint = f"{sink_endpoint}/ingest"
@@ -489,6 +511,125 @@ if (to_string(.kubernetes.container_name) ?? "") == "vector-config-reloader" {
 }
 ''')
 
+        self.parse_operator_logs_transform_source = LiteralStr('''
+# Three log formats across these Deployments; first match wins, and klog is
+# tried before zap console, which is lenient enough to claim its lines.
+# Anything else keeps its raw text as _msg with no level.
+#   json         gpu-operator (zap), nv-ipam-controller (zapr)
+#   klog         node-feature-discovery master + gc
+#   zap console  network-operator controller
+
+# The namespace minus its optional nvidia- prefix, so the prefixed and
+# unprefixed installs of the same operator converge on one value.
+.log_source = replace(to_string(.kubernetes.pod_namespace) ?? "", r'^nvidia-', "")
+
+# Drop node-feature-discovery's ~75 hardware-capability labels, which
+# kubernetes_logs copies onto every line. Other node labels stay.
+if is_object(.kubernetes.node_labels) {
+    .kubernetes.node_labels = filter(object!(.kubernetes.node_labels)) -> |key, _value| {
+        !starts_with(key, "feature.node.kubernetes.io/")
+    }
+}
+
+msg = to_string(.message) ?? ""
+if msg != "" {
+    ._msg = msg
+}
+
+matched = false
+
+json_fields = object(parse_json(msg) ?? {}) ?? {}
+if !is_empty(json_fields) {
+    matched = true
+    # Lift the parsed fields onto the event so they ship as payload.<field>.
+    # Merging under the event keeps vector's metadata on a name collision.
+    . = merge(json_fields, ., deep: true)
+    # zap uses "msg"; logrus and the k8s libraries use "message".
+    if exists(json_fields.msg) {
+        ._msg = to_string(json_fields.msg) ?? msg
+    } else if exists(json_fields.message) {
+        ._msg = to_string(json_fields.message) ?? msg
+    }
+    # enrich_logs normalizes the enum and drops anything unrecognized.
+    if exists(json_fields.level) {
+        .level = to_string(json_fields.level) ?? ""
+    } else if exists(json_fields.severity) {
+        .level = to_string(json_fields.severity) ?? ""
+    } else if exists(json_fields.error) || exists(json_fields.err) {
+        # zapr omits the level key: Error() emits an error field and no `v`,
+        # Info() emits `v` and no error field. The key is `error` or `err`.
+        .level = "error"
+    } else if exists(json_fields.v) {
+        # `v` is verbosity, not severity: V(0) is Info, higher is Debug.
+        verbosity = to_int(json_fields.v) ?? 0
+        .level = "debug"
+        if verbosity == 0 {
+            .level = "info"
+        }
+    }
+}
+
+if !matched {
+    klog_fields = object(parse_klog(msg) ?? {})
+    if !is_empty(klog_fields) {
+        matched = true
+        if exists(klog_fields.message) {
+            klog_msg = to_string(klog_fields.message)
+            ._msg = klog_msg
+            # klog's structured form is `"message" key=value ...`: unwrap the
+            # message, lift the trailing pairs to payload.<field>.
+            unwrapped = object(parse_regex(klog_msg, r'^"(?P<msg>[^"]*)"(?P<fields>.*)$') ?? {})
+            if !is_empty(unwrapped) {
+                ._msg = unwrapped.msg
+                klog_tail = to_string(unwrapped.fields)
+                if match(klog_tail, r'\\S+=') {
+                    logfmt_fields = object(parse_logfmt(klog_tail) ?? {})
+                    if !is_empty(logfmt_fields) {
+                        . = merge(logfmt_fields, ., deep: true)
+                    }
+                }
+            }
+        }
+        if exists(klog_fields.level) {
+            .level = klog_fields.level
+        }
+        if exists(klog_fields.timestamp) {
+            ._time = klog_fields.timestamp
+        }
+    }
+}
+
+if !matched {
+    # Tab separated: <ts> <LEVEL> [logger] <message> [{fields}].
+    zap = object(parse_regex(msg, r'^[^\t]+\t(?P<level>[A-Z]+)\t(?P<rest>.*)$') ?? {})
+    if !is_empty(zap) {
+        zap_level = downcase(to_string(zap.level))
+        # Guard on a real level word so tabbed plain text is not claimed.
+        if includes(["debug", "info", "warn", "warning", "error", "fatal"], zap_level) {
+            .level = zap_level
+            rest = to_string(zap.rest)
+            # Lift the optional trailing {...} object to payload.<field>.
+            zap_tail = object(parse_regex(rest, r'\t(?P<fields>\\{.*\\})$') ?? {})
+            if !is_empty(zap_tail) {
+                zap_fields = object(parse_json(to_string(zap_tail.fields)) ?? {}) ?? {}
+                if !is_empty(zap_fields) {
+                    . = merge(zap_fields, ., deep: true)
+                }
+            }
+            # Drop the optional trailing field object, then the optional logger.
+            rest = replace(rest, r'\t\\{.*\\}$', "")
+            tail = object(parse_regex(rest, r'(?P<msg>[^\t]*)$') ?? {})
+            if !is_empty(tail) {
+                ._msg = tail.msg
+            }
+        }
+    }
+}
+
+# The raw line still ships verbatim as payload.message, alongside the parsed
+# payload.<field> and the scratch ._msg / ._time / .level / .log_source.
+''')
+
         self.parse_internal_logs_transform_source = LiteralStr('''
 .log_source = "crusoe-watch-agent"
 
@@ -701,8 +842,24 @@ if exists(.metadata.level) {
             "include_paths_glob_patterns": [
                 "/var/log/pods/crusoe-system_crusoe-log-collector-*/*/*.log",
                 "/var/log/pods/crusoe-system_crusoe-watch-agent-*/vector-config-reloader/*.log"
-            ]
+            ],
         }
+
+        # Own source so the Deployment-only selector is scoped to these
+        # namespaces. It goes into the pod watch, so DaemonSet log files are
+        # never opened, and the glob (pod dir / container dir / rotation) plus
+        # the selector are exact — no filter transform needed.
+        if self.operator_logs_enabled:
+            sources[OPERATOR_LOGS_SOURCE_NAME] = {
+                "type": "kubernetes_logs",
+                "extra_label_selector": OPERATOR_DEPLOYMENT_LABEL_SELECTOR,
+                # Collect from agent install forward.
+                "read_from": "end",
+                "include_paths_glob_patterns": [
+                    f"/var/log/pods/{ns}_*/*/*.log"
+                    for ns in self.operator_log_namespaces
+                ],
+            }
 
         sources[VECTOR_INTERNAL_LOGS_SOURCE_NAME] = {
             "type": "internal_logs"
@@ -754,19 +911,30 @@ if exists(.metadata.level) {
             "source": self.parse_crusoe_container_logs_transform_source
         }
 
+        if self.operator_logs_enabled:
+            transforms[PARSE_OPERATOR_LOGS_TRANSFORM_NAME] = {
+                "type": "remap",
+                "inputs": [OPERATOR_LOGS_SOURCE_NAME],
+                "source": self.parse_operator_logs_transform_source
+            }
+
         transforms[PARSE_INTERNAL_LOGS_TRANSFORM_NAME] = {
             "type": "remap",
             "inputs": [VECTOR_INTERNAL_LOGS_SOURCE_NAME],
             "source": self.parse_internal_logs_transform_source
         }
 
+        enrich_inputs = [
+            PARSE_JOURNALD_LOGS_TRANSFORM_NAME,
+            PARSE_CRUSOE_CONTAINER_LOGS_TRANSFORM_NAME,
+        ]
+        if self.operator_logs_enabled:
+            enrich_inputs.append(PARSE_OPERATOR_LOGS_TRANSFORM_NAME)
+        enrich_inputs.append(PARSE_INTERNAL_LOGS_TRANSFORM_NAME)
+
         transforms[ENRICH_LOGS_TRANSFORM_NAME] = {
             "type": "remap",
-            "inputs": [
-                PARSE_JOURNALD_LOGS_TRANSFORM_NAME,
-                PARSE_CRUSOE_CONTAINER_LOGS_TRANSFORM_NAME,
-                PARSE_INTERNAL_LOGS_TRANSFORM_NAME,
-            ],
+            "inputs": enrich_inputs,
             "source": self.enrich_logs_transform_source
         }
 

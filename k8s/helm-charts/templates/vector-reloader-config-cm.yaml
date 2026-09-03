@@ -35,6 +35,14 @@ data:
       scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
     logs:
       enabled: {{ .Values.logs.enabled }}
+{{- if .Values.logs.operatorNamespaces }}
+      operator_namespaces:
+{{- range .Values.logs.operatorNamespaces }}
+        - {{ . }}
+{{- end }}
+{{- else }}
+      operator_namespaces: []
+{{- end }}
     sink:
       endpoint: {{ .Values.ingressEndpoint | default "https://cms-monitoring.crusoecloud.com" | quote }}
 {{- if .Values.proxy.enabled }}
