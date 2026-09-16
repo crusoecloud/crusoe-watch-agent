@@ -68,6 +68,9 @@ DEFAULT_LOG_COLLECTOR_SERVICE_NAME="crusoe-log-collector.service"
 DEFAULT_METRICS_EXPORTER_SERVICE_NAME="crusoe-metrics-exporter.service"
 ENABLE_METRICS_EXPORTER=true
 
+# Non-interactive mode: never prompt; auto-install recommended NVIDIA driver if missing
+NON_INTERACTIVE=false
+
 LOGS_INGRESS_ENDPOINT=""
 
 # Versioning and upgrade helpers (vm agent has its own version)
@@ -125,6 +128,7 @@ usage() {
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
   echo "Common options:"
   echo "  --enable-metrics-exporter                 Install and enable the Crusoe metrics exporter"
+  echo "  --non-interactive                         Never prompt. Auto-installs the recommended NVIDIA driver when a GPU is present without drivers; fails instead of prompting for a token."
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "  --registry NAME                           Registry to pull container images from: ghcr (default) or ccr."
   echo "                                            ccr uses Crusoe Container Registry's in-region pull-through"
@@ -137,6 +141,7 @@ usage() {
   echo "  $0 install --replace-dcgm-exporter"
   echo "  $0 install --replace-dcgm-exporter my-dcgm-exporter"
   echo "  $0 install --enable-metrics-exporter"
+  echo "  $0 install --non-interactive"
   echo "  $0 uninstall"
   echo "  $0 refresh-token"
   echo "  $0 upgrade -b main"
@@ -180,6 +185,8 @@ parse_args() {
         ;;
       --no-docker)
         INSTALL_MODE="native"; shift ;;
+      --non-interactive)
+        NON_INTERACTIVE=true; shift ;;
       --logs-endpoint)
         if [[ -n "$2" ]]; then
           LOGS_INGRESS_ENDPOINT="$2"; shift 2
@@ -505,7 +512,9 @@ setup_nvidia_cuda_repo() {
   local UBUNTU_VERSION
   UBUNTU_VERSION=$(echo "$UBUNTU_OS_VERSION" | sed 's/\.//')
 
-  local KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VERSION}/x86_64/cuda-keyring_1.1-1_all.deb"
+  local ARCH_PATH="x86_64"
+  [[ "$(dpkg --print-architecture)" == "arm64" ]] && ARCH_PATH="sbsa"
+  local KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VERSION}/${ARCH_PATH}/cuda-keyring_1.1-1_all.deb"
   local KEYRING_DEB="/tmp/cuda-keyring.deb"
 
   wget -q -O "$KEYRING_DEB" "$KEYRING_URL" || error_exit "Failed to download cuda-keyring from $KEYRING_URL"
@@ -516,6 +525,115 @@ setup_nvidia_cuda_repo() {
   status "NVIDIA CUDA apt repository configured."
 }
 
+# Install NVIDIA drivers when a GPU is present but no driver is installed.
+# Interactive: lists candidate driver packages for this GPU and prompts.
+# --non-interactive: installs the recommended driver without prompting.
+ensure_nvidia_driver() {
+  status "NVIDIA GPU detected but no driver installed."
+
+  # Refuse to hang in pipelines: no TTY and no --non-interactive -> keep old failure, with a hint.
+  if ! $NON_INTERACTIVE && [[ ! -t 0 ]]; then
+    error_exit "NVIDIA GPU detected but GPU drivers are not installed. Re-run with --non-interactive to auto-install the recommended driver, or install NVIDIA drivers manually and try again."
+  fi
+
+  apt-get update || error_exit "apt-get update failed."
+
+  # ubuntu-drivers matches PCI modaliases to available driver packages.
+  if ! command_exists ubuntu-drivers; then
+    apt-get install -y ubuntu-drivers-common || true
+  fi
+
+  # Enumerate GPGPU (server/compute) driver candidates for this hardware.
+  # Output lines look like: "nvidia-driver-570-server, (kernel modules provided by linux-modules-nvidia-570-server-generic)"
+  local candidates=()
+  if command_exists ubuntu-drivers; then
+    mapfile -t candidates < <(ubuntu-drivers list --gpgpu 2>/dev/null | sed 's/,.*//' | grep '^nvidia-driver-' | sort -V)
+  fi
+
+  if [[ ${#candidates[@]} -gt 0 ]]; then
+    # Crusoe GPU VMs are headless, so prefer the server (ERD) flavors: -server (proprietary)
+    # and -server-open (open kernel modules). These omit desktop/OpenGL packages and are the
+    # builds NVIDIA ships for datacenter use. Fall back to the full list only when the hardware
+    # offers no server flavor at all (e.g. a consumer GPU).
+    local offered=()
+    local c
+    for c in "${candidates[@]}"; do
+      [[ "$c" == *-server || "$c" == *-server-open ]] && offered+=("$c")
+    done
+    [[ ${#offered[@]} -eq 0 ]] && offered=("${candidates[@]}")
+
+    # Default = newest proprietary -server (ERD) when available; otherwise the newest offered
+    # flavor (e.g. -server-open on GPUs that ship only open kernel modules). The list is already
+    # sorted ascending by `sort -V`, so the last match is the highest version.
+    local default_pkg=""
+    for c in "${offered[@]}"; do
+      [[ "$c" == *-server ]] && default_pkg="$c"
+    done
+    [[ -z "$default_pkg" ]] && default_pkg="${offered[-1]}"
+    local selected_pkg="$default_pkg"
+
+    if ! $NON_INTERACTIVE; then
+      echo "Available NVIDIA driver packages for this GPU (headless server flavors):"
+      local i
+      for i in "${!offered[@]}"; do
+        if [[ "${offered[$i]}" == "$default_pkg" ]]; then
+          echo "  $((i+1))) ${offered[$i]} (default)"
+        else
+          echo "  $((i+1))) ${offered[$i]}"
+        fi
+      done
+      local choice
+      read -r -p "Select a driver to install [1-${#offered[@]}, Enter for default, q to abort]: " choice
+      if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
+        error_exit "NVIDIA GPU detected but GPU drivers are not installed. Please install NVIDIA drivers and try again."
+      elif [[ -n "$choice" ]]; then
+        { [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#offered[@]} )); } || error_exit "Invalid selection: $choice"
+        selected_pkg="${offered[$((choice-1))]}"
+      fi
+    fi
+
+    status "Installing $selected_pkg via ubuntu-drivers."
+    # ubuntu-drivers resolves the matching prebuilt linux-modules-nvidia-* package for the running kernel.
+    # Driver string is the metapackage name minus the "nvidia-driver-" prefix, e.g. nvidia:570-server.
+    local branch="${selected_pkg#nvidia-driver-}"
+    ubuntu-drivers install --gpgpu "nvidia:${branch}" || error_exit "Failed to install $selected_pkg."
+  else
+    # Ubuntu archive has no match (e.g. GPU newer than the release's driver set).
+    # Fall back to NVIDIA's CUDA repo: nvidia-open = latest open kernel modules
+    # (required for Blackwell-class, recommended for all datacenter GPUs).
+    echo "No driver candidates found in the Ubuntu archive. Falling back to NVIDIA CUDA repository (nvidia-open, latest open kernel modules)."
+    if ! $NON_INTERACTIVE; then
+      local answer
+      read -r -p "Install nvidia-open (latest NVIDIA open kernel module driver)? [Y/n]: " answer
+      if [[ "$answer" =~ ^[Nn] ]]; then
+        error_exit "NVIDIA GPU detected but GPU drivers are not installed. Please install NVIDIA drivers and try again."
+      fi
+    fi
+    setup_nvidia_cuda_repo
+    apt-get install -y "linux-headers-$(uname -r)" || error_exit "Failed to install kernel headers (required to build the NVIDIA kernel module)."
+    apt-get install -y nvidia-open || error_exit "Failed to install nvidia-open."
+  fi
+
+  # Try to load the module without a reboot; DKMS/prebuilt modules target the running kernel.
+  modprobe nvidia 2>/dev/null || true
+
+  if nvidia-smi -L >/dev/null 2>&1; then
+    status "NVIDIA driver installed and working: $(nvidia-smi -L | head -1)"
+    return 0
+  fi
+
+  echo "NVIDIA driver packages installed, but the kernel module is not loaded yet." >&2
+  echo "This usually requires a reboot (and, if Secure Boot is enabled, enrolling the module signing key via MOK)." >&2
+  error_exit "Reboot the machine and re-run: sudo $0 ${ORIGINAL_ARGS[*]}"
+}
+
+# Determine the CUDA major version the installed driver supports, for DCGM package
+# selection. Handles both the legacy "CUDA Version: 12.x" header and the driver
+# 610+ "CUDA UMD Version: 13.x" header (nvidia-smi renamed the field).
+detect_cuda_major() {
+  nvidia-smi 2>/dev/null | sed -E -n 's/.*CUDA (UMD )?Version *: *([0-9]+)\..*/\2/p' | head -1
+}
+
 install_dcgm() {
   status "Installing DCGM (Data Center GPU Manager)."
 
@@ -524,7 +642,7 @@ install_dcgm() {
   fi
 
   local CUDA_VERSION
-  CUDA_VERSION=$(nvidia-smi | sed -E -n 's/.*CUDA Version: ([0-9]+)\..*/\1/p')
+  CUDA_VERSION=$(detect_cuda_major)
 
   if [[ -z "$CUDA_VERSION" ]]; then
     error_exit "Could not determine CUDA version. DCGM installation aborted."
@@ -543,6 +661,29 @@ install_dcgm() {
   systemctl --now enable nvidia-dcgm || error_exit "Failed to enable and start nvidia-dcgm service."
 
   status "DCGM installed and started successfully."
+}
+
+install_nvidia_container_toolkit() {
+  status "Installing NVIDIA Container Toolkit."
+  # Ubuntu 24.04+ ships nvidia-container-toolkit in multiverse; try the plain archive first.
+  if ! apt-get install -y nvidia-container-toolkit 2>/dev/null; then
+    echo "nvidia-container-toolkit not available in configured repos. Adding NVIDIA libnvidia-container repository."
+    command_exists gpg || apt-get install -y gnupg || error_exit "Failed to install gnupg."
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+      | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+      || error_exit "Failed to download NVIDIA container toolkit GPG key."
+    curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+      | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+      > /etc/apt/sources.list.d/nvidia-container-toolkit.list \
+      || error_exit "Failed to configure NVIDIA container toolkit repository."
+    apt-get update || error_exit "apt-get update failed after adding NVIDIA container toolkit repo."
+    apt-get install -y nvidia-container-toolkit || error_exit "Failed to install nvidia-container-toolkit."
+  fi
+  # Register the nvidia runtime with dockerd. The dcgm-exporter compose file uses a
+  # device reservation (driver: nvidia), which needs the toolkit hook visible to docker.
+  # Restart is safe here: this branch only runs on hosts that had no toolkit (fresh GPU setup).
+  nvidia-ctk runtime configure --runtime=docker || error_exit "Failed to configure docker for the NVIDIA runtime."
+  systemctl restart docker || error_exit "Failed to restart docker after NVIDIA runtime configuration."
 }
 
 # --- Token & Version/Lifecycle Helpers ---
@@ -639,10 +780,11 @@ detect_nvidia_gpus() {
   if ! command_exists nvidia-smi; then
     echo "nvidia-smi not found."
     if lspci 2>/dev/null | grep -qi 'NVIDIA'; then
-      error_exit "NVIDIA GPU detected but GPU drivers are not installed. Please install NVIDIA drivers and try again."
+      ensure_nvidia_driver   # error_exits on failure/decline; returns 0 with working nvidia-smi
+    else
+      echo "No NVIDIA hardware detected."
+      return 1
     fi
-    echo "No NVIDIA hardware detected."
-    return 1
   fi
   if nvidia-smi -L >/dev/null 2>&1; then
     echo "Detected NVIDIA GPU(s): $(nvidia-smi -L | head -3)"
@@ -715,13 +857,18 @@ do_install() {
   # 4. GPU-specific artifact installation
   if $HAS_NVIDIA_GPUS; then
     if [[ "$INSTALL_MODE" == "docker" ]]; then
-      # Docker mode: require both dcgmi and nvidia-ctk pre-installed
+      # Docker mode: ensure DCGM and the NVIDIA Container Toolkit exist (auto-install if missing).
       status "Ensure NVIDIA dependencies exist."
-      if command_exists dcgmi && command_exists nvidia-ctk; then
-        echo "Required NVIDIA dependencies are already installed."
+      if command_exists dcgmi; then
+        echo "DCGM is already installed."
         upgrade_dcgm
       else
-        error_exit "Please make sure NVIDIA dependencies (dcgm & nvidia-ctk) are installed and try again."
+        install_dcgm
+      fi
+      if command_exists nvidia-ctk; then
+        echo "NVIDIA Container Toolkit is already installed."
+      else
+        install_nvidia_container_toolkit
       fi
     else
       # Native mode: install DCGM if missing, nvidia-ctk not needed
@@ -876,6 +1023,9 @@ do_install() {
     fi
     write_token_to_secrets "$existing_token"
   else
+    if $NON_INTERACTIVE; then
+      error_exit "No monitoring token found. In --non-interactive mode, set CRUSOE_AUTH_TOKEN or pre-seed $CRUSOE_MONITORING_TOKEN_FILE (see README 'Monitoring Token Injection')."
+    fi
     echo "Command: crusoe monitoring tokens create"
     echo "Please enter the crusoe monitoring token:"
     read -s CRUSOE_AUTH_TOKEN
@@ -1265,7 +1415,8 @@ upgrade_dcgm() {
     if ! command_exists nvidia-smi; then
       error_exit "nvidia-smi not found. Cannot determine CUDA version for DCGM upgrade."
     fi
-    local CUDA_VERSION=$(nvidia-smi -q | sed -E -n 's/CUDA Version[ :]+([0-9]+)[.].*/\1/p')
+    local CUDA_VERSION
+    CUDA_VERSION=$(detect_cuda_major)
 
     if [[ -z "$CUDA_VERSION" ]]; then
       error_exit "Could not determine CUDA version. DCGM upgrade aborted."
