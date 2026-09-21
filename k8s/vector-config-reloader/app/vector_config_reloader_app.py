@@ -731,7 +731,13 @@ if exists(.metadata.level) {
             "auth": {"strategy": "bearer", "token": "${CRUSOE_MONITORING_TOKEN}"},
             "healthcheck": {"enabled": False},
             "compression": "snappy",
-            "request": {"concurrency": "adaptive"},
+            "request": {
+                "headers": {
+                    "X-Crusoe-Vm-Id": "${VM_ID:-unknown}",
+                    "User-Agent": "CrusoeWatchAgent/CMK-${CHART_VERSION}",
+                },
+                "concurrency": "adaptive",
+            },
             "batch": {"max_bytes": 500000, "aggregate": False},
             "tls": {
                 "verify_certificate": True,

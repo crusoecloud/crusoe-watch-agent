@@ -631,6 +631,21 @@ def test_logs_sink_identifies_agent_via_user_agent():
     assert headers["User-Agent"] == "CrusoeWatchAgent/CMK-${CHART_VERSION}"
 
 
+def test_metric_sinks_identify_vm_and_agent():
+    """All prometheus_remote_write sinks send X-Crusoe-Vm-Id and User-Agent headers."""
+    r = VectorConfigReloader()
+
+    for sink_cfg in (
+        r.custom_metrics_sink_config,
+        r.kube_state_metrics_sink_config,
+        r.slurm_metrics_sink_config,
+        r.crusoe_metrics_exporter_sink_config,
+    ):
+        headers = sink_cfg["request"]["headers"]
+        assert headers["X-Crusoe-Vm-Id"] == "${VM_ID:-unknown}"
+        assert headers["User-Agent"] == "CrusoeWatchAgent/CMK-${CHART_VERSION}"
+
+
 def test_logs_envelope_contract():
     """Standardized envelope: raw event under payload, identity under crusoe,
     _msg/_time/level/log_source at the top level. Scratch (._*) never ships."""

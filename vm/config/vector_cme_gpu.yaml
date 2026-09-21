@@ -306,6 +306,9 @@ sinks:
         healthcheck:
             enabled: false
         request:
+            headers:
+                X-Crusoe-Vm-Id: "${VM_ID}"
+                User-Agent: "CrusoeWatchAgent/VM-${AGENT_VERSION}"
             concurrency: adaptive
         batch:
             max_bytes: 500000 # ~500KB
@@ -328,6 +331,9 @@ sinks:
         healthcheck:
             enabled: false
         request:
+            headers:
+                X-Crusoe-Vm-Id: "${VM_ID}"
+                User-Agent: "CrusoeWatchAgent/VM-${AGENT_VERSION}"
             concurrency: adaptive
         batch:
             max_bytes: 500000 # ~500KB

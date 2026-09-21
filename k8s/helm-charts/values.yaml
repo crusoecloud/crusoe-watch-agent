@@ -521,6 +521,9 @@ vector:
         healthcheck:
           enabled: false
         request:
+          headers:
+            X-Crusoe-Vm-Id: "${VM_ID}"
+            User-Agent: "CrusoeWatchAgent/CMK-${CHART_VERSION}"
           concurrency: adaptive
         batch:
             max_bytes: 500000 # ~500KB
