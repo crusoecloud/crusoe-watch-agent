@@ -202,6 +202,42 @@ def test_set_custom_metrics_uses_cm_data_for_deployment_rules():
     assert "foo_total" in transform_source
 
 
+def test_ksm_telemetry_scraped_as_its_own_pipeline():
+    pods = [DummyPod("ksm-1", "ns", ip="10.0.0.2",
+                     labels={"app.kubernetes.io/name": "kube-state-metrics"})]
+    r = _new_reloader_with_pods(pods)
+    r.reconcile_once()
+    cfg = YamlUtils.load_yaml_config(vcr_mod.VECTOR_CONFIG_PATH)
+
+    assert cfg["sources"]["kube_state_metrics_scrape"]["endpoints"] == ["http://10.0.0.2:8080/metrics"]
+    assert cfg["sources"]["kube_state_metrics_telemetry_scrape"]["endpoints"] == ["http://10.0.0.2:8081/metrics"]
+    assert cfg["transforms"]["enrich_kube_state_metrics_telemetry"]["inputs"] == ["kube_state_metrics_telemetry_scrape"]
+    telemetry_tags = str(cfg["transforms"]["enrich_kube_state_metrics_telemetry"]["source"])
+    assert '.tags.job = "kube-state-metrics-telemetry"' in telemetry_tags
+    assert '.tags.service = "CMK"' in telemetry_tags
+    assert cfg["sinks"]["kube_state_metrics_telemetry_sink"]["inputs"] == ["enrich_kube_state_metrics_telemetry"]
+    assert (cfg["sinks"]["kube_state_metrics_telemetry_sink"]["endpoint"]
+            == cfg["sinks"]["kube_state_metrics_sink"]["endpoint"])
+
+
+def test_ksm_telemetry_follows_ksm_enabled_flag(monkeypatch, tmp_path):
+    reloader_cfg_path = tmp_path / "reloader-ksm-off.yaml"
+    reloader_cfg_path.write_text(yaml.safe_dump({
+        "dcgm_metrics": {"port": 9400, "path": "/metrics", "scrape_interval": 30},
+        "custom_metrics": {"port": 9100, "path": "/metrics", "scrape_interval": 30},
+        "kube_state_metrics": {"enabled": False, "port": 8080, "telemetry_port": 8081},
+        "sink": {"endpoint": "https://cms-monitoring.example.com"},
+        "log_level": "INFO",
+    }))
+    monkeypatch.setattr("vector_config_reloader_app.RELOADER_CONFIG_PATH", str(reloader_cfg_path))
+
+    r = _new_reloader_with_pods([])
+    vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
+    r._apply_cluster_exporter(vector_cfg, r.ksm_telemetry_spec, "10.0.0.2")
+
+    assert r.ksm_telemetry_cfg.enabled is False
+    assert "kube_state_metrics_telemetry_scrape" not in vector_cfg["sources"]
+
 def test_cmk_service_label_on_every_cluster_pipeline():
     r = _new_reloader_with_pods([])
     for source in (

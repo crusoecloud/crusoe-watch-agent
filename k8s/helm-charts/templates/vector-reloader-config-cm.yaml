@@ -13,6 +13,7 @@ data:
     kube_state_metrics:
       enabled: {{ .Values.kubeStateMetrics.enabled }}
       port: {{ .Values.metricsExporter.defaultKubeStateMetricsPort }}
+      telemetry_port: {{ .Values.metricsExporter.defaultKubeStateMetricsTelemetryPort }}
       path: {{ .Values.metricsExporter.defaultMetricsPath }}
       scrape_interval: {{ .Values.metricsExporter.defaultScrapeInterval }}
     custom_metrics:

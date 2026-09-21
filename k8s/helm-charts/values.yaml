@@ -70,6 +70,7 @@ metricsExporter:
   defaultMetricsPort: 9100
   defaultDcgmExporterPort: 9400
   defaultKubeStateMetricsPort: 8080
+  defaultKubeStateMetricsTelemetryPort: 8081
   defaultSlurmMetricsPort: 6817
   defaultScrapeInterval: 60
 

@@ -1,5 +1,5 @@
 import os, signal, re, logging, threading, sys, time, hashlib, json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from kubernetes import client, config
 from utils import (
@@ -172,9 +172,15 @@ class VectorConfigReloader:
         self.dcgm_cfg = ExporterRuntimeConfig.from_dict(
             reloader_cfg["dcgm_metrics"],
         )
+        ksm_reloader_cfg = reloader_cfg.get("kube_state_metrics", {})
         self.ksm_cfg = ExporterRuntimeConfig.from_dict(
-            reloader_cfg.get("kube_state_metrics", {}),
+            ksm_reloader_cfg,
             default_port=8080,
+        )
+        # KSM serves its own telemetry on a second port, under its own job.
+        self.ksm_telemetry_cfg = replace(
+            self.ksm_cfg,
+            port=ksm_reloader_cfg.get("telemetry_port", 8081),
         )
         self.slurm_cfg = ExporterRuntimeConfig.from_dict(
             reloader_cfg.get("slurm_metrics", {}),
@@ -245,6 +251,22 @@ class VectorConfigReloader:
 .tags.metrics_source = "kube-state-metrics"
 .tags.service = "CMK"
 .tags.job = "kube-state-metrics"
+"""),
+            sink_config=self.kube_state_metrics_sink_config,
+        )
+        self.ksm_telemetry_spec = ClusterExporterSpec(
+            name="kube_state_metrics_telemetry",
+            runtime=self.ksm_telemetry_cfg,
+            source_name="kube_state_metrics_telemetry_scrape",
+            transform_name="enrich_kube_state_metrics_telemetry",
+            sink_name="kube_state_metrics_telemetry_sink",
+            transform_source=LiteralStr("""
+.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
+.tags.project_id = "${CRUSOE_PROJECT_ID}"
+.tags.crusoe_resource = "cmk"
+.tags.metrics_source = "kube-state-metrics"
+.tags.service = "CMK"
+.tags.job = "kube-state-metrics-telemetry"
 """),
             sink_config=self.kube_state_metrics_sink_config,
         )
@@ -1161,11 +1183,12 @@ if exists(.metadata.level) {
         """
         base_cfg = YamlUtils.load_yaml_config(VECTOR_BASE_CONFIG_PATH)
 
-        # Map each cluster-scoped exporter type to its spec for unified handling
+        # Map each cluster-scoped exporter type to its specs for unified handling.
+        # KSM has two: resource metrics and its telemetry port.
         cluster_specs_by_type = {
-            POD_TYPE_KSM: self.ksm_spec,
-            POD_TYPE_SLURM: self.slurm_spec,
-            POD_TYPE_CME: self.cme_spec,
+            POD_TYPE_KSM: [self.ksm_spec, self.ksm_telemetry_spec],
+            POD_TYPE_SLURM: [self.slurm_spec],
+            POD_TYPE_CME: [self.cme_spec],
         }
         cluster_pod_ips = {}  # pod_type -> pod_ip
         dcgm_exporter_ep = None
@@ -1184,8 +1207,9 @@ if exists(.metadata.level) {
 
         self.set_custom_metrics_scrape_config(base_cfg, custom_metrics_eps, cm_data)
         self.set_dcgm_exporter_scrape_config(base_cfg, dcgm_exporter_ep)
-        for pod_type, spec in cluster_specs_by_type.items():
-            self._apply_cluster_exporter(base_cfg, spec, cluster_pod_ips.get(pod_type))
+        for pod_type, specs in cluster_specs_by_type.items():
+            for spec in specs:
+                self._apply_cluster_exporter(base_cfg, spec, cluster_pod_ips.get(pod_type))
         self.set_logs_config(base_cfg)
         if self.amd_manager.enabled and amd_exporter_ep:
             self.amd_manager.set_scrape(base_cfg, amd_exporter_ep, NODE_METRICS_VECTOR_TRANSFORM_NAME, SCRAPE_TIMEOUT_PERCENTAGE)
