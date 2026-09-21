@@ -202,6 +202,71 @@ def test_set_custom_metrics_uses_cm_data_for_deployment_rules():
     assert "foo_total" in transform_source
 
 
+def test_cmk_service_label_on_every_cluster_pipeline():
+    r = _new_reloader_with_pods([])
+    for source in (
+        r.ksm_spec.transform_source,
+        r.slurm_spec.transform_source,
+        r.cme_spec.transform_source,
+        r.node_metrics_vector_transform_source,
+    ):
+        assert '.tags.service = "CMK"' in str(source)
+
+
+def test_job_label_only_where_vmagent_scrapes_the_same_target():
+    r = _new_reloader_with_pods([])
+
+    assert '.tags.job = "kube-state-metrics"' in str(r.ksm_spec.transform_source)
+
+    for source in (
+        r.slurm_spec.transform_source,
+        r.cme_spec.transform_source,
+        r.node_metrics_vector_transform_source,
+    ):
+        assert ".tags.job" not in str(source)
+
+
+def test_dcgm_and_amd_carry_their_vmagent_job():
+    r = _new_reloader_with_pods([])
+    vector_cfg = {
+        "sources": {},
+        "transforms": {"enrich_node_metrics": {"type": "remap", "inputs": ["host_metrics"], "source": "."}},
+    }
+
+    r.set_dcgm_exporter_scrape_config(vector_cfg, "http://10.0.0.1:9400/metrics")
+    dcgm_tagger = vector_cfg["transforms"]["tag_dcgm_job"]
+    assert dcgm_tagger["inputs"] == ["dcgm_exporter_scrape"]
+    assert '.tags.job = "nvidia-dcgm-exporter"' in str(dcgm_tagger["source"])
+
+    r.amd_manager.set_scrape(vector_cfg, "http://10.0.0.2:5000/metrics", "enrich_node_metrics", 0.8)
+    amd_tagger = vector_cfg["transforms"]["tag_amd_job"]
+    assert amd_tagger["inputs"] == ["amd_allowed_filter"]
+    assert '.tags.job = "amd-device-metrics-exporter"' in str(amd_tagger["source"])
+
+    inputs = vector_cfg["transforms"]["enrich_node_metrics"]["inputs"]
+    assert "tag_dcgm_job" in inputs and "tag_amd_job" in inputs
+    assert "dcgm_exporter_scrape" not in inputs and "amd_allowed_filter" not in inputs
+
+
+def test_custom_metrics_follow_vmagent_label_collision_rules():
+    r = _new_reloader_with_pods([])
+    vector_cfg = {"sources": {}, "transforms": {}, "sinks": {}}
+    eps = [
+        {"url": "http://10.2.0.1:9100/metrics", "pod_ip": "10.2.0.1",
+         "pod_name": "svc-x-1", "deployment_name": ""},
+        {"url": "http://10.2.0.2:9100/metrics", "pod_ip": "10.2.0.2",
+         "pod_name": "managed-1", "deployment_name": "", "app_id": "my-app"},
+    ]
+    r.set_custom_metrics_scrape_config(vector_cfg, eps, {})
+
+    for name in ("svc_x_1_transform", "managed_1_transform"):
+        source = str(vector_cfg["transforms"][name]["source"])
+        assert 'if exists(.tags.job) { .tags.exported_job = del(.tags.job) }' in source
+        assert '.tags.job = "kubernetes-pods"' in source
+        assert 'if exists(.tags.service) { .tags.exported_service = del(.tags.service) }' in source
+        assert '.tags.service = "CMK"' in source
+
+
 def test_apply_cluster_exporter_writes_full_pipeline():
     r = _new_reloader_with_pods([])
     r.slurm_cfg.enabled = True

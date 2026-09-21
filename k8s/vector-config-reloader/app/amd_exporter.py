@@ -3,6 +3,8 @@ from utils import LiteralStr
 
 AMD_EXPORTER_SOURCE_NAME = "amd_exporter_scrape"
 AMD_FILTER_TRANSFORM_NAME = "amd_allowed_filter"
+AMD_JOB_TRANSFORM_NAME = "tag_amd_job"
+AMD_JOB = "amd-device-metrics-exporter"
 DEFAULT_AMD_APP_LABEL = "metrics-exporter"
 AMD_LABEL_KEY = "app.kubernetes.io/name"
 DEFAULT_AMD_NAMESPACE = "kube-amd-gpu"
@@ -73,16 +75,23 @@ includes(metrics_allowlist, .name)
                 "source": filter_vrl,
             },
         }
-        # Wire the filter output into the target node transform
+        transforms[AMD_JOB_TRANSFORM_NAME] = {
+            "type": "remap",
+            "inputs": [AMD_FILTER_TRANSFORM_NAME],
+            "source": LiteralStr(f'.tags.job = "{AMD_JOB}"\n'),
+        }
+        # Wire the job tagger output into the target node transform
         inputs = set(transforms[transform_name]["inputs"])
-        if AMD_FILTER_TRANSFORM_NAME not in inputs:
-            transforms[transform_name]["inputs"].append(AMD_FILTER_TRANSFORM_NAME)
+        if AMD_JOB_TRANSFORM_NAME not in inputs:
+            transforms[transform_name]["inputs"].append(AMD_JOB_TRANSFORM_NAME)
 
     def remove_scrape(self, vector_cfg: dict, transform_name: str):
         vector_cfg.get("sources", {}).pop(AMD_EXPORTER_SOURCE_NAME, None)
         transforms = vector_cfg.get("transforms", {})
         inputs = set(transforms.get(transform_name, {}).get("inputs", []))
         inputs.discard(AMD_FILTER_TRANSFORM_NAME)
+        inputs.discard(AMD_JOB_TRANSFORM_NAME)
         if transform_name in transforms:
             transforms[transform_name]["inputs"] = sorted(inputs)
         transforms.pop(AMD_FILTER_TRANSFORM_NAME, None)
+        transforms.pop(AMD_JOB_TRANSFORM_NAME, None)

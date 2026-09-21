@@ -461,6 +461,7 @@ vector:
           .tags.cluster_id = "${CRUSOE_CLUSTER_ID}"
           .tags.vm_id = "${VM_ID}"
           .tags.crusoe_resource = "vm"
+          .tags.service = "CMK"
 
       filter_internal_metrics:
         type: filter
@@ -503,6 +504,7 @@ vector:
             .tags.crusoe_resource = "vm"
             .tags.chart_name = "${CHART_NAME}"
             .tags.chart_version = "${CHART_VERSION}"
+            .tags.service = "CMK"
 
     sinks:
       cms_gateway_node_metrics:

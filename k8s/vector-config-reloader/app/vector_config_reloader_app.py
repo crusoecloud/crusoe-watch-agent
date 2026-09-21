@@ -17,6 +17,12 @@ VECTOR_BASE_CONFIG_PATH = "/etc/vector-base/vector.yaml"
 RELOADER_CONFIG_PATH = "/etc/reloader/config.yaml"
 
 DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
+DCGM_JOB_TRANSFORM_NAME = "tag_dcgm_job"
+
+# job values are the vmagent scrape job names. Only pod-scraped pipelines get one.
+SERVICE_LABEL = "CMK"
+DCGM_JOB = "nvidia-dcgm-exporter"
+SCRAPED_POD_JOB = "kubernetes-pods"
 
 # Log sources and pipeline constants (each is referenced from multiple places
 # inside set_logs_config to wire the source -> filter -> transform -> sink graph)
@@ -75,6 +81,14 @@ APP_KUBERNETES_NAME_TO_TYPE = {
     "slurmctld": POD_TYPE_SLURM,
     "crusoe-metrics-exporter": POD_TYPE_CME,
 }
+
+
+def vrl_set_scrape_tag(tag: str, value: str) -> str:
+    """Set a scrape-owned tag, moving any existing value to exported_<tag>."""
+    return (
+        f'if exists(.tags.{tag}) {{ .tags.exported_{tag} = del(.tags.{tag}) }}\n'
+        f'.tags.{tag} = "{value}"'
+    )
 
 
 @dataclass
@@ -229,6 +243,8 @@ class VectorConfigReloader:
 .tags.project_id = "${CRUSOE_PROJECT_ID}"
 .tags.crusoe_resource = "cmk"
 .tags.metrics_source = "kube-state-metrics"
+.tags.service = "CMK"
+.tags.job = "kube-state-metrics"
 """),
             sink_config=self.kube_state_metrics_sink_config,
         )
@@ -243,6 +259,7 @@ class VectorConfigReloader:
 .tags.project_id = "${CRUSOE_PROJECT_ID}"
 .tags.crusoe_resource = "cmk"
 .tags.metrics_source = "slurm-metrics"
+.tags.service = "CMK"
 """),
             sink_config=self.slurm_metrics_sink_config,
         )
@@ -278,6 +295,7 @@ class VectorConfigReloader:
 if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .tags.crusoe_resource = "vm"
 .tags.metrics_source = "node-metrics"
+.tags.service = "CMK"
 """)
 
         self.cme_spec = ClusterExporterSpec(
@@ -292,6 +310,7 @@ if "{self.pod_id or ''}" != "" {{ .tags.pod_id = "{self.pod_id or ''}" }}
 .tags.vm_id = "{self.vm_id}"
 .tags.crusoe_resource = "vm_custom_infra"
 .tags.metrics_source = "crusoe-metrics-exporter"
+.tags.service = "CMK"
 """),
             sink_config=self.crusoe_metrics_exporter_sink_config,
         )
@@ -751,6 +770,8 @@ if exists(.metadata.level) {
             vrl_lines.append(f'.tags.crusoe_resource = "custom_internal"')
             vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
             vrl_lines.append(f'.tags.app_id = "{endpoint_config["app_id"]}"')
+            vrl_lines.append(vrl_set_scrape_tag("service", SERVICE_LABEL))
+            vrl_lines.append(vrl_set_scrape_tag("job", SCRAPED_POD_JOB))
         else:
             vrl_lines.append(f'.tags.nodepool = "{self.nodepool_id}"')
             vrl_lines.append('.tags.cluster_id = "${CRUSOE_CLUSTER_ID}"')
@@ -761,6 +782,8 @@ if exists(.metadata.level) {
             vrl_lines.append('.tags.metrics_source = "custom-metrics"')
             vrl_lines.append(f'.tags.pod_ip = "{endpoint_config["pod_ip"]}"')
             vrl_lines.append(f'.tags.pod_name = "{endpoint_config["pod_name"]}"')
+            vrl_lines.append(vrl_set_scrape_tag("service", SERVICE_LABEL))
+            vrl_lines.append(vrl_set_scrape_tag("job", SCRAPED_POD_JOB))
 
         return "\n".join(vrl_lines)
 
@@ -794,9 +817,14 @@ if exists(.metadata.level) {
             "scrape_interval_secs": self.dcgm_cfg.scrape_interval,
             "scrape_timeout_secs": int(self.dcgm_cfg.scrape_interval * SCRAPE_TIMEOUT_PERCENTAGE)
         }
+        vector_cfg.setdefault("transforms", {})[DCGM_JOB_TRANSFORM_NAME] = {
+            "type": "remap",
+            "inputs": [DCGM_EXPORTER_SOURCE_NAME],
+            "source": LiteralStr(f'.tags.job = "{DCGM_JOB}"\n'),
+        }
         inputs = set(vector_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["inputs"])
-        if DCGM_EXPORTER_SOURCE_NAME not in inputs:
-            vector_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["inputs"].append(DCGM_EXPORTER_SOURCE_NAME)
+        if DCGM_JOB_TRANSFORM_NAME not in inputs:
+            vector_cfg["transforms"][NODE_METRICS_VECTOR_TRANSFORM_NAME]["inputs"].append(DCGM_JOB_TRANSFORM_NAME)
 
     def _apply_cluster_exporter(self, vector_cfg: dict, spec: ClusterExporterSpec, pod_ip: str):
         """Wire a cluster-scoped exporter (KSM/Slurm/CME) into the Vector config."""
