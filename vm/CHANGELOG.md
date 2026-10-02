@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.20 (2026-10-02)
+
+**Features**
+- Send `X-Crusoe-Vm-Id` and `User-Agent` headers on all agent requests for per-VM traffic attribution ([a461701](https://github.com/crusoecloud/crusoe-watch-agent/commit/a461701))
+
+
 ## 1.0.19 (2026-08-25)
 
 Internal improvements and maintenance.
