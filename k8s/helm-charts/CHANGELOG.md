@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.38 (2026-10-02)
+
+**Features**
+- Send `X-Crusoe-Vm-Id` and `User-Agent` headers on logs and metrics sinks for per-VM attribution ([a461701](https://github.com/crusoecloud/crusoe-watch-agent/commit/a461701))
+
+**Improvements**
+- Bump vector-config-reloader to 0.2.33
+
+
 ## 0.3.37 (2026-09-08)
 
 **Features**

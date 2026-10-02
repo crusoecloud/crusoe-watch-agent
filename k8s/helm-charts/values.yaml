@@ -622,7 +622,7 @@ vector:
 
   configReloader:
     imageRepository: crusoecloud/crusoe-watch-agent/vector-config-reloader
-    imageTag: v0.2.32
+    imageTag: v0.2.33
 
   # extraContainers -- Extra Containers to be added to the Vector Pods.
   # This also supports template content, which will eventually be converted to yaml.
