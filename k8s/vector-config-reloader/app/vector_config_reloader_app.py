@@ -685,12 +685,13 @@ if exists(.metadata.level) {
         return re.sub(r'[^a-zA-Z0-9_]', '_', name)
 
     @staticmethod
-    def is_pod_active(pod):
-        """A pod is considered active if it's Running and not scheduled for deletion."""
-        return (
-            pod.status.phase == "Running"
-            and not getattr(pod.metadata, "deletion_timestamp", None)
-        )
+    def is_pod_scrapeable(pod, pod_type):
+        """A pod is scraped while it is Running. A terminating pod is dropped, except a custom
+        metrics pod: a workload that drains in-flight work after SIGTERM keeps serving its
+        metrics until it exits, and those are the metrics of the work still running."""
+        if pod.status.phase != "Running":
+            return False
+        return pod_type == POD_TYPE_CUSTOM or not getattr(pod.metadata, "deletion_timestamp", None)
 
     def classify_pod(self, pod):
         """Return a string label for the pod type, or None if not relevant.
@@ -1071,7 +1072,7 @@ if exists(.metadata.level) {
     # -------- Polling, fingerprinting, and reconcile --------
 
     def _list_active_relevant_pods(self):
-        """List all Running, non-terminating pods on the node and classify them.
+        """List all Running pods on the node, classify them, and keep the scrapeable ones.
 
         Returns: list of (pod, pod_type) tuples, only including relevant pods.
         Raises on API failure so the caller can decide retry behavior.
@@ -1090,12 +1091,12 @@ if exists(.metadata.level) {
         skipped_irrelevant = 0
         skipped_no_ip = 0
         for pod in pods:
-            if not VectorConfigReloader.is_pod_active(pod):
-                skipped_terminating += 1
-                continue
             pod_type = self.classify_pod(pod)
             if pod_type is None:
                 skipped_irrelevant += 1
+                continue
+            if not VectorConfigReloader.is_pod_scrapeable(pod, pod_type):
+                skipped_terminating += 1
                 continue
             if not pod.status.pod_ip:
                 skipped_no_ip += 1

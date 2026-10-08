@@ -117,16 +117,18 @@ def test_sanitize_name_replaces_invalid_chars():
     assert VectorConfigReloader.sanitize_name("ABC123_-") == "ABC123__"
 
 
-def test_is_pod_active_excludes_pods_with_deletion_timestamp():
-    pod_terminating = DummyPod("test", "ns", ip="10.0.0.1", phase="Running",
-                                deletion_timestamp="2026-01-01T00:00:00Z")
-    assert not VectorConfigReloader.is_pod_active(pod_terminating)
-
-    pod_failed = DummyPod("test", "ns", ip="10.0.0.1", phase="Failed")
-    assert not VectorConfigReloader.is_pod_active(pod_failed)
-
-    pod_running = DummyPod("test", "ns", ip="10.0.0.1", phase="Running")
-    assert VectorConfigReloader.is_pod_active(pod_running)
+@pytest.mark.parametrize(
+    ("pod_type", "phase", "deletion_timestamp", "expected"),
+    [
+        pytest.param(POD_TYPE_DCGM, "Running", None, True, id="running"),
+        pytest.param(POD_TYPE_DCGM, "Running", "2026-01-01T00:00:00Z", False, id="terminating-exporter"),
+        pytest.param(POD_TYPE_CUSTOM, "Running", "2026-01-01T00:00:00Z", True, id="draining-custom-metrics"),
+        pytest.param(POD_TYPE_CUSTOM, "Failed", None, False, id="failed"),
+    ],
+)
+def test_is_pod_scrapeable(pod_type, phase, deletion_timestamp, expected):
+    pod = DummyPod("test", "ns", ip="10.0.0.1", phase=phase, deletion_timestamp=deletion_timestamp)
+    assert VectorConfigReloader.is_pod_scrapeable(pod, pod_type) is expected
 
 
 def test_classify_pod():
@@ -522,6 +524,22 @@ def test_reconcile_pod_removed_triggers_reload_and_cleans_config():
     r.reconcile_once()
     cfg = YamlUtils.load_yaml_config(vcr_mod.VECTOR_CONFIG_PATH)
     assert DCGM_EXPORTER_SOURCE_NAME not in cfg.get("sources", {})
+
+
+def test_list_active_relevant_pods_keeps_draining_custom_metrics_pods():
+    """A workload that finishes in-flight work after SIGTERM is still producing the metrics of
+    that work; dropping it at SIGTERM blacks them out until it exits."""
+    pods = [
+        DummyPod("app-draining", "ns", ip="10.0.0.1",
+                 ann={CUSTOM_METRICS_SCRAPE_ANNOTATION: "true"},
+                 deletion_timestamp="2026-01-01T00:00:00Z"),
+        DummyPod("dcgm-terminating", "ns", ip="10.0.0.2",
+                 labels={"app": "nvidia-dcgm-exporter"},
+                 deletion_timestamp="2026-01-01T00:00:00Z"),
+    ]
+    r = _new_reloader_with_pods(pods)
+    names = [p.metadata.name for p, _ in r._list_active_relevant_pods()]
+    assert names == ["app-draining"]
 
 
 def test_reconcile_pod_with_deletion_timestamp_treated_as_removed():
