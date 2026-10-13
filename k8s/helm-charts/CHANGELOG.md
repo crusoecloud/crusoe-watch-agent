@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.39 (2026-10-13)
+
+**Bug Fixes**
+- Keep scraping custom metrics pods while they terminate ([1bb9d71](https://github.com/crusoecloud/crusoe-watch-agent/commit/1bb9d71))
+
+**Improvements**
+- Bump vector-config-reloader to 0.2.34
+
+
 ## 0.3.38 (2026-10-02)
 
 **Features**
