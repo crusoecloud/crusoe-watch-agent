@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.21 (2026-10-15)
+
+- Update DCGM and dcgm-exporter to address CVE-2026-47483; `upgrade` now updates both on existing installs. Ubuntu 20.04 is no longer supported for NVIDIA GPU VMs ([a585e1e](https://github.com/crusoecloud/crusoe-watch-agent/commit/a585e1e))
+
+
 ## 1.0.20 (2026-10-02)
 
 **Features**
