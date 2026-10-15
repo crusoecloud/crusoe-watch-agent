@@ -98,16 +98,16 @@ declare -A -r CCR_DOCKERHUB_PROJECT_MAP=(
   ["eu-iceland2-a"]="cwa-docker.33d1748b"
 )
 
-# dcgm-exporter release, as <exporter version>-<DCGM version>. This is both the
-# upstream git tag (native builds clone it) and the base of the container image
-# tag (docker mode appends the base OS), so both install modes ship the same exporter.
-DCGM_EXPORTER_RELEASE="4.3.1-4.4.0"
+# dcgm-exporter release, as <DCGM version>-<exporter version>.
+DCGM_EXPORTER_RELEASE="4.6.1-4.8.4"
+DCGM_EXPORTER_GIT_TAG="${DCGM_EXPORTER_RELEASE#*-}"
+DCGM_VERSION="${DCGM_EXPORTER_RELEASE%%-*}"
+DCGM_APT_VERSION="1:${DCGM_VERSION}-1"
 
-# dcgm-exporter docker image version map
+# dcgm-exporter docker image version map (supported Ubuntu versions)
 declare -A -r DCGM_EXPORTER_VERSION_MAP=(
-  ["20.04"]="${DCGM_EXPORTER_RELEASE}-ubi9"
-  ["22.04"]="${DCGM_EXPORTER_RELEASE}-ubuntu22.04"
-  ["24.04"]="${DCGM_EXPORTER_RELEASE}-ubi9"
+  ["22.04"]="${DCGM_EXPORTER_RELEASE}"
+  ["24.04"]="${DCGM_EXPORTER_RELEASE}"
 )
 
 # CLI args parsing
@@ -379,8 +379,9 @@ install_vector_native() {
 }
 
 install_dcgm_exporter_native() {
-  if command_exists dcgm-exporter; then
-    echo "dcgm-exporter is already installed."
+  # Rebuild if not the pinned version.
+  if [[ "$(dcgm-exporter --version 2>/dev/null | awk '{print $NF; exit}')" == "$DCGM_EXPORTER_GIT_TAG" ]]; then
+    echo "dcgm-exporter $DCGM_EXPORTER_GIT_TAG is already installed."
     return
   fi
 
@@ -398,21 +399,21 @@ install_dcgm_exporter_native() {
     apt-get update && apt-get install -y build-essential || error_exit "Failed to install build-essential."
   fi
 
-  # Ensure Go >= 1.26 is installed (Ubuntu apt packages are too old)
+  # Ensure Go >= 1.27 is installed (Ubuntu apt packages are too old)
   local NEED_GO=false
   if ! command_exists go; then
     NEED_GO=true
   else
     local GO_VER
     GO_VER=$(go version | sed -E 's/.*go([0-9]+\.[0-9]+).*/\1/')
-    if awk "BEGIN{exit !($GO_VER < 1.26)}"; then
+    if awk "BEGIN{exit !($GO_VER < 1.27)}"; then
       echo "Installed Go version ($GO_VER) is too old. Upgrading."
       NEED_GO=true
     fi
   fi
   if $NEED_GO; then
-    status "Installing Go 1.26 from official tarball."
-    local GO_TAR="go1.26.0.linux-amd64.tar.gz"
+    status "Installing Go 1.27 from official tarball."
+    local GO_TAR="go1.27.1.linux-amd64.tar.gz"
     wget -q -O "/tmp/$GO_TAR" "https://go.dev/dl/$GO_TAR" || error_exit "Failed to download Go."
     rm -rf /usr/local/go
     tar -C /usr/local -xzf "/tmp/$GO_TAR" || error_exit "Failed to extract Go."
@@ -421,9 +422,9 @@ install_dcgm_exporter_native() {
   fi
 
   # Pinned to a tag.
-  git clone --depth 1 --branch "$DCGM_EXPORTER_RELEASE" \
+  git clone --depth 1 --branch "$DCGM_EXPORTER_GIT_TAG" \
     https://github.com/NVIDIA/dcgm-exporter.git "$BUILD_DIR" \
-    || error_exit "Failed to clone dcgm-exporter $DCGM_EXPORTER_RELEASE."
+    || error_exit "Failed to clone dcgm-exporter $DCGM_EXPORTER_GIT_TAG."
   make -C "$BUILD_DIR" binary || error_exit "Failed to build dcgm-exporter."
   make -C "$BUILD_DIR" install || error_exit "Failed to install dcgm-exporter."
   rm -rf "$BUILD_DIR"
@@ -538,11 +539,16 @@ install_dcgm() {
   # Ensure the NVIDIA CUDA apt repository is configured
   setup_nvidia_cuda_repo
 
-  apt-get install --yes --install-recommends "datacenter-gpu-manager-4-cuda${CUDA_VERSION}" || error_exit "Failed to install datacenter-gpu-manager-4-cuda${CUDA_VERSION}."
+  # Pin all DCGM packages to the same version.
+  apt-get install --yes --install-recommends \
+    "datacenter-gpu-manager-4-cuda${CUDA_VERSION}=${DCGM_APT_VERSION}" \
+    "datacenter-gpu-manager-4-core=${DCGM_APT_VERSION}" \
+    "datacenter-gpu-manager-4-proprietary-cuda${CUDA_VERSION}=${DCGM_APT_VERSION}" \
+    || error_exit "Failed to install datacenter-gpu-manager-4-cuda${CUDA_VERSION} ${DCGM_APT_VERSION}."
 
   systemctl --now enable nvidia-dcgm || error_exit "Failed to enable and start nvidia-dcgm service."
 
-  status "DCGM installed and started successfully."
+  status "DCGM $DCGM_VERSION installed and started successfully."
 }
 
 # --- Token & Version/Lifecycle Helpers ---
@@ -681,7 +687,7 @@ do_install() {
   fi
 
   # 2. OS validation per GPU type
-  if $HAS_NVIDIA_GPUS && [[ "$INSTALL_MODE" == "docker" ]]; then
+  if $HAS_NVIDIA_GPUS; then
     check_os_support
   elif $HAS_AMD_GPUS; then
     check_os_support_amd
@@ -1241,47 +1247,25 @@ ensure_docker_running() {
 }
 
 
-# Function to check and upgrade DCGM version
+# Upgrade DCGM if older than the pinned version.
 upgrade_dcgm() {
   status "Checking DCGM version for upgrade."
 
-  local dcgm_version_raw=$(dcgmi --version | grep 'version:' | awk '{print $3}' | cut -d'.' -f1)
-  local dcgm_version_major=${dcgm_version_raw:0:1}
+  local dcgm_version
+  dcgm_version=$(dcgmi --version | awk '/version:/{print $3; exit}')
 
-  if [[ "$dcgm_version_major" -lt 4 ]]; then
-    status "Current DCGM version ($dcgm_version_major.x.x) is older than 4.x.x. Upgrading DCGM."
-
-    # Stop DCGM service
-    systemctl --now disable nvidia-dcgm || error_exit "Failed to disable and stop nvidia-dcgm service."
-
-    # Purge old packages
-    dpkg --list datacenter-gpu-manager &> /dev/null && apt purge --yes datacenter-gpu-manager
-    dpkg --list datacenter-gpu-manager-config &> /dev/null && apt purge --yes datacenter-gpu-manager-config
-
-    # Update package lists
-    apt-get update || error_exit "Failed to update package lists."
-
-    # Get CUDA version
-    if ! command_exists nvidia-smi; then
-      error_exit "nvidia-smi not found. Cannot determine CUDA version for DCGM upgrade."
-    fi
-    local CUDA_VERSION=$(nvidia-smi -q | sed -E -n 's/CUDA Version[ :]+([0-9]+)[.].*/\1/p')
-
-    if [[ -z "$CUDA_VERSION" ]]; then
-      error_exit "Could not determine CUDA version. DCGM upgrade aborted."
-    fi
-    echo "Found CUDA Version: $CUDA_VERSION"
-
-    # Install new DCGM package
-    apt-get install --yes --install-recommends "datacenter-gpu-manager-4-cuda${CUDA_VERSION}" || error_exit "Failed to install datacenter-gpu-manager-4-cuda${CUDA_VERSION}."
-
-    # Enable and start the new service
-    systemctl --now enable nvidia-dcgm || error_exit "Failed to enable and start nvidia-dcgm service."
-
-    status "DCGM upgrade complete."
-  else
-    echo "DCGM version is already 4.x.x or newer. No upgrade needed."
+  if [[ -n "$dcgm_version" ]] && ! version_lt "$dcgm_version" "$DCGM_VERSION"; then
+    echo "DCGM $dcgm_version is at or above $DCGM_VERSION. No upgrade needed."
+    return
   fi
+
+  status "Current DCGM version (${dcgm_version:-unknown}) is older than $DCGM_VERSION. Upgrading DCGM."
+
+  # Stop DCGM service
+  systemctl --now disable nvidia-dcgm || error_exit "Failed to disable and stop nvidia-dcgm service."
+
+  install_dcgm
+  status "DCGM upgrade complete."
 }
 
 # Capture raw args before parsing consumes them
