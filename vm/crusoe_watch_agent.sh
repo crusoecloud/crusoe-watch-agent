@@ -545,6 +545,10 @@ install_dcgm_exporter_native() {
     export PATH="/usr/local/go/bin:$PATH"
   fi
 
+  export HOME="${HOME:-/root}"
+  export GOPATH="${GOPATH:-/root/go}"
+  export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
+
   # Pinned to a tag.
   git clone --depth 1 --branch "$DCGM_EXPORTER_GIT_TAG" \
     https://github.com/NVIDIA/dcgm-exporter.git "$BUILD_DIR" \
