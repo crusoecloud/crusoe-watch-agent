@@ -1,2 +1,7 @@
 requests>=2.31.0
 kubernetes>=28.1.0
+# requests resolves trust anchors through certifi, not the OS store, so the
+# host/image ca-certificates fix does not reach it. 2026.10.19 is the first
+# release without the roots distrusted after the eMudhra intermediate CA key
+# compromise (CVE-2026-113470).
+certifi>=2026.10.19

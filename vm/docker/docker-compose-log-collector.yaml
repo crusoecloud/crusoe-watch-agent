@@ -18,6 +18,9 @@ services:
       - /var/log/nvidia-bug-reports:/logs
       # DMI information for VM ID detection
       - /sys:/host/sys:ro
+      # Host CA trust store, kept current by the installer, so the container
+      # does not fall back to whatever roots its image was built with.
+      - /etc/ssl/certs:/etc/ssl/certs:ro
 
     env_file:
       - ./.env
@@ -25,6 +28,8 @@ services:
 
     environment:
       - API_ENABLED=true
+      # requests reads certifi, not the OS store, unless pointed at a bundle.
+      - REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
     privileged: true
     restart: always

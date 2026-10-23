@@ -1,3 +1,7 @@
 kubernetes==34.1.0
 pyyaml==6.0.3
 prometheus-client==0.21.0
+# Pinned for the same reason as the log collector: the kubernetes client talks
+# TLS through urllib3/certifi rather than the OS trust store. 2026.10.19 drops
+# the roots distrusted after the eMudhra CA key compromise (CVE-2026-113470).
+certifi>=2026.10.19

@@ -1,6 +1,28 @@
 namespace: crusoe-system
 ingressEndpoint: "https://cms-monitoring.crusoecloud.com"
 
+# Root certificates the Vector container must not trust, named as they appear
+# in the image's /etc/ssl/certs. The upstream Vector image carries whatever
+# ca-certificates its base image was built with, which on an unrebuilt image
+# still includes the roots the eMudhra intermediate CA key compromise
+# (CVE-2026-113470) put in reach of an attacker: anyone holding those
+# intermediate keys can mint a certificate for the ingress endpoint, and Vector
+# consults no revocation list.
+#
+# files/filter-ca-trust.sh rebuilds the bundle at start-up and SSL_CERT_FILE
+# points Vector at the result, so this covers every sink at once rather than
+# each sink's own tls.ca_file. The script logs a line per name, including names
+# it does not find, so a root renamed upstream cannot go quietly untouched.
+# Emptying the list turns the rebuild into a straight copy; it does not disable
+# it.
+caTrust:
+  distrustedRootFiles:
+    # emSign ECC Root CA - G3 (eMudhra)
+    - emSign_ECC_Root_CA_-_G3.pem
+    # AAA Certificate Services (Sectigo) -- anchors the cross-signed copies of
+    # the same compromised intermediates.
+    - Comodo_AAA_Services_root.pem
+
 # Settings shared with subcharts.
 global:
   # global.registry --Where container images are pulled from - ghcr (default) or ccr.
@@ -251,7 +273,7 @@ vector:
   command: [
     "/bin/sh",
     "-c",
-    "cp /etc/vector-base/vector.yaml /etc/vector/vector.yaml && export VM_ID=$(cat /host/sys/class/dmi/id/product_uuid) && /usr/bin/vector --config /etc/vector/vector.yaml --watch-config"
+    "sh /etc/crusoe-ca/filter-ca-trust.sh && cp /etc/vector-base/vector.yaml /etc/vector/vector.yaml && export VM_ID=$(cat /host/sys/class/dmi/id/product_uuid) && /usr/bin/vector --config /etc/vector/vector.yaml --watch-config"
   ]
 
   # args -- Override Vector's default arguments.
@@ -276,6 +298,13 @@ vector:
         configMapKeyRef:
           name: crusoe-watch-agent-metadata
           key: chart-name
+    # Vector's vendored OpenSSL reads both of these. SSL_CERT_DIR has to move
+    # too: left at the image default it would keep serving the distrusted roots
+    # out of the hashed directory alongside the rebuilt bundle.
+    - name: SSL_CERT_FILE
+      value: /etc/crusoe-ca-trust/ca-certificates.crt
+    - name: SSL_CERT_DIR
+      value: /etc/crusoe-ca-trust/certs.d
 
   # envFrom -- Define environment variables from Secrets or ConfigMaps.
   envFrom:
@@ -587,6 +616,11 @@ vector:
     - name: reloader-config
       configMap:
         name: vector-reloader-config
+    - name: ca-trust-script   # filter script and fingerprint denylist
+      configMap:
+        name: crusoe-ca-trust
+    - name: ca-trust          # rebuilt CA bundle, written at start-up
+      emptyDir: { }
 
   # extraVolumeMounts -- Additional Volume to mount into Vector Containers.
   extraVolumeMounts:
@@ -604,6 +638,11 @@ vector:
     - name: reloader-config
       mountPath: /etc/reloader
       readOnly: true
+    - name: ca-trust-script
+      mountPath: /etc/crusoe-ca
+      readOnly: true
+    - name: ca-trust
+      mountPath: /etc/crusoe-ca-trust
 
   # initContainers -- Init Containers to be added to the Vector Pods.
   # This also supports template content, which will eventually be converted to yaml.

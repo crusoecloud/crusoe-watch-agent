@@ -1,0 +1,18 @@
+{{- /*
+Trust anchors the Vector container must not accept, plus the script that strips
+them from the image's CA bundle at start-up. See files/filter-ca-trust.sh.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crusoe-ca-trust
+  namespace: {{ .Values.namespace }}
+data:
+  filter-ca-trust.sh: |
+{{ .Files.Get "files/filter-ca-trust.sh" | indent 4 }}
+  distrusted-roots.txt: |
+    # Certificate files, as named in the image's /etc/ssl/certs, that Vector
+    # must not trust. Blank lines and # comments are ignored.
+{{- range .Values.caTrust.distrustedRootFiles }}
+    {{ . }}
+{{- end }}

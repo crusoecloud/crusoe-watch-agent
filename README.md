@@ -17,6 +17,29 @@ sudo ./crusoe_watch_agent.sh install
 
 > **Note:** The legacy `crusoe_watch_agent_amd.sh` script remains available for existing AMD installs. New installs should use `crusoe_watch_agent.sh` for all GPU types.
 
+### Verifying the Installer
+
+Every published installer is signed with the Crusoe cosign key. Verify it before
+running it as root — this needs only `openssl`, so no cosign install is
+required:
+
+```
+wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent.sh
+wget https://crusoecloud.github.io/crusoe-watch-agent/vm/latest/crusoe_watch_agent.sh.sig
+wget https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/main/vm/cosign.pub
+base64 -d < crusoe_watch_agent.sh.sig > crusoe_watch_agent.sh.sig.der
+openssl dgst -sha256 -verify cosign.pub -signature crusoe_watch_agent.sh.sig.der crusoe_watch_agent.sh
+```
+
+`Verified OK` means the script is the one Crusoe published. Anything else means
+it was altered in transit — do not run it.
+
+With cosign installed, `cosign verify-blob --key cosign.pub --signature
+crusoe_watch_agent.sh.sig crusoe_watch_agent.sh` does the same thing.
+
+The agent's own `upgrade` command performs this check automatically before it
+runs a newly downloaded installer.
+
 ### Symlink Installation
 Sets up the script as a global command for easier upgrades and management.
 

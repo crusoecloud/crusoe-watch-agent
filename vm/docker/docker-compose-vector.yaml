@@ -9,6 +9,9 @@ services:
       - /sys:/host/sys:ro
       - /var/log/journal:/var/log/journal:ro
       - /var/lib/vector:/var/lib/vector
+      # Host CA trust store, kept current by the installer, so the container
+      # does not fall back to whatever roots its image was built with.
+      - /etc/ssl/certs:/etc/ssl/certs:ro
     env_file:
       - ./.env
       - /etc/crusoe/secrets/.monitoring-token

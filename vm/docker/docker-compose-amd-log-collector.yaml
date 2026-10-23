@@ -15,6 +15,9 @@ services:
       - /var/lib/dkms:/var/lib/dkms:ro         # dkms status
       - /boot:/boot:ro                         # lsinitramfs
       - /var/log/journal:/var/log/journal:ro   # journalctl -b -1/-2/-3 (needs host persistent journald)
+      # Host CA trust store, kept current by the installer, so the container
+      # does not fall back to whatever roots its image was built with.
+      - /etc/ssl/certs:/etc/ssl/certs:ro
 
     # ROCm device access
     devices:
@@ -28,6 +31,8 @@ services:
     environment:
       - GPU_TYPE=amd
       - API_ENABLED=true
+      # requests reads certifi, not the OS store, unless pointed at a bundle.
+      - REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
     privileged: true
     restart: always
