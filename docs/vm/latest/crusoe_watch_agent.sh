@@ -6,7 +6,7 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 
 # GitHub ref (tag or branch). Defaults to "main" for backward compatibility.
 # Published scripts in docs/vm/ have this pinned to a release tag by CI.
-AGENT_VERSION="vm1.0.21"
+AGENT_VERSION="vm1.0.22"
 
 # CMS base URL (optional, defaults to prod)
 CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
@@ -79,7 +79,7 @@ INSTALL_MODE_FILE="$CRUSOE_SECRETS_DIR/.install-mode"
 INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 
 # Log collector container image version (update here when releasing new container builds)
-LOG_COLLECTOR_IMAGE_VERSION="v0.2.31"
+LOG_COLLECTOR_IMAGE_VERSION="v0.2.35"
 
 # Crusoe Metrics Exporter version (used for native binary download)
 CRUSOE_METRICS_EXPORTER_VERSION="0.2.4"
@@ -290,6 +290,130 @@ check_root() {
   if [[ $EUID -ne 0 ]]; then
       error_exit "This script must be run as root."
   fi
+}
+
+# --- Certificate Trust ---
+# The eMudhra intermediate CA key compromise (CVE-2026-113470) put the signing
+# keys of eight intermediates into untrusted hands. Those intermediates chain
+# to the two roots below, so whoever holds the keys can mint a certificate for
+# any host -- including the CMS ingress this agent ships telemetry to and the
+# GitHub Pages origin it upgrades itself from. Browsers block the intermediates
+# through OneCRL/CRLSets, but vector, python-requests, the crusoe CLI and
+# curl/wget consult no revocation list, so the roots themselves have to go.
+#
+# Set CWA_SKIP_CA_HARDENING=1 to leave the host trust store alone.
+DISTRUSTED_CA_CERT_FILES=(
+  "mozilla/emSign_ECC_Root_CA_-_G3.crt"
+  "mozilla/Comodo_AAA_Services_root.crt"
+)
+CA_CERTIFICATES_CONF="/etc/ca-certificates.conf"
+
+# Cosign public key for the published installer. This mirrors vm/cosign.pub and
+# is embedded deliberately: fetching it over the same channel as the script it
+# verifies would prove nothing.
+read -r -d '' COSIGN_PUBLIC_KEY <<'COSIGN_PUB_EOF' || true
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEQ4qYIvOry0yLd8ANgVfyQvTWgfBS
+Iaz6ehX2rJmj1QwPqM673eyt+Z4dReVuPlgWOGwoDvNi8IShkQhJOEmzSg==
+-----END PUBLIC KEY-----
+COSIGN_PUB_EOF
+
+# Drops the compromised roots from the host trust store. Runs before anything
+# is downloaded, so the downloads that follow are already protected. Idempotent.
+harden_ca_trust() {
+  if [[ "${CWA_SKIP_CA_HARDENING:-0}" == "1" ]]; then
+    status "Skipping CA trust hardening (CWA_SKIP_CA_HARDENING=1)."
+    return
+  fi
+
+  status "Hardening the host CA trust store."
+
+  # Preferred path: the distro has shipped a ca-certificates release that drops
+  # these roots already, in which case the manual step below finds nothing left
+  # to do. Neither failure is fatal -- a stale package index should not stop an
+  # install, and the fallback still applies.
+  apt-get update -qq \
+    || echo "Warning: apt-get update failed; continuing with the installed package index."
+  apt-get install -y --only-upgrade ca-certificates \
+    || echo "Warning: could not upgrade ca-certificates; relying on manual distrust below."
+
+  if [[ ! -f "$CA_CERTIFICATES_CONF" ]]; then
+    echo "Warning: $CA_CERTIFICATES_CONF not found; skipping manual distrust."
+    return
+  fi
+
+  # Fallback for hosts whose distro has not published the fix yet. A leading
+  # "!" tells update-ca-certificates to leave the root out of both the
+  # generated bundle and the hashed directory.
+  local changed=false cert tmp_conf
+  for cert in "${DISTRUSTED_CA_CERT_FILES[@]}"; do
+    if grep -qxF "!$cert" "$CA_CERTIFICATES_CONF"; then
+      echo "$cert is already distrusted."
+    elif grep -qxF "$cert" "$CA_CERTIFICATES_CONF"; then
+      tmp_conf=$(mktemp) || error_exit "Failed to create a temporary file."
+      # Exact string comparison in awk, so the path needs no regex escaping.
+      awk -v target="$cert" '$0 == target { print "!" $0; next } { print }' \
+        "$CA_CERTIFICATES_CONF" > "$tmp_conf" \
+        || error_exit "Failed to rewrite $CA_CERTIFICATES_CONF."
+      # Redirect rather than mv, to keep the original ownership and mode.
+      cat "$tmp_conf" > "$CA_CERTIFICATES_CONF" \
+        || error_exit "Failed to update $CA_CERTIFICATES_CONF."
+      rm -f "$tmp_conf"
+      echo "Distrusted $cert."
+      changed=true
+    else
+      echo "$cert is not in this trust store."
+    fi
+  done
+
+  if $changed; then
+    update-ca-certificates --fresh || error_exit "Failed to rebuild the CA trust store."
+  fi
+
+  # update-ca-certificates removes the per-root PEM when a root is distrusted,
+  # so a leftover file means the rebuild did not take effect.
+  local base
+  for cert in "${DISTRUSTED_CA_CERT_FILES[@]}"; do
+    base=$(basename "$cert" .crt)
+    if [[ -e "/etc/ssl/certs/${base}.pem" ]]; then
+      echo "Warning: /etc/ssl/certs/${base}.pem is still present. The host still trusts $base."
+    fi
+  done
+}
+
+# Verifies a downloaded installer against the embedded cosign public key.
+# cosign sign-blob --output-signature writes base64-encoded DER, which is what
+# openssl dgst wants once decoded, so this needs no cosign binary on the VM.
+verify_script_signature() {
+  local script_path="$1" sig_url="$2"
+  local workdir pub sig_b64 sig_der
+
+  command_exists openssl || error_exit "openssl is required to verify the installer signature."
+
+  workdir=$(mktemp -d) || error_exit "Failed to create a temporary directory."
+  pub="$workdir/cosign.pub"
+  sig_b64="$workdir/installer.sig"
+  sig_der="$workdir/installer.der"
+
+  printf '%s\n' "$COSIGN_PUBLIC_KEY" > "$pub"
+
+  if ! curl -fsSL "$sig_url" -o "$sig_b64"; then
+    rm -rf "$workdir"
+    error_exit "Failed to download the installer signature from $sig_url."
+  fi
+
+  if ! base64 -d < "$sig_b64" > "$sig_der" 2>/dev/null; then
+    rm -rf "$workdir"
+    error_exit "The installer signature at $sig_url is not valid base64."
+  fi
+
+  if ! openssl dgst -sha256 -verify "$pub" -signature "$sig_der" "$script_path" >/dev/null 2>&1; then
+    rm -rf "$workdir"
+    error_exit "Signature verification failed for the downloaded installer. Refusing to run it."
+  fi
+
+  rm -rf "$workdir"
+  status "Installer signature verified."
 }
 
 # --- Container Registry Resolution ---
@@ -693,7 +817,10 @@ do_install() {
     check_os_support_amd
   fi
 
-  # 3. Install runtime dependencies
+  # 3. Drop the compromised CA roots before anything is downloaded over TLS
+  harden_ca_trust
+
+  # 4. Install runtime dependencies
   if [[ "$INSTALL_MODE" == "docker" ]]; then
     status "Ensure docker installation."
     if command_exists docker; then
@@ -718,7 +845,7 @@ do_install() {
     mkdir -p "$CRUSOE_WATCH_AGENT_DIR"
   fi
 
-  # 4. GPU-specific artifact installation
+  # 5. GPU-specific artifact installation
   if $HAS_NVIDIA_GPUS; then
     if [[ "$INSTALL_MODE" == "docker" ]]; then
       # Docker mode: require both dcgmi and nvidia-ctk pre-installed
@@ -842,7 +969,7 @@ do_install() {
     fi
   fi
 
-  # 5. Download/install Crusoe Metrics Exporter (opt-in via --enable-metrics-exporter).
+  # 6. Download/install Crusoe Metrics Exporter (opt-in via --enable-metrics-exporter).
   if $ENABLE_METRICS_EXPORTER; then
     if [[ "$INSTALL_MODE" == "docker" ]]; then
       ensure_docker_running
@@ -857,7 +984,7 @@ do_install() {
     fi
   fi
 
-  # 6. Download Vector docker-compose file
+  # 7. Download Vector docker-compose file
   if [[ "$INSTALL_MODE" == "docker" ]]; then
     status "Download Vector docker-compose file."
     wget -q -O "$CRUSOE_WATCH_AGENT_DIR/docker-compose-vector.yaml" "$GITHUB_RAW_BASE_URL/$REMOTE_DOCKER_COMPOSE_VECTOR" || error_exit "Failed to download $REMOTE_DOCKER_COMPOSE_VECTOR"
@@ -866,7 +993,7 @@ do_install() {
     mkdir -p /var/lib/vector
   fi
 
-  # 7. Token handling
+  # 8. Token handling
   status "Ensuring Crusoe auth token in secrets."
   if [[ -n "$CRUSOE_AUTH_TOKEN" ]] && validate_token "$CRUSOE_AUTH_TOKEN"; then
     # Env var provided; write/overwrite secrets store
@@ -895,11 +1022,11 @@ do_install() {
     write_token_to_secrets "$CRUSOE_AUTH_TOKEN"
   fi
 
-  # 8. Download VERSION file
+  # 9. Download VERSION file
   status "Download VERSION file."
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
-  # 9. Create .env file — content varies by GPU type
+  # 10. Create .env file — content varies by GPU type
   if $HAS_NVIDIA_GPUS; then
     status "Creating .env file with VM_ID and DCGM_EXPORTER_PORT."
     cat <<EOF > "$ENV_FILE"
@@ -909,7 +1036,7 @@ TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}'
 LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
-AGENT_VERSION="vm1.0.21"
+AGENT_VERSION="vm1.0.22"
 EOF
     [[ "$INSTALL_MODE" == "docker" ]] && echo "DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'" >> "$ENV_FILE"
   elif $HAS_AMD_GPUS; then
@@ -921,7 +1048,7 @@ AMD_EXPORTER_PORT='${AMD_EXPORTER_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
-AGENT_VERSION="vm1.0.21"
+AGENT_VERSION="vm1.0.22"
 EOF
   else
     status "Creating .env file with VM_ID."
@@ -930,7 +1057,7 @@ VM_ID='${CRUSOE_VM_ID}'
 TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
-AGENT_VERSION="vm1.0.21"
+AGENT_VERSION="vm1.0.22"
 EOF
   fi
   # Registry prefixes consumed by the docker-compose files.
@@ -948,7 +1075,7 @@ EOF
   fi
   echo ".env file created at $ENV_FILE"
 
-  # 10. Start GPU exporter services after .env is ready
+  # 11. Start GPU exporter services after .env is ready
   if $HAS_NVIDIA_GPUS; then
     status "Enable and start systemd services for $DCGM_EXPORTER_SERVICE_NAME."
     echo "systemctl daemon-reload"
@@ -1133,6 +1260,7 @@ do_refresh_token() {
 
 do_upgrade() {
   check_root
+  harden_ca_trust
 
   # Read persisted install mode so upgrade preserves the mode
   read_install_mode
@@ -1172,6 +1300,7 @@ do_upgrade() {
   local new_script
   new_script=$(mktemp)
   curl -fsSL "$LATEST_SCRIPT_URL" -o "$new_script" || error_exit "Failed to download latest script."
+  verify_script_signature "$new_script" "${LATEST_SCRIPT_URL}.sig"
   chmod +x "$new_script"
   CWA_UPGRADE=1 bash "$new_script" "${saved_args[@]}"
   rm -f "$new_script"
