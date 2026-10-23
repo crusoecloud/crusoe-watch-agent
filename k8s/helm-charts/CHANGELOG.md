@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.40 (2026-10-22)
+
+- Distrust compromised eMudhra CA roots (CVE-2026-113470) in Vector, the log collector, and all VM agent components to prevent acceptance of fraudulently signed certificates for Crusoe endpoints ([24adc75](https://github.com/crusoecloud/crusoe-watch-agent/commit/24adc75))
+
+
 ## 0.3.39 (2026-10-13)
 
 **Bug Fixes**

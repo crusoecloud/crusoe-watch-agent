@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.22 (2026-10-22)
+
+- Harden TLS trust stores across VM installers and containers to distrust the compromised eMudhra CA roots (CVE-2026-113470), preventing acceptance of fraudulently minted certificates for Crusoe endpoints ([24adc75](https://github.com/crusoecloud/crusoe-watch-agent/commit/24adc75))
+- Verify installer signatures before execution during upgrades, using an embedded public key and `openssl dgst` — no additional tooling required ([24adc75](https://github.com/crusoecloud/crusoe-watch-agent/commit/24adc75))
+
+
 ## 1.0.21 (2026-10-15)
 
 - Update DCGM and dcgm-exporter to address CVE-2026-47483; `upgrade` now updates both on existing installs. Ubuntu 20.04 is no longer supported for NVIDIA GPU VMs ([a585e1e](https://github.com/crusoecloud/crusoe-watch-agent/commit/a585e1e))

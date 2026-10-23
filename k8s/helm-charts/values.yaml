@@ -79,7 +79,7 @@ logs:
 job:
   name: crusoe-monitoring-token-job
   imageRepository: crusoecloud/crusoe-watch-agent/token-job
-  imageTag: v0.2.12
+  imageTag: v0.2.35
   ttlSecondsAfterFinished: 300
 secrets:
   crusoeMonitoringToken: crusoe-monitoring-token
@@ -661,7 +661,7 @@ vector:
 
   configReloader:
     imageRepository: crusoecloud/crusoe-watch-agent/vector-config-reloader
-    imageTag: v0.2.34
+    imageTag: v0.2.35
 
   # extraContainers -- Extra Containers to be added to the Vector Pods.
   # This also supports template content, which will eventually be converted to yaml.
@@ -977,7 +977,7 @@ vector:
 # Log Collector configuration
 logCollector:
   # Shared defaults (applied to both NVIDIA and AMD unless overridden per-vendor)
-  imageTag: v0.2.31
+  imageTag: v0.2.35
   pullPolicy: IfNotPresent
 
   env:
