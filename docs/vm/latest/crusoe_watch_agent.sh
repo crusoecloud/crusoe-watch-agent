@@ -6,7 +6,7 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 
 # GitHub ref (tag or branch). Defaults to "main" for backward compatibility.
 # Published scripts in docs/vm/ have this pinned to a release tag by CI.
-AGENT_VERSION="vm1.0.22"
+AGENT_VERSION="vm1.0.23"
 
 # CMS base URL (optional, defaults to prod)
 CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
@@ -545,6 +545,10 @@ install_dcgm_exporter_native() {
     export PATH="/usr/local/go/bin:$PATH"
   fi
 
+  export HOME="${HOME:-/root}"
+  export GOPATH="${GOPATH:-/root/go}"
+  export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
+
   # Pinned to a tag.
   git clone --depth 1 --branch "$DCGM_EXPORTER_GIT_TAG" \
     https://github.com/NVIDIA/dcgm-exporter.git "$BUILD_DIR" \
@@ -1036,7 +1040,7 @@ TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}'
 LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
-AGENT_VERSION="vm1.0.22"
+AGENT_VERSION="vm1.0.23"
 EOF
     [[ "$INSTALL_MODE" == "docker" ]] && echo "DCGM_EXPORTER_IMAGE_VERSION='${DCGM_EXPORTER_VERSION_MAP[$UBUNTU_OS_VERSION]}'" >> "$ENV_FILE"
   elif $HAS_AMD_GPUS; then
@@ -1048,7 +1052,7 @@ AMD_EXPORTER_PORT='${AMD_EXPORTER_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
-AGENT_VERSION="vm1.0.22"
+AGENT_VERSION="vm1.0.23"
 EOF
   else
     status "Creating .env file with VM_ID."
@@ -1057,7 +1061,7 @@ VM_ID='${CRUSOE_VM_ID}'
 TELEMETRY_INGRESS_ENDPOINT='${CMS_BASE_URL}/ingest'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT:-${CMS_BASE_URL}/logs/ingest}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
-AGENT_VERSION="vm1.0.22"
+AGENT_VERSION="vm1.0.23"
 EOF
   fi
   # Registry prefixes consumed by the docker-compose files.
