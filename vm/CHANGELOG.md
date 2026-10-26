@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.23 (2026-10-26)
+
+- Fix GPU metrics collection failing when the agent is installed in native (no-Docker) mode at boot ([3f92a3a](https://github.com/crusoecloud/crusoe-watch-agent/commit/3f92a3a))
+
+
 ## 1.0.22 (2026-10-22)
 
 - Harden TLS trust stores across VM installers and containers to distrust the compromised eMudhra CA roots (CVE-2026-113470), preventing acceptance of fraudulently minted certificates for Crusoe endpoints ([24adc75](https://github.com/crusoecloud/crusoe-watch-agent/commit/24adc75))
