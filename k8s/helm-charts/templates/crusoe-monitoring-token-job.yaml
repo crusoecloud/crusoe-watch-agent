@@ -12,7 +12,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: crusoe-token-creator
-          image: {{ include "cwa.image" (dict "ctx" $ "upstream" "ghcr" "repository" .Values.job.imageRepository "tag" .Values.job.imageTag) }}
+          image: {{ include "cwa.image" (dict "ctx" $ "repository" .Values.job.imageRepository "tag" .Values.job.imageTag) }}
           imagePullPolicy: IfNotPresent
           env:
             - name: CRUSOE_NAMESPACE

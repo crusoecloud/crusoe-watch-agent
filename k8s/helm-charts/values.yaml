@@ -25,21 +25,8 @@ caTrust:
 
 # Settings shared with subcharts.
 global:
-  # global.registry --Where container images are pulled from - ghcr (default) or ccr.
-  registry: ghcr
-
-  # global.region -- Crusoe region, e.g. "us-east1-a". Auto-detected from the
-  # topology.kubernetes.io/region node label; only set it for `helm template`
-  # or --dry-run, which render without cluster access.
-  region: ""
-
-  # global.ccr -- Preconfigured CCR pull-through cache projects, keyed by region.
-  ccr:
-    endpointFormat: "registry.%s.ccr.crusoecloudcompute.com"
-    projects:
-      eu-iceland2-a:
-        ghcr: "cwa-ghcr.33d1748b"
-        dockerhub: "cwa-docker.33d1748b"
+  # global.registry -- Image registry URL, e.g. a ghcr.io pull-through cache.
+  registry: ghcr.io
 
 proxy:
   enabled: false
@@ -667,7 +654,7 @@ vector:
   # This also supports template content, which will eventually be converted to yaml.
   extraContainers:
     - name: vector-config-reloader
-      image: '{{ include "cwa.image" (dict "ctx" . "upstream" "ghcr" "repository" .Values.configReloader.imageRepository "tag" .Values.configReloader.imageTag) }}'
+      image: '{{ include "cwa.image" (dict "ctx" . "repository" .Values.configReloader.imageRepository "tag" .Values.configReloader.imageTag) }}'
       env:
         - name: NODE_NAME
           valueFrom:
