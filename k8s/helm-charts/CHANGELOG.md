@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.42 (2026-11-04)
+
+**Features**
+- Telemetry requests are proxied by the in-DC telemetry gateway in cluster egress lock-down locations ([e68eb52](https://github.com/crusoecloud/crusoe-watch-agent/commit/e68eb52))
+
+**Improvements**
+- Bump vector-config-reloader, log collector and monitoring token job to 0.2.36
+
+
 ## 0.3.41 (2026-11-02)
 
 Internal improvements and maintenance.

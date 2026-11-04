@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.24 (2026-11-04)
+
+**Features**
+- Telemetry requests are proxied by the in-DC telemetry gateway in cluster egress lock-down locations ([e68eb52](https://github.com/crusoecloud/crusoe-watch-agent/commit/e68eb52))
+
+
 ## 1.0.23 (2026-10-26)
 
 - Fix GPU metrics collection failing when the agent is installed in native (no-Docker) mode at boot ([3f92a3a](https://github.com/crusoecloud/crusoe-watch-agent/commit/3f92a3a))
