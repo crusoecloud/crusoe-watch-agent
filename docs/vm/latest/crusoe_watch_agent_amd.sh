@@ -6,10 +6,13 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 
 # GitHub ref (tag or branch). Defaults to "main" for backward compatibility.
 # Published scripts in docs/vm/ have this pinned to a release tag by CI.
-AGENT_VERSION="vm1.0.23"
+AGENT_VERSION="vm1.0.24"
 
-# CMS base URL (optional, defaults to prod)
-CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
+# CMS base URL (optional, defaults to the location's CMS gateway or prod)
+CMS_BASE_URL=""
+CMS_PUBLIC_BASE_URL="https://cms-monitoring.crusoecloud.com"
+CMS_GATEWAY_LOCATIONS=("eu-iceland2-a")
+CMS_GATEWAY_URL_FORMAT="https://%s.cms-gw.crusoecloud.com"
 
 # Define paths for config files within the GitHub repository (vm subdir)
 REMOTE_VECTOR_CONFIG_AMD_GPU_VM="vm/config/vector_amd_gpu_vm.yaml"
@@ -40,25 +43,6 @@ INSTALL_ARGS_FILE="$CRUSOE_SECRETS_DIR/.install-args"
 # Log collector container image version (update here when releasing new container builds)
 LOG_COLLECTOR_IMAGE_VERSION="v0.2.31"
 
-# Container registry to pull images from: "ghcr" (default) or "ccr".
-# "ccr" resolves to Crusoe Container Registry's per-region pull-through cache
-# projects, which are allowlisted for anonymous pull and reachable in-region
-# without egress to the public internet.
-IMAGE_REGISTRY="ghcr"
-
-# A CCR pull-through cache project maps to exactly one upstream registry, so
-# each region has a separate project mirroring ghcr.io and docker.io.
-# TODO(registry): only us-east1-a is provisioned today -- add an entry for every
-# supported region as the mirrors are created.
-# Keep in sync with crusoe_watch_agent.sh and k8s/helm-charts/values.yaml.
-CCR_ENDPOINT_FORMAT="registry.%s.ccr.crusoecloudcompute.com"
-declare -A -r CCR_GHCR_PROJECT_MAP=(
-  ["eu-iceland2-a"]="cwa-ghcr.33d1748b"
-)
-declare -A -r CCR_DOCKERHUB_PROJECT_MAP=(
-  ["eu-iceland2-a"]="cwa-docker.33d1748b"
-)
-
 CRUSOE_METRICS_EXPORTER_BIN="/usr/local/bin/crusoe-metrics-exporter"
 
 # Optional parameters with defaults
@@ -77,14 +61,13 @@ usage() {
   echo "Commands: install | uninstall | refresh-token | upgrade | help"
   echo "Options:"
   echo "  --branch|-b BRANCH                        Specify GitHub branch (default: main)"
-  echo "  --ingress-url URL                         Specify CMS base URL (default: https://cms-monitoring.crusoecloud.com)"
+  echo "  --ingress-url URL                         Specify CMS base URL (default: the location's CMS gateway where one"
+  echo "                                            exists, e.g. https://eu-iceland2-a.cms-gw.crusoecloud.com,"
+  echo "                                            otherwise https://cms-monitoring.crusoecloud.com)"
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
   echo "  --enable-metrics-exporter                  Install and enable the Crusoe metrics exporter"
-  echo "  --registry NAME                           Registry to pull container images from: ghcr (default) or ccr."
-  echo "                                            ccr uses Crusoe Container Registry's in-region pull-through"
-  echo "                                            cache, which needs no public internet egress or credentials."
   echo "Examples:"
   echo "  $0 install --branch main"
   echo "  $0 uninstall"
@@ -136,16 +119,10 @@ parse_args() {
           error_exit "Missing value for $1"
         fi
         ;;
+      # Removed flag, still replayed from .install-args on upgrade.
       --registry)
-        if [[ -n "$2" ]]; then
-          case "$2" in
-            ghcr|ccr) IMAGE_REGISTRY="$2" ;;
-            *) error_exit "Unsupported --registry '$2'. Valid values are: ghcr, ccr." ;;
-          esac
-          shift 2
-        else
-          error_exit "Missing value for $1"
-        fi
+        [[ "$2" == "ghcr" ]] || error_exit "--registry was removed. Use crusoe_watch_agent.sh with --ghcr-registry and --dockerhub-registry instead."
+        shift 2
         ;;
       --enable-metrics-exporter)
         ENABLE_METRICS_EXPORTER=true; shift ;;
@@ -351,39 +328,21 @@ detect_region() {
   [[ -n "$domain" ]] && echo "${domain%%.*}"
 }
 
-# Resolve IMAGE_REGISTRY_GHCR and IMAGE_REGISTRY_DOCKERHUB, the registry
-# prefixes the docker-compose files prepend to their (host-less) image paths.
-resolve_image_registries() {
-  IMAGE_REGISTRY_GHCR="ghcr.io"
-  IMAGE_REGISTRY_DOCKERHUB="docker.io"
-  [[ "$IMAGE_REGISTRY" == "ghcr" ]] && return
+# --- CMS Endpoint Resolution ---
+resolve_cms_base_url() {
+  [[ -n "$CMS_BASE_URL" ]] && return
 
-  local region ghcr_project dockerhub_project endpoint
-  region=$(detect_region)
-  if [[ -z "$region" ]]; then
-    registry_fallback_warning "the region could not be derived from the hostname domain (hostname -d returned nothing)"
-    return
-  fi
-
-  ghcr_project="${CCR_GHCR_PROJECT_MAP[$region]:-}"
-  dockerhub_project="${CCR_DOCKERHUB_PROJECT_MAP[$region]:-}"
-  if [[ -z "$ghcr_project" || -z "$dockerhub_project" ]]; then
-    registry_fallback_warning "no CCR pull-through cache project is configured for region '$region' (configured regions: ${!CCR_GHCR_PROJECT_MAP[*]})"
-    return
-  fi
-
-  # shellcheck disable=SC2059 # CCR_ENDPOINT_FORMAT is an intentional format string
-  endpoint=$(printf "$CCR_ENDPOINT_FORMAT" "$region")
-  IMAGE_REGISTRY_GHCR="${endpoint}/${ghcr_project}"
-  IMAGE_REGISTRY_DOCKERHUB="${endpoint}/${dockerhub_project}"
-  status "Pulling container images through CCR in region $region."
-}
-
-# --registry ccr falls back to the upstream registries rather than aborting the
-# install. Warn loudly, since a VM without public egress will fail to pull.
-registry_fallback_warning() {
-  echo -e "\n\033[1mWarning: --registry ccr requested, but $1.\033[0m" >&2
-  echo "Falling back to ghcr.io / docker.io, which requires egress to the public internet." >&2
+  CMS_BASE_URL="$CMS_PUBLIC_BASE_URL"
+  local location gateway_location
+  location=$(detect_region)
+  [[ -z "$location" ]] && return
+  for gateway_location in "${CMS_GATEWAY_LOCATIONS[@]}"; do
+    if [[ "$location" == "$gateway_location" ]]; then
+      # shellcheck disable=SC2059
+      CMS_BASE_URL=$(printf "$CMS_GATEWAY_URL_FORMAT" "$location")
+      return
+    fi
+  done
 }
 
 # --- Token & Version/Lifecycle Helpers ---
@@ -604,6 +563,7 @@ do_install() {
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
   # Create .env file
+  status "Sending telemetry to $CMS_BASE_URL."
   status "Creating .env file with VM_ID, GPU_TYPE, and AMD_EXPORTER_PORT."
   cat <<EOF > "$ENV_FILE"
 VM_ID='${CRUSOE_VM_ID}'
@@ -611,14 +571,14 @@ GPU_TYPE='amd'
 AMD_EXPORTER_PORT='${AMD_EXPORTER_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
+LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
-AGENT_VERSION="vm1.0.23"
+AGENT_VERSION="vm1.0.24"
 EOF
   # Registry prefixes consumed by the docker-compose files.
-  resolve_image_registries
   cat <<EOF >> "$ENV_FILE"
-IMAGE_REGISTRY_GHCR='${IMAGE_REGISTRY_GHCR}'
-IMAGE_REGISTRY_DOCKERHUB='${IMAGE_REGISTRY_DOCKERHUB}'
+IMAGE_REGISTRY_GHCR='ghcr.io'
+IMAGE_REGISTRY_DOCKERHUB='docker.io'
 EOF
 
   # Derive OBJSTORE_ENDPOINT_FQDN from the VM's hostname domain.
@@ -795,6 +755,8 @@ parse_args "$@"
 
 # Update base URL to reflect chosen version (or branch override)
 GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${AGENT_VERSION}"
+
+resolve_cms_base_url
 
 # Construct endpoints from CMS_BASE_URL (after parse_args so --ingress-url is applied)
 TELEMETRY_INGRESS_ENDPOINT="${CMS_BASE_URL}/ingest"
