@@ -46,6 +46,8 @@ data:
 {{- end }}
     sink:
       endpoint: {{ .Values.ingressEndpoint | default "https://cms-monitoring.crusoecloud.com" | quote }}
+      gateway_locations: {{ include "cwa.cmsGatewayLocations" (dict "ctx" . "endpoint" .Values.ingressEndpoint) | quote }}
+      gateway_url_format: {{ (.Values.cmsGateway | default dict).urlFormat | default "" | quote }}
 {{- if .Values.proxy.enabled }}
       proxy:
         enabled: {{ .Values.proxy.enabled }}

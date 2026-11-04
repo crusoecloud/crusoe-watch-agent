@@ -51,6 +51,9 @@ MAX_LOGS_TO_KEEP = int(os.environ.get("MAX_LOGS_TO_KEEP", "1"))
 
 # API configuration
 API_BASE_URL = os.environ.get("API_BASE_URL", os.environ.get("LOG_COLLECTOR_API_BASE_URL", "https://cms-monitoring.crusoecloud.com"))
+# K8s nodes in these locations use their in-DC CMS gateway instead of API_BASE_URL.
+CMS_GATEWAY_LOCATIONS = {loc.strip() for loc in os.environ.get("CMS_GATEWAY_LOCATIONS", "").split(",") if loc.strip()}
+CMS_GATEWAY_URL_FORMAT = os.environ.get("CMS_GATEWAY_URL_FORMAT") or "https://%s.cms-gw.crusoecloud.com"
 API_POLL_INTERVAL = int(os.environ.get("API_POLL_INTERVAL", "60"))
 API_ENABLED = os.environ.get("API_ENABLED", "false").lower() == "true"
 COLLECTION_TIMEOUT = int(os.environ.get("COLLECTION_TIMEOUT", "300"))
@@ -157,6 +160,9 @@ class LogCollector:
             self._init_kubernetes()
         else:
             self._init_vm()
+
+        global API_BASE_URL
+        API_BASE_URL = self._gateway_base_url() or API_BASE_URL
 
         # Warn if API mode is enabled but token is missing
         if API_ENABLED and not CRUSOE_AUTH_TOKEN:
@@ -382,6 +388,22 @@ class LogCollector:
         except ApiException as e:
             LOG.error(f"Error reading node labels: {e}", exc_info = True)
             return None
+
+    def _gateway_base_url(self) -> Optional[str]:
+        """The CMS gateway URL if this K8s node's location is in CMS_GATEWAY_LOCATIONS."""
+        if self.environment != "kubernetes" or not CMS_GATEWAY_LOCATIONS:
+            return None
+
+        try:
+            node = self.k8s_api.read_node(self.node_name)
+            location = node.metadata.labels.get('topology.kubernetes.io/region')
+        except ApiException as e:
+            LOG.error(f"Error reading node labels, using {API_BASE_URL}: {e}", exc_info = True)
+            return None
+
+        if location in CMS_GATEWAY_LOCATIONS:
+            return CMS_GATEWAY_URL_FORMAT % location
+        return None
 
     def _is_bundled_driver_mode(self) -> bool:
         """

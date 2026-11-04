@@ -6,6 +6,7 @@ import subprocess
 import yaml
 import pytest
 import types
+from pathlib import Path
 from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
 
 import vector_config_reloader_app as vcr_mod
@@ -382,6 +383,77 @@ def test_init_exits_when_read_node_fails(monkeypatch):
     with pytest.raises(SystemExit) as exc_info:
         VectorConfigReloader()
     assert exc_info.value.code == 1
+
+
+# -------- CMS sink endpoint --------
+
+GW_SINK = {
+    "endpoint": "https://cms-monitoring.crusoecloud.com",
+    "gateway_locations": "eu-iceland2-a",
+    "gateway_url_format": "https://%s.cms-gw.crusoecloud.com",
+}
+
+
+def _new_reloader_in_location(monkeypatch, sink, location, **cfg_overrides):
+    cfg = YamlUtils.load_yaml_config(vcr_mod.RELOADER_CONFIG_PATH)
+    cfg.update(cfg_overrides, sink=sink)
+    Path(vcr_mod.RELOADER_CONFIG_PATH).write_text(yaml.safe_dump(cfg))
+
+    api_cls = vcr_mod.client.CoreV1Api
+    read_node = api_cls.read_node
+
+    def read_node_in_location(self, name):
+        node = read_node(self, name)
+        if location is not None:
+            node.metadata.labels["topology.kubernetes.io/region"] = location
+        return node
+
+    monkeypatch.setattr(api_cls, "read_node", read_node_in_location)
+    return VectorConfigReloader()
+
+
+@pytest.mark.parametrize("sink,location,expected", [
+    (GW_SINK, "eu-iceland2-a", "https://eu-iceland2-a.cms-gw.crusoecloud.com"),
+    (GW_SINK, "us-east1-a", "https://cms-monitoring.crusoecloud.com"),
+    (GW_SINK, None, "https://cms-monitoring.crusoecloud.com"),
+    ({"endpoint": "https://cms-monitoring.crusoecloud.site", "gateway_locations": ""}, "eu-iceland2-a",
+     "https://cms-monitoring.crusoecloud.site"),
+    ({**GW_SINK, "gateway_locations": " us-east1-a , eu-iceland2-a "}, "eu-iceland2-a",
+     "https://eu-iceland2-a.cms-gw.crusoecloud.com"),
+    ({**GW_SINK, "gateway_locations": ["eu-iceland2-a"]}, "eu-iceland2-a",
+     "https://eu-iceland2-a.cms-gw.crusoecloud.com"),
+    ({**GW_SINK, "gateway_url_format": "https://%s.cms-gw.crusoecloud.site"}, "eu-iceland2-a",
+     "https://eu-iceland2-a.cms-gw.crusoecloud.site"),
+    ({"endpoint": "https://cms-monitoring.crusoecloud.com"}, "eu-iceland2-a", "https://cms-monitoring.crusoecloud.com"),
+])
+def test_sink_endpoint_follows_node_location(monkeypatch, sink, location, expected):
+    r = _new_reloader_in_location(monkeypatch, sink, location)
+    assert r.infra_sink_endpoint == f"{expected}/ingest"
+    assert r.custom_sink_endpoint == f"{expected}/custom"
+    assert r.cluster_sink_endpoint == f"{expected}/cluster"
+    assert r.logs_ingest_endpoint == f"{expected}/logs/ingest"
+
+
+def test_every_sink_uses_the_location_gateway(monkeypatch):
+    gw = "https://eu-iceland2-a.cms-gw.crusoecloud.com"
+    r = _new_reloader_in_location(monkeypatch, GW_SINK, "eu-iceland2-a", slurm_metrics={"enabled": True})
+    r.k8s_api_client._pods = [
+        DummyPod("ksm-1", "ns", ip="10.0.0.2", labels={"app.kubernetes.io/name": "kube-state-metrics"}),
+        DummyPod("slurm-1", "ns", ip="10.0.0.3", labels={"app.kubernetes.io/name": "slurmctld"}),
+        DummyPod("cme-1", "ns", ip="10.0.0.4", labels={"app.kubernetes.io/name": "crusoe-metrics-exporter"}),
+        DummyPod("app-1", "ns", ip="10.0.0.5", ann={CUSTOM_METRICS_SCRAPE_ANNOTATION: "true"}),
+    ]
+    r.reconcile_once()
+    sinks = YamlUtils.load_yaml_config(vcr_mod.VECTOR_CONFIG_PATH)["sinks"]
+
+    urls = {name: s.get("endpoint") or s.get("uri") for name, s in sinks.items()}
+    assert urls["cms_gateway_node_metrics"] == f"{gw}/ingest"
+    assert urls["kube_state_metrics_sink"] == f"{gw}/cluster"
+    assert urls["slurm_metrics_sink"] == f"{gw}/cluster"
+    assert urls["crusoe_metrics_exporter_sink"] == f"{gw}/ingest"
+    assert any(u == f"{gw}/custom" for u in urls.values())
+    assert any(u == f"{gw}/logs/ingest" for u in urls.values())
+    assert all(u.startswith(f"{gw}/") for u in urls.values()), urls
 
 
 # -------- Fingerprinting --------

@@ -8,8 +8,11 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 # Published scripts in docs/vm/ have this pinned to a release tag by CI.
 AGENT_VERSION="main"
 
-# CMS base URL (optional, defaults to prod)
-CMS_BASE_URL="https://cms-monitoring.crusoecloud.com"
+# CMS base URL (optional, defaults to the location's CMS gateway or prod)
+CMS_BASE_URL=""
+CMS_PUBLIC_BASE_URL="https://cms-monitoring.crusoecloud.com"
+CMS_GATEWAY_LOCATIONS=("eu-iceland2-a")
+CMS_GATEWAY_URL_FORMAT="https://%s.cms-gw.crusoecloud.com"
 
 # Define paths for config files within the GitHub repository (vm subdir)
 REMOTE_VECTOR_CONFIG_AMD_GPU_VM="vm/config/vector_amd_gpu_vm.yaml"
@@ -58,7 +61,9 @@ usage() {
   echo "Commands: install | uninstall | refresh-token | upgrade | help"
   echo "Options:"
   echo "  --branch|-b BRANCH                        Specify GitHub branch (default: main)"
-  echo "  --ingress-url URL                         Specify CMS base URL (default: https://cms-monitoring.crusoecloud.com)"
+  echo "  --ingress-url URL                         Specify CMS base URL (default: the location's CMS gateway where one"
+  echo "                                            exists, e.g. https://eu-iceland2-a.cms-gw.crusoecloud.com,"
+  echo "                                            otherwise https://cms-monitoring.crusoecloud.com)"
   echo "  --amd-exporter-service-name NAME          Specify custom AMD exporter service name"
   echo "  --amd-exporter-port PORT                  Specify custom AMD exporter port (default: 5000)"
   echo "  --logs-endpoint URL                       Override the logs ingress endpoint"
@@ -323,6 +328,23 @@ detect_region() {
   [[ -n "$domain" ]] && echo "${domain%%.*}"
 }
 
+# --- CMS Endpoint Resolution ---
+resolve_cms_base_url() {
+  [[ -n "$CMS_BASE_URL" ]] && return
+
+  CMS_BASE_URL="$CMS_PUBLIC_BASE_URL"
+  local location gateway_location
+  location=$(detect_region)
+  [[ -z "$location" ]] && return
+  for gateway_location in "${CMS_GATEWAY_LOCATIONS[@]}"; do
+    if [[ "$location" == "$gateway_location" ]]; then
+      # shellcheck disable=SC2059
+      CMS_BASE_URL=$(printf "$CMS_GATEWAY_URL_FORMAT" "$location")
+      return
+    fi
+  done
+}
+
 # --- Token & Version/Lifecycle Helpers ---
 
 write_token_to_secrets() {
@@ -541,6 +563,7 @@ do_install() {
   wget -q -O "$INSTALLED_VERSION_FILE" "$GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE" || error_exit "Failed to download $GITHUB_RAW_BASE_URL/$REMOTE_VERSION_FILE"
 
   # Create .env file
+  status "Sending telemetry to $CMS_BASE_URL."
   status "Creating .env file with VM_ID, GPU_TYPE, and AMD_EXPORTER_PORT."
   cat <<EOF > "$ENV_FILE"
 VM_ID='${CRUSOE_VM_ID}'
@@ -548,6 +571,7 @@ GPU_TYPE='amd'
 AMD_EXPORTER_PORT='${AMD_EXPORTER_PORT}'
 TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
+LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
 AGENT_VERSION='$(cat "$INSTALLED_VERSION_FILE" | tr -d " \t\r\n")'
 EOF
@@ -731,6 +755,8 @@ parse_args "$@"
 
 # Update base URL to reflect chosen version (or branch override)
 GITHUB_RAW_BASE_URL="https://raw.githubusercontent.com/crusoecloud/crusoe-watch-agent/${AGENT_VERSION}"
+
+resolve_cms_base_url
 
 # Construct endpoints from CMS_BASE_URL (after parse_args so --ingress-url is applied)
 TELEMETRY_INGRESS_ENDPOINT="${CMS_BASE_URL}/ingest"

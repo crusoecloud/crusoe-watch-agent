@@ -74,6 +74,10 @@ spec:
           value: {{ $vcfg.driverNamespace | quote }}
         - name: DRIVER_POD_PREFIX
           value: {{ $vcfg.driverPodPrefix | quote }}
+        - name: CMS_GATEWAY_LOCATIONS
+          value: {{ include "cwa.cmsGatewayLocations" (dict "ctx" $ "endpoint" (($vendorValues.env | default $shared.env) | default dict).API_BASE_URL) | quote }}
+        - name: CMS_GATEWAY_URL_FORMAT
+          value: {{ ($.Values.cmsGateway | default dict).urlFormat | default "" | quote }}
         {{- range $key, $value := ($vendorValues.env | default $shared.env) }}
         - name: {{ $key }}
           value: {{ $value | quote }}

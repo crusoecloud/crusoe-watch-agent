@@ -91,6 +91,9 @@ If you used the Simple Download method, run `sudo ./crusoe_watch_agent.sh instal
 sudo crusoe-watch-agent install
 ```
 
+### CMS Endpoint
+The installer picks the CMS endpoint from the VM's location (the first label of `hostname -d`). In locations with an in-DC CMS gateway (currently `eu-iceland2-a`), metrics, logs and log collector requests go to `https://<location>.cms-gw.crusoecloud.com`; everywhere else they go to `https://cms-monitoring.crusoecloud.com`. VMs with restricted egress need TCP 443 to that host. Pass `--ingress-url URL` to override the choice; `upgrade` keeps an override passed at install time.
+
 > **Note for Slurm images:**
 > If you have a pre-installed use `--replace-dcgm-exporter` to replace it with the Crusoe version for full metrics collection. 
 > Optional `SERVICE_NAME` defaults to `dcgm-exporter`:

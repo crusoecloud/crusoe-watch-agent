@@ -16,6 +16,9 @@ VECTOR_CONFIG_PATH = "/etc/vector/vector.yaml"
 VECTOR_BASE_CONFIG_PATH = "/etc/vector-base/vector.yaml"
 RELOADER_CONFIG_PATH = "/etc/reloader/config.yaml"
 
+CMS_PUBLIC_ENDPOINT = "https://cms-monitoring.crusoecloud.com"
+CMS_GATEWAY_URL_FORMAT = "https://%s.cms-gw.crusoecloud.com"
+
 DCGM_EXPORTER_SOURCE_NAME = "dcgm_exporter_scrape"
 DCGM_JOB_TRANSFORM_NAME = "tag_dcgm_job"
 
@@ -203,7 +206,31 @@ class VectorConfigReloader:
         )
         self.operator_logs_enabled = bool(self.operator_log_namespaces)
         self.default_custom_metrics_config = reloader_cfg["custom_metrics"]
-        sink_endpoint = reloader_cfg["sink"].get("endpoint") or "https://cms-monitoring.crusoecloud.com"
+
+        # Node labels come first: the sink endpoint depends on the node's location.
+        try:
+            node = self.k8s_api_client.read_node(self.node_name)
+            labels = node.metadata.labels
+            self.vm_id = labels.get("crusoe.ai/instance.id", None)
+            self.nodepool_id = labels.get("crusoe.ai/nodepool.id", None)
+            self.instance_type = labels.get("beta.kubernetes.io/instance-type", None)
+            self.pod_id = labels.get("crusoe.ai/pod.id", None)
+            self.project_id = labels.get("crusoe.ai/project.id", None)
+            self.hostname = labels.get("kubernetes.io/hostname", None)
+            self.location = labels.get("topology.kubernetes.io/region", None)
+        except Exception as e:
+            cluster_id = os.environ.get('CRUSOE_CLUSTER_ID', 'unknown')
+            vm_id = os.environ.get('VM_ID', 'unknown')
+            project_id = os.environ.get('CRUSOE_PROJECT_ID', 'unknown')
+            errors_total.labels(error_type="k8s_api_fetch_node_labels").inc()
+            LOG.error(
+                f"Fetch node labels failed. "
+                f"cluster_id={cluster_id} vm_id={vm_id} project_id={project_id} error={str(e)}"
+            )
+            sys.exit(1)
+
+        sink_endpoint = self._resolve_sink_endpoint(reloader_cfg["sink"])
+        LOG.info(f"CMS sink endpoint: {sink_endpoint} (location: {self.location})")
         self.infra_sink_endpoint = f"{sink_endpoint}/ingest"
         self.custom_sink_endpoint = f"{sink_endpoint}/custom"
         self.cluster_sink_endpoint = f"{sink_endpoint}/cluster"
@@ -287,26 +314,6 @@ class VectorConfigReloader:
         )
 
         self.logs_ingest_endpoint = f"{sink_endpoint}/logs/ingest"
-
-        try:
-            node = self.k8s_api_client.read_node(self.node_name)
-            labels = node.metadata.labels
-            self.vm_id = labels.get("crusoe.ai/instance.id", None)
-            self.nodepool_id = labels.get("crusoe.ai/nodepool.id", None)
-            self.instance_type = labels.get("beta.kubernetes.io/instance-type", None)
-            self.pod_id = labels.get("crusoe.ai/pod.id", None)
-            self.project_id = labels.get("crusoe.ai/project.id", None)
-            self.hostname = labels.get("kubernetes.io/hostname", None)
-        except Exception as e:
-            cluster_id = os.environ.get('CRUSOE_CLUSTER_ID', 'unknown')
-            vm_id = os.environ.get('VM_ID', 'unknown')
-            project_id = os.environ.get('CRUSOE_PROJECT_ID', 'unknown')
-            errors_total.labels(error_type="k8s_api_fetch_node_labels").inc()
-            LOG.error(
-                f"Fetch node labels failed. "
-                f"cluster_id={cluster_id} vm_id={vm_id} project_id={project_id} error={str(e)}"
-            )
-            sys.exit(1)
 
         self.node_metrics_vector_transform_source = LiteralStr(f"""
 .tags.nodepool = "{self.nodepool_id}"
@@ -717,6 +724,17 @@ if exists(.metadata.level) {
             return POD_TYPE_AMD
 
         return None
+
+    def _resolve_sink_endpoint(self, sink_cfg: dict) -> str:
+        """This node location's CMS gateway if listed, else sink.endpoint."""
+        locations = sink_cfg.get("gateway_locations") or []
+        if isinstance(locations, str):
+            locations = locations.split(",")
+        locations = {loc.strip() for loc in locations if loc.strip()}
+        if self.location and self.location in locations:
+            url_format = sink_cfg.get("gateway_url_format") or CMS_GATEWAY_URL_FORMAT
+            return url_format % self.location
+        return sink_cfg.get("endpoint") or CMS_PUBLIC_ENDPOINT
 
     def _build_prom_remote_write_sink(self, endpoint: str, tenant_id: str, *, with_proxy: bool) -> dict:
         """Build a prometheus_remote_write sink config.

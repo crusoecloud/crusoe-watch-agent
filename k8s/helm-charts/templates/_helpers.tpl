@@ -21,6 +21,14 @@ Args: ctx, repository.
 {{- end -}}
 {{- end -}}
 
+{{/* CMS gateway locations, comma-separated; empty unless .endpoint is the prod default and the proxy is off. Args: ctx, endpoint. */}}
+{{- define "cwa.cmsGatewayLocations" -}}
+{{- $default := "https://cms-monitoring.crusoecloud.com" -}}
+{{- if and (eq (.endpoint | default $default) $default) (not .ctx.Values.proxy.enabled) -}}
+  {{- join "," ((.ctx.Values.cmsGateway | default dict).locations | default list) -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Build a full image reference. Args: ctx, repository, tag. */}}
 {{- define "cwa.image" -}}
 {{- $repo := include "cwa.repository" (dict "ctx" .ctx "repository" .repository) -}}

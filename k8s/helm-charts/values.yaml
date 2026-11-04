@@ -1,6 +1,12 @@
 namespace: crusoe-system
 ingressEndpoint: "https://cms-monitoring.crusoecloud.com"
 
+# Nodes in these locations use their in-DC gateway instead of the default CMS endpoint.
+cmsGateway:
+  locations:
+    - eu-iceland2-a
+  urlFormat: "https://%s.cms-gw.crusoecloud.com"
+
 # Root certificates the Vector container must not trust, named as they appear
 # in the image's /etc/ssl/certs. The upstream Vector image carries whatever
 # ca-certificates its base image was built with, which on an unrebuilt image

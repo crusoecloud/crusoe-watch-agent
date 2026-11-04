@@ -22,6 +22,10 @@ helm repo update
 helm install crusoe-watch-agent crusoe-watch-agent/crusoe-watch-agent --namespace crusoe-system
 ```
 
+## CMS Endpoint
+
+Nodes whose `topology.kubernetes.io/region` label is listed under `cmsGateway.locations` (currently `eu-iceland2-a`) send metrics, logs and log collector requests to their in-DC gateway, `https://<location>.cms-gw.crusoecloud.com`; all other nodes use `ingressEndpoint` (default `https://cms-monitoring.crusoecloud.com`). Clusters with restricted egress need TCP 443 to the gateway. The gateway applies only while the endpoint (`ingressEndpoint` for Vector, `logCollector.env.API_BASE_URL` for the log collector) is that default and `proxy.enabled` is false, so staging and custom endpoints are unaffected. Set `cmsGateway.locations: []` to keep every node on `ingressEndpoint`.
+
 ## Upgrading
 
 Check the latest available version and update your local chart index:

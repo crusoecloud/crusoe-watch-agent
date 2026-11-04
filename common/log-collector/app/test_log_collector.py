@@ -939,6 +939,56 @@ class TestProxyConfig(unittest.TestCase):
         self.assertEqual(call_args[1].get('proxies'), expected_proxies)
 
 
+class TestApiBaseUrl(unittest.TestCase):
+    """Test the CMS gateway override of API_BASE_URL."""
+
+    GATEWAY = 'https://eu-iceland2-a.cms-gw.crusoecloud.com'
+    CONFIGURED = 'https://cms-monitoring.crusoecloud.com'
+
+    def setUp(self):
+        os.environ['NODE_NAME'] = 'test-node'
+        os.environ['LOG_OUTPUT_DIR'] = tempfile.mkdtemp()
+
+    def _resolved_url(self, mock_core_api, locations=frozenset({'eu-iceland2-a'}), region='eu-iceland2-a'):
+        mock_core_api.return_value.read_node.return_value = Mock(
+            metadata=Mock(labels={'topology.kubernetes.io/region': region}))
+        with patch.object(log_collector, 'API_BASE_URL', self.CONFIGURED), \
+             patch.object(log_collector, 'CMS_GATEWAY_LOCATIONS', set(locations)):
+            LogCollector()
+            return log_collector.API_BASE_URL
+
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_gateway_location_uses_gateway(self, mock_core_api, mock_load_config):
+        self.assertEqual(self._resolved_url(mock_core_api), self.GATEWAY)
+        mock_core_api.return_value.read_node.assert_called_once_with('test-node')
+
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_other_location_keeps_configured_url(self, mock_core_api, mock_load_config):
+        self.assertEqual(self._resolved_url(mock_core_api, region='us-east1-a'), self.CONFIGURED)
+
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_no_gateway_locations_skips_node_lookup(self, mock_core_api, mock_load_config):
+        self.assertEqual(self._resolved_url(mock_core_api, locations=()), self.CONFIGURED)
+        mock_core_api.return_value.read_node.assert_not_called()
+
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_node_lookup_failure_keeps_configured_url(self, mock_core_api, mock_load_config):
+        mock_core_api.return_value.read_node.side_effect = log_collector.ApiException(status=403)
+        self.assertEqual(self._resolved_url(mock_core_api), self.CONFIGURED)
+
+    @patch('log_collector.config.load_incluster_config')
+    @patch('log_collector.client.CoreV1Api')
+    def test_vm_mode_has_no_gateway(self, mock_core_api, mock_load_config):
+        collector = LogCollector()
+        collector.environment = 'vm'
+        with patch.object(log_collector, 'CMS_GATEWAY_LOCATIONS', {'eu-iceland2-a'}):
+            self.assertIsNone(collector._gateway_base_url())
+
+
 class TestBundledDriverMode(unittest.TestCase):
     """Test _is_bundled_driver_mode instance-type selection."""
 
