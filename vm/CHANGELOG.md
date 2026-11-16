@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.25 (2026-11-12)
+
+- Update crusoe-metrics-exporter to 0.3.2 to resolve container dependency CVEs ([current HEAD](https://github.com/crusoecloud/crusoe-watch-agent/commit/))
+
+
 ## 1.0.24 (2026-11-04)
 
 **Features**

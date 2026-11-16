@@ -1028,7 +1028,7 @@ crusoeMetricsExporter:
 
   image:
     repository: crusoecloud/crusoe-metrics-exporter/crusoe-metrics-exporter
-    tag: "0.2.9"
+    tag: "0.3.2"
     pullPolicy: IfNotPresent
 
   port: 9500

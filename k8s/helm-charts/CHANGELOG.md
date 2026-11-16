@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.43 (2026-11-12)
+
+- Update Crusoe Metrics Exporter to resolve CVEs in dependent container images
+
+
 ## 0.3.42 (2026-11-04)
 
 **Features**
