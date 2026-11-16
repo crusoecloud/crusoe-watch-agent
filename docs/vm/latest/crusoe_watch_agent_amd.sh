@@ -6,7 +6,7 @@ CRUSOE_VM_ID=$(dmidecode -s system-uuid)
 
 # GitHub ref (tag or branch). Defaults to "main" for backward compatibility.
 # Published scripts in docs/vm/ have this pinned to a release tag by CI.
-AGENT_VERSION="vm1.0.24"
+AGENT_VERSION="vm1.0.25"
 
 # CMS base URL (optional, defaults to the location's CMS gateway or prod)
 CMS_BASE_URL=""
@@ -573,7 +573,7 @@ TELEMETRY_INGRESS_ENDPOINT='${TELEMETRY_INGRESS_ENDPOINT}'
 LOGS_INGRESS_ENDPOINT='${LOGS_INGRESS_ENDPOINT}'
 LOG_COLLECTOR_API_BASE_URL='${CMS_BASE_URL}'
 LOG_COLLECTOR_IMAGE_VERSION='${LOG_COLLECTOR_IMAGE_VERSION}'
-AGENT_VERSION="vm1.0.24"
+AGENT_VERSION="vm1.0.25"
 EOF
   # Registry prefixes consumed by the docker-compose files.
   cat <<EOF >> "$ENV_FILE"
