@@ -1,15 +1,24 @@
 {{- $customMetricsNs := .Values.customMetrics.namespace | default "crusoe-monitoring" }}
-{{- if not (lookup "v1" "ConfigMap" $customMetricsNs "crusoe-custom-metrics-config") }}
+{{- $existing := lookup "v1" "ConfigMap" $customMetricsNs "crusoe-custom-metrics-config" }}
+{{- $owner := dig "metadata" "annotations" "meta.helm.sh/release-name" "" $existing }}
+{{- $ownerNs := dig "metadata" "annotations" "meta.helm.sh/release-namespace" "" $existing }}
+{{- if or (not $existing) (and (eq $owner .Release.Name) (eq $ownerNs .Release.Namespace)) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: crusoe-custom-metrics-config
   namespace: {{ $customMetricsNs }}
+  annotations:
+    helm.sh/resource-policy: keep
 data:
+{{- if and $existing $existing.data }}
+  {{- toYaml $existing.data | nindent 2 }}
+{{- else }}
   custom-metrics-config.yaml: |
     default_scrape_interval_sec: 30
 
     fake-metrics-app:
       allowlist:
         - my_app_requests_total
+{{- end }}
 {{- end }}
