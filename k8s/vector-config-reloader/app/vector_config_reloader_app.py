@@ -1,4 +1,5 @@
 import os, signal, re, logging, threading, sys, time, hashlib, json
+import http.client
 from dataclasses import dataclass, replace
 from pathlib import Path
 from kubernetes import client, config
@@ -66,6 +67,10 @@ CUSTOM_METRICS_DEFAULT_SCRAPE_INTERVAL = 30
 SCRAPE_INTERVAL_MIN_THRESHOLD = 5
 SCRAPE_TIMEOUT_PERCENTAGE = 0.7
 RECONCILE_INTERVAL_SECS = 60
+
+SLURMCTLD_READYZ_PATH = "/readyz"
+SLURMCTLD_READYZ_TIMEOUT_SECS = 3
+SLURMCTLD_STANDBY_STATUSES = (500, 303)
 
 # Pod classification labels (used in pod fingerprints and logging)
 POD_TYPE_CUSTOM = "custom_metrics"
@@ -700,6 +705,36 @@ if exists(.metadata.level) {
             return False
         return pod_type == POD_TYPE_CUSTOM or not getattr(pod.metadata, "deletion_timestamp", None)
 
+    def is_slurmctld_active(self, pod_ip) -> bool:
+        """A Slurm cluster with controller HA runs a backup slurmctld in standby. A standby has
+        no job list, and Slurm 25.11.2 to 25.11.6 crash with SIGSEGV when it serves
+        /metrics/jobs, so only the active controller is scraped. /readyz tells them apart: the
+        active controller answers 2xx and a standby answers 500, or 303 on Slurm 25.11.7. A 404
+        means this Slurm has no /readyz, so the pod is scraped as before. Any other code counts as
+        a failed check, so a 401 or 502 on the only controller cannot stop Slurm metrics without
+        a warning. Redirects are not followed.
+
+        The pod object cannot answer this. With HA, Slinky 1.3 probes readiness on /livez, so the
+        standby is Ready too. Slinky 1.1.3 never sets the controller.slinky.slurm.net/active
+        label, so its only controller looks like a standby."""
+        conn = http.client.HTTPConnection(pod_ip, self.slurm_cfg.port, timeout=SLURMCTLD_READYZ_TIMEOUT_SECS)
+        try:
+            conn.request("GET", SLURMCTLD_READYZ_PATH)
+            status = conn.getresponse().status
+        except (OSError, http.client.HTTPException) as e:
+            errors_total.labels(error_type="slurmctld_readyz").inc()
+            LOG.warning(f"slurmctld readiness check failed for {pod_ip}: {e}; not scraping it this cycle.")
+            return False
+        finally:
+            conn.close()
+        if 200 <= status < 300 or status == 404:
+            return True
+        if status in SLURMCTLD_STANDBY_STATUSES:
+            return False
+        errors_total.labels(error_type="slurmctld_readyz").inc()
+        LOG.warning(f"slurmctld readiness check for {pod_ip} answered HTTP {status}; not scraping it this cycle.")
+        return False
+
     def classify_pod(self, pod):
         """Return a string label for the pod type, or None if not relevant.
 
@@ -1108,6 +1143,7 @@ if exists(.metadata.level) {
         skipped_terminating = 0
         skipped_irrelevant = 0
         skipped_no_ip = 0
+        skipped_standby = 0
         for pod in pods:
             pod_type = self.classify_pod(pod)
             if pod_type is None:
@@ -1120,6 +1156,9 @@ if exists(.metadata.level) {
                 skipped_no_ip += 1
                 LOG.warning(f"Pod {pod.metadata.name} ({pod_type}) is Running but has no pod IP yet; will retry next cycle.")
                 continue
+            if pod_type == POD_TYPE_SLURM and self.slurm_cfg.enabled and not self.is_slurmctld_active(pod.status.pod_ip):
+                skipped_standby += 1
+                continue
             relevant.append((pod, pod_type))
 
         LOG.debug(
@@ -1127,7 +1166,8 @@ if exists(.metadata.level) {
             f"relevant={len(relevant)}, "
             f"skipped_terminating={skipped_terminating}, "
             f"skipped_irrelevant={skipped_irrelevant}, "
-            f"skipped_no_ip={skipped_no_ip}"
+            f"skipped_no_ip={skipped_no_ip}, "
+            f"skipped_standby={skipped_standby}"
         )
         return relevant
 

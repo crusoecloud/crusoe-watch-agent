@@ -1,12 +1,16 @@
+import http.server
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
+import threading
 import yaml
 import pytest
 import types
 from pathlib import Path
+from prometheus_client import REGISTRY
 from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
 
 import vector_config_reloader_app as vcr_mod
@@ -25,6 +29,8 @@ from vector_config_reloader_app import (
     POD_TYPE_CME,
 )
 from utils import YamlUtils
+
+REAL_IS_SLURMCTLD_ACTIVE = VectorConfigReloader.is_slurmctld_active
 
 
 class DummyPod:
@@ -76,6 +82,9 @@ def _isolate_env(monkeypatch, tmp_path):
     monkeypatch.setattr("vector_config_reloader_app.client.CoreV1Api", _DummyCoreV1Api)
     monkeypatch.setattr("vector_config_reloader_app.config.load_incluster_config", lambda: None)
     monkeypatch.setattr("vector_config_reloader_app.start_http_server", lambda port: None)
+    # No slurmctld listens in tests, so every one counts as the active controller unless a test
+    # says otherwise.
+    monkeypatch.setattr(VectorConfigReloader, "is_slurmctld_active", lambda self, pod_ip: True)
 
     reloader_cfg = {
         "dcgm_metrics": {"port": 9400, "path": "/metrics", "scrape_interval": 30},
@@ -612,6 +621,94 @@ def test_list_active_relevant_pods_keeps_draining_custom_metrics_pods():
     r = _new_reloader_with_pods(pods)
     names = [p.metadata.name for p, _ in r._list_active_relevant_pods()]
     assert names == ["app-draining"]
+
+
+# -------- slurmctld standby --------
+
+@pytest.fixture
+def readyz_server():
+    """A local HTTP server that answers /readyz with the status code the test sets."""
+    class Handler(http.server.BaseHTTPRequestHandler):
+        status = 204
+
+        def do_GET(self):
+            self.send_response(self.status)
+            if self.status == 303:
+                self.send_header("Location", "/elsewhere")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.shutdown()
+    server.server_close()
+
+
+def _readyz_errors():
+    return REGISTRY.get_sample_value("vcr_errors_total", {"error_type": "slurmctld_readyz"}) or 0
+
+
+@pytest.mark.parametrize(("status", "expected", "counted"), [
+    pytest.param(204, True, False, id="active"),
+    pytest.param(200, True, False, id="active-200"),
+    pytest.param(500, False, False, id="standby"),
+    pytest.param(404, True, False, id="no-readyz"),
+    pytest.param(303, False, False, id="redirect-not-followed"),
+    pytest.param(401, False, True, id="unauthorized"),
+    pytest.param(502, False, True, id="bad-gateway"),
+])
+def test_is_slurmctld_active(readyz_server, status, expected, counted):
+    readyz_server.RequestHandlerClass.status = status
+    r = _new_reloader_with_pods([])
+    r.slurm_cfg.port = readyz_server.server_address[1]
+    before = _readyz_errors()
+    assert REAL_IS_SLURMCTLD_ACTIVE(r, "127.0.0.1") is expected
+    assert _readyz_errors() - before == (1 if counted else 0)
+
+
+def test_is_slurmctld_active_unreachable():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    r = _new_reloader_with_pods([])
+    r.slurm_cfg.port = port
+    assert REAL_IS_SLURMCTLD_ACTIVE(r, "127.0.0.1") is False
+
+
+def _slurmctld(name, ip):
+    return DummyPod(name, "slurm", ip=ip, labels={"app.kubernetes.io/name": "slurmctld"})
+
+
+def test_standby_slurmctld_is_not_scraped(monkeypatch):
+    active_ips = {"10.0.0.1"}
+    monkeypatch.setattr(VectorConfigReloader, "is_slurmctld_active", lambda self, ip: ip in active_ips)
+    r = _new_reloader_in_location(monkeypatch, GW_SINK, None, slurm_metrics={"enabled": True})
+    r.k8s_api_client._pods = [_slurmctld("ctld-0", "10.0.0.1"), _slurmctld("ctld-1", "10.0.0.2")]
+
+    r.reconcile_once()
+    endpoints = YamlUtils.load_yaml_config(vcr_mod.VECTOR_CONFIG_PATH)["sources"]["slurm_metrics_scrape"]["endpoints"]
+    assert endpoints and all(e.startswith("http://10.0.0.1:") for e in endpoints)
+
+    # After a failover the backup is active and the old primary is in standby.
+    active_ips.clear()
+    active_ips.add("10.0.0.2")
+    r.reconcile_once()
+    endpoints = YamlUtils.load_yaml_config(vcr_mod.VECTOR_CONFIG_PATH)["sources"]["slurm_metrics_scrape"]["endpoints"]
+    assert endpoints and all(e.startswith("http://10.0.0.2:") for e in endpoints)
+
+
+def test_slurmctld_readiness_not_checked_when_slurm_metrics_disabled(monkeypatch):
+    def fail(self, ip):
+        raise AssertionError("readiness checked with slurm metrics disabled")
+    monkeypatch.setattr(VectorConfigReloader, "is_slurmctld_active", fail)
+    r = _new_reloader_with_pods([_slurmctld("ctld-0", "10.0.0.1")])
+    assert r.slurm_cfg.enabled is False
+    assert [p.metadata.name for p, _ in r._list_active_relevant_pods()] == ["ctld-0"]
 
 
 def test_reconcile_pod_with_deletion_timestamp_treated_as_removed():
